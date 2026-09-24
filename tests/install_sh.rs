@@ -128,7 +128,7 @@ fn fresh_install_downloads_and_runs_the_release_installer() {
             "LETS_TEST_FAKE_LETS",
             &fixture_path("lets-ok").display().to_string(),
         ),
-        ("LETS_INSTALL_DIR", &install_dir),
+        ("LETS_BIN_DIR", &install_dir),
     ]);
 
     assert_eq!(code(&output), 0, "{}", stderr(&output));
@@ -148,6 +148,88 @@ fn fresh_install_downloads_and_runs_the_release_installer() {
     assert!(installed.is_file());
     let mode = fs::metadata(&installed).unwrap().permissions().mode();
     assert_ne!(mode & 0o111, 0, "the installed lets must be executable");
+}
+
+/// The fake installer follows dist 0.32's precedence: `LETS_INSTALL_DIR`, then
+/// `CARGO_DIST_FORCE_INSTALL_DIR`, each a prefix it appends `bin/` to, then the flat
+/// `LETS_UNMANAGED_INSTALL`.
+#[test]
+fn a_dist_install_dir_in_the_environment_does_not_move_the_binary() {
+    let env = Env::new();
+    env.install_fake("curl", "curl");
+    let prefix = env.home.join("prefix");
+    let prefix = prefix.display().to_string();
+
+    for dist_var in ["LETS_INSTALL_DIR", "CARGO_DIST_FORCE_INSTALL_DIR"] {
+        let output = env.run(&["--no-hooks"], &[
+            (
+                "LETS_TEST_INSTALLER",
+                &fixture_path("installer.sh").display().to_string(),
+            ),
+            (
+                "LETS_TEST_FAKE_LETS",
+                &fixture_path("lets-ok").display().to_string(),
+            ),
+            ("LETS_BIN_DIR", &env.bin.display().to_string()),
+            (dist_var, &prefix),
+        ]);
+
+        assert_eq!(code(&output), 0, "{dist_var}: {}", stderr(&output));
+        assert!(env.bin.join("lets").is_file(), "{dist_var}");
+        assert!(
+            !env.home.join("prefix/bin/lets").exists(),
+            "{dist_var} must not redirect the install"
+        );
+        fs::remove_file(env.bin.join("lets")).unwrap();
+    }
+}
+
+#[test]
+fn without_lets_bin_dir_the_binary_goes_to_home_local_bin() {
+    let env = Env::new();
+    env.install_fake("curl", "curl");
+
+    let output = env.run(&["--no-hooks"], &[
+        (
+            "LETS_TEST_INSTALLER",
+            &fixture_path("installer.sh").display().to_string(),
+        ),
+        (
+            "LETS_TEST_FAKE_LETS",
+            &fixture_path("lets-ok").display().to_string(),
+        ),
+    ]);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let local_bin = env.home.join(".local/bin");
+    assert!(local_bin.join("lets").is_file());
+    assert!(
+        stdout(&output).contains(&format!("export PATH=\"{}:$PATH\"", local_bin.display())),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn an_installer_that_installs_nothing_exits_1() {
+    let env = Env::new();
+    env.install_fake("curl", "curl");
+    let install_dir = env.home.join("empty-bin");
+
+    let output = env.run(&["--no-hooks"], &[
+        (
+            "LETS_TEST_INSTALLER",
+            &fixture_path("installer-noop.sh").display().to_string(),
+        ),
+        ("LETS_BIN_DIR", &install_dir.display().to_string()),
+    ]);
+
+    assert_eq!(code(&output), 1, "{}", stdout(&output));
+    assert!(
+        stderr(&output).contains("no lets binary was found"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]

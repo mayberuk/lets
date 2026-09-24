@@ -14,6 +14,7 @@ ASSUME_YES=""
 usage() {
   cat <<'USAGE'
 Usage: install.sh [--version vX.Y.Z] [--hooks=claude-code,codex | --no-hooks] [--check] [--uninstall] [--yes]
+Installs into $LETS_BIN_DIR, default ~/.local/bin.
 USAGE
 }
 
@@ -108,8 +109,12 @@ fresh_install() {
     rm -rf "$scratch"
     exit 1
   fi
-  install_dir="${LETS_INSTALL_DIR:-$HOME/.local/bin}"
-  LETS_UNMANAGED_INSTALL="$install_dir" sh "$script"
+  install_dir="${LETS_BIN_DIR:-$HOME/.local/bin}"
+  # dist's installer reads these two before LETS_UNMANAGED_INSTALL, as a prefix it appends bin/ to.
+  (
+    unset LETS_INSTALL_DIR CARGO_DIST_FORCE_INSTALL_DIR
+    LETS_UNMANAGED_INSTALL="$install_dir" sh "$script"
+  )
   rm -rf "$scratch"
 
   if resolved=$(command -v lets 2>/dev/null); then
@@ -120,8 +125,8 @@ fresh_install() {
     # shellcheck disable=SC2016
     printf '  export PATH="%s:$PATH"\n' "$install_dir"
   else
-    LETS_BIN=""
-    err "the installer ran but no lets binary was found afterward"
+    err "the installer ran but no lets binary was found in $install_dir"
+    exit 1
   fi
 }
 
