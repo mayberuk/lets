@@ -1,0 +1,5 @@
+COMMAND
+grep -n a src/grep.txt | sort | head -4
+cat src/a.ts 2>/dev/null
+===END===
+VERDICT allow

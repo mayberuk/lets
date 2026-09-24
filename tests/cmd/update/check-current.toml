@@ -1,0 +1,6 @@
+# The latest tag is derived from the binary's own version, so this case holds across bumps.
+bin.name = "sh"
+args = ["-c", "export PATH=\"$(pwd)/fake-bin:$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; export FAKE_CURL_LOG=\"$(pwd)/curl-calls\"; export FAKE_LATEST_TAG=\"v$(\"$CARGO_BIN_EXE_lets\" --version | cut -d' ' -f2)\"; \"$CARGO_BIN_EXE_lets\" update --check"]
+
+[fs]
+sandbox = true

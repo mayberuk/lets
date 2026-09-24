@@ -1,0 +1,5 @@
+── src/a.ts · 1 replacement · line 1 · exact
+1~	const row = 1
+── notes.md · 1 replacement · line 1 · exact
+1~	row notes
+── 2 files · 2 edits · all applied · checks: structure ok ×2

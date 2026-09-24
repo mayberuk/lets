@@ -1,0 +1,10 @@
+```console
+$ lets edit usage.ts --old 'return' --new 'return undefined'
+? 2
+usage.ts is ambiguous (3 candidates)
+  usage.ts:4	  if (!id) return
+  usage.ts:7	  if (now > cap) return
+  usage.ts:9	  return total
+ERROR_CODE=ambiguous
+
+```

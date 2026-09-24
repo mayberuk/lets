@@ -1,0 +1,19 @@
+{
+  // mine: a guard of my own on every Bash call
+  "env": {
+    "EDITOR": "vi"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo userhookmarker"
+          }
+        ]
+      }
+    ]
+  }
+}

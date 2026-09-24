@@ -1,0 +1,5 @@
+── m.py · inserted 1 line after line 1
+1 	import os
+2+	import sys
+3 	x = 1
+── check: structure ok · sha:[..]→[..]

@@ -1,0 +1,4 @@
+COMMAND
+cat /etc/hosts
+===END===
+VERDICT allow

@@ -1,0 +1,8 @@
+bin.name = "lets"
+args = ["show", "big.ts", "--max-bytes", "100"]
+
+[status]
+code = 4
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

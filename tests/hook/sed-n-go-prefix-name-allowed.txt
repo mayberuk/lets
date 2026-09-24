@@ -1,0 +1,4 @@
+COMMAND
+sed -n '/^func Foo/,/^}/p' src/pair.go
+===END===
+VERDICT allow

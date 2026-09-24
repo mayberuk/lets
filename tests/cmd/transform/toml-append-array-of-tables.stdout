@@ -1,0 +1,8 @@
+── Cargo.toml · toml · append bin · line 8
+ 5 	name = "a"
+ 6 	path = "src/a.rs"
+ 7+	
+ 8+	[[bin]]
+ 9+	name = "b"
+10+	path = "src/b.rs"
+── check: toml ok · sha:[..]→[..]

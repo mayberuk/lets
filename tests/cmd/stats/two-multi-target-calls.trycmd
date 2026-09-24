@@ -1,0 +1,17 @@
+Calls saved is the sum of (targets - 1) over every multi-target call: `show a.ts b.ts c.ts`
+saves 2, `edit x.ts y.ts` saves 1, and the single-target `show z.ts` saves nothing, so 3.
+
+```console
+$ lets stats --dir .
+sessions         1
+bash calls       3
+lets calls       3
+  edit           1
+  show           2
+hook blocks      0
+blocks followed  0
+calls saved      3
+read calls       0
+read bytes       0
+
+```

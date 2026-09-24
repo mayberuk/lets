@@ -1,0 +1,5 @@
+# spec.md § transform, attribute selectors in an array of tables: `servers[name=web]` is the
+# second `[[servers]]` table, index 1; only its `port` changes, and the footer names the
+# resolution. attribute-selector-no-match is the control.
+bin.name = "lets"
+args = ["transform", "servers.toml", "--set", "servers[name=web].port=9090"]

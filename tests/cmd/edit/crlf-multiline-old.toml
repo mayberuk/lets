@@ -1,0 +1,6 @@
+# `show` strips `\r`, so an agent types a multi-line `--old` with LF. On a file whose every
+# ending is CRLF the needle is read as CRLF, the footer says so, and every `\r\n` survives.
+# `<id>.out` is compared with newlines normalised, so the after-hash in `<id>.stdout` is what
+# proves the CRs were kept.
+bin.name = "lets"
+args = ["edit", "crlf.txt", "--old", "beta\ngamma", "--new", "BETA\nGAMMA"]

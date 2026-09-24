@@ -1,0 +1,4 @@
+COMMAND
+grep foo src/c.ts > hits.txt
+===END===
+VERDICT allow

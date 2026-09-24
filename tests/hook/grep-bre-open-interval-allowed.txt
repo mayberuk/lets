@@ -1,0 +1,4 @@
+COMMAND
+grep -n 'x\{,2\}' src/grep.txt
+===END===
+VERDICT allow

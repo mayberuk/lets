@@ -1,0 +1,8 @@
+bin.name = "lets"
+args = ["find", "needle", "many-hits.txt"]
+
+[status]
+code = 1
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

@@ -1,0 +1,9 @@
+COMMAND
+rg -i FOOBAR src
+===END===
+VERDICT block
+REASON lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: lets find -i 'FOOBAR' src
+===END===
+COMPARE search

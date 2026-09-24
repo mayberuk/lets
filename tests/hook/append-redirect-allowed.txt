@@ -1,0 +1,4 @@
+COMMAND
+echo line2 >> notes.md
+===END===
+VERDICT allow

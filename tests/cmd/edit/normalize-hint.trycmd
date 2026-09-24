@@ -1,0 +1,8 @@
+```console
+$ lets edit notes.md --old 'the agent - not the user - decides' --new 'the agent decides'
+? 1
+--old (a normalized match exists at line 6 — pass --normalize) not found in notes.md
+  nearest: line 6	In that case the agent – not the user – decides.
+ERROR_CODE=not_found
+
+```

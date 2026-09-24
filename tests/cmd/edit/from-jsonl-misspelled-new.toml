@@ -1,0 +1,7 @@
+# A misspelt key is dropped silently by a lenient parser (bug B1: a real "new" never arrives, and
+# the match gets deleted). Collecting every field by name catches the typo instead.
+bin.name = "lets"
+args = ["edit", "--from", "-"]
+
+[status]
+code = 64

@@ -1,0 +1,7 @@
+# An empty CODEX_HOME counts as unset: the install lands under `$HOME/.codex`, and the working
+# directory gains nothing but the sandboxed HOME the case itself made.
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; export CODEX_HOME=''; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install codex >/dev/null; test -f \"$HOME/.codex/hooks.json\" && echo hooks-json-under-home-codex; test ! -e hooks.json && echo no-hooks-json-in-cwd; ls -A"]
+
+[fs]
+sandbox = true

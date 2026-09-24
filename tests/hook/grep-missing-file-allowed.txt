@@ -1,0 +1,4 @@
+COMMAND
+grep foo src/missing.ts
+===END===
+VERDICT allow

@@ -1,0 +1,10 @@
+── deps/lock.json · json · set packages[1].version, version · lines 3, 6
+1 	{
+2 	  "name": "demo",
+3~	  "version": "1.5.0",
+4 	  "packages": [
+5 	    { "name": "left-pad", "version": "1.3.0" },
+6~	    { "name": "gitty", "version": "0.10" },
+7 	    { "name": "rimraf", "version": "3.0.2" }
+8 	  ]
+── check: json ok · sha:1c98a9357e3b→d51da333ff86 · packages[name=gitty].version → packages[1].version

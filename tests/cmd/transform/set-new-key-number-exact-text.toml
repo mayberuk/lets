@@ -1,0 +1,4 @@
+# spec.md § transform, typed --set: a new key's number is written as typed, so `3.10` lands as
+# `3.10`, not the `3.1` a re-serialized float would give. set-new-key-bool-is-typed is the control.
+bin.name = "lets"
+args = ["transform", "c.yaml", "--set", "version=3.10"]

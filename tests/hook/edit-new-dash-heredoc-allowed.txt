@@ -1,0 +1,6 @@
+COMMAND
+lets edit n.md --old note --new - <<'EOF'
+replacement
+EOF
+===END===
+VERDICT allow

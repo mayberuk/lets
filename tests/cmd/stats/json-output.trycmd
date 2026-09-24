@@ -1,0 +1,5 @@
+```console
+$ lets stats --dir . --json
+{"sessions":1,"bash_calls":1,"lets_calls":{"find":1},"hook_blocks":0,"blocks_followed":0,"calls_saved":0,"read_calls":1,"read_bytes":3}
+
+```

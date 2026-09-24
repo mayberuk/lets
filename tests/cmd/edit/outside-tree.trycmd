@@ -1,0 +1,7 @@
+```console
+$ lets edit ../escape.ts --old 'a' --new 'b'
+? 6
+../escape.ts is outside the working tree
+ERROR_CODE=outside_tree
+
+```

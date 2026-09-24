@@ -1,0 +1,12 @@
+```console
+$ lets edit config.yaml --old 'name: lets' --new 'name: lets:'
+? 3
+── config.yaml · 1 replacement · line 1 · REVERTED
+1~	name: lets:          ← invalid yaml
+2 	items:
+3 	  - one
+── check: invalid → reverted · file unchanged · sha:e1046ecc996b
+structured check failed for config.yaml: invalid
+ERROR_CODE=check_failed
+
+```

@@ -1,0 +1,4 @@
+COMMAND
+time cat src/a.ts
+===END===
+VERDICT allow

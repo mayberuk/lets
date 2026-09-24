@@ -1,0 +1,9 @@
+Layer 2 reverts the whole batch only on the one transition a checker can speak to: it passed before the edit and failed after it.
+
+```console
+$ lets edit usage.ts --old 'usageCap' --new 'usageLimit' --all --check 'grep -q usageCap {}'
+? 3
+command check failed for usage.ts: `grep -q usageCap {}` passed before the batch and failed after it · 1 file reverted
+ERROR_CODE=check_failed
+
+```

@@ -1,0 +1,31 @@
+# The displayed stage of this pipeline, `head -20`, names no file operand, so there is no
+# in-tree path for `lets show` to replace. A displayed stage that does name one still blocks:
+# `sort x | head -20 f.ts` gives `run: lets show f.ts:1-20`.
+find/too-many-hits/today:1
+
+# A line-addressed `sed -i` insert (`1i`, `2a`, `3i`) is not a substitution, so there is no
+# literal `--old`/`--new` pair to hand `lets edit`; with no runnable replacement it is allowed.
+edit/batch-across-files/today:3
+edit/insert-after-import/today:2
+edit/insert-before-symbol/today:2
+
+# The displayed stage, `tail -1`, names no file operand, so there is no in-tree path for
+# `lets show` to replace.
+edit/insert-after-import/today:1
+
+# Neither `git init` nor `mkdir` reads or writes file content.
+edit/outside-repo/today:1
+write/create-script/today:1
+
+# The classifier follows the leading `cd inner`, and `../usage.ts` from there is still inside the
+# event `cwd`'s tree, but a `sed -i` substitution without `g` has no exact `lets edit`
+# equivalent, so the statement stays allowed.
+edit/outside-repo/today:2
+
+# A `sed -i` substitution without the `g` flag replaces only the first match on each line, which
+# neither an exact-once `lets edit` nor `--all` reproduces, so it is left with no replacement.
+edit/batch-across-files/today:1
+edit/batch-across-files/today:2
+edit/em-dash-normalize/today:2
+edit/one-replacement/today:2
+edit/typo-breaks-file/today:1

@@ -1,0 +1,13 @@
+An edit between the fences of a `.md` file is a YAML edit, and the footer names the layer that judged it.
+
+```console
+$ lets edit notes.md --old 'date: 2026-09-19' --new 'date: 2026-09-21'
+── notes.md · 1 replacement · line 3 · exact
+1 	---
+2 	title: notes
+3~	date: 2026-09-21
+4 	---
+5 	# Notes
+── check: frontmatter ok · sha:a4f8537ddc9b→d50c4ac20aa0
+
+```

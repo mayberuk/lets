@@ -1,0 +1,9 @@
+`@cargo` runs in `a/`, the nearest `Cargo.toml`, and checks the whole workspace: `b` calls `a::double`, so renaming it in `a` alone passes a check of `a` and breaks `b`. The preset passed before the edit and failed after it, so the file is restored and the `.out` tree shows its original bytes. The sibling `.requires` names `cargo`, and the case is skipped by name on a box without it.
+
+```console
+$ lets edit a/src/lib.rs --old 'pub fn double' --new 'pub fn twice' --check @cargo
+? 3
+command check failed for a/src/lib.rs: `cargo check --workspace --quiet --all-targets` passed before the batch and failed after it[..] · 1 file reverted
+ERROR_CODE=check_failed
+
+```

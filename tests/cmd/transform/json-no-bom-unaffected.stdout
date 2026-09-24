@@ -1,0 +1,6 @@
+── c.json · json · set a · line 5
+3 	  "tags": [],
+4 	  "owner": "ops",
+5~	  "a": 2
+6 	}
+── check: json ok · sha:[..]→[..]

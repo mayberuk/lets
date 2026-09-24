@@ -1,0 +1,12 @@
+{
+  // the tools an agent may run unprompted
+  "allow": [
+    "ls",
+    "rg"
+  ],
+
+  "legacy": true,
+  "deny": {
+    "sudo": false,
+  }
+}

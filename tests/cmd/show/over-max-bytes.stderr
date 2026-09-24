@@ -1,0 +1,2 @@
+content is [..] bytes, over the 100-byte budget
+ERROR_CODE=over_budget

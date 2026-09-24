@@ -1,0 +1,9 @@
+```console
+$ lets edit badge.tsx --old 'className="badge"' --new 'className="chip"'
+── badge.tsx · 1 replacement · line 2 · exact
+1 	export const Badge = () => (
+2~	  <span className="chip" />
+3 	)
+── check: structure ok · sha:09a8548c52f6→8db345fb0af8
+
+```

@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"path":"lib.rs","replacements":1,"lines":[1],"match":"","region":{"start":1,"end":3,"lines":[{"number":1,"marker":"replaced","text":"pub f usage(id: &str) -> usize {          ← parse error"},{"number":2,"marker":"none","text":"    let cap = 10;"},{"number":3,"marker":"none","text":"    cap + id.len()"}]},"check":{"layer":"","status":"failed → reverted","errors_before":0,"errors_after":3},"sha":{"before":"4524d71069e8","after":"4524d71069e8"},"reverted":true,"omitted":[],"stats":{"lines":3,"bytes":148,"tokens_est":null}}

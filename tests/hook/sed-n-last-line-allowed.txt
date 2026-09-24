@@ -1,0 +1,4 @@
+COMMAND
+sed -n '$p' src/n.txt
+===END===
+VERDICT allow

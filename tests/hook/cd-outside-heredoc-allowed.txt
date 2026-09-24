@@ -1,0 +1,6 @@
+COMMAND
+cd /tmp/x && cat > a.txt <<'EOF'
+x
+EOF
+===END===
+VERDICT allow

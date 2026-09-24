@@ -1,0 +1,22 @@
+`-g` and its `--include` alias narrow the walk to the paths the glob matches, and the footer
+names the glob. The last call is the control: with no glob, the `.py` hit is searched too.
+
+```console
+$ lets find -g '*.ts' needle
+── a.ts
+1:	const «needle» = 1;
+── 1 hit in 1 file · searched 1 file · glob *.ts
+
+$ lets find --include '*.ts' needle
+── a.ts
+1:	const «needle» = 1;
+── 1 hit in 1 file · searched 1 file · glob *.ts
+
+$ lets find needle
+── a.ts
+1:	const «needle» = 1;
+── b.py
+1:	«needle» = 1
+── 2 hits in 2 files · searched 2 files
+
+```

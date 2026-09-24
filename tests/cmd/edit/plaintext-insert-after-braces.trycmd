@@ -1,0 +1,14 @@
+The same plaintext match, `#greet`, has a brace-matched end (`end_guessed` false), so
+`--insert-after` applies it rather than refusing.
+
+```console
+$ lets edit greet.kt --insert-after '#greet' --new '// end greet'
+── greet.kt · inserted 1 line after #greet (line 6)
+5 	    return "$prefix $name"
+6 	}
+7+	// end greet
+8 	
+9 	val limit = 20
+── sha:[..]→[..] · check: skipped (no grammar for .kt)
+
+```

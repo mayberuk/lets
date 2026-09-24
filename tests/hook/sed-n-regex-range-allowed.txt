@@ -1,0 +1,4 @@
+COMMAND
+sed -n '/n3/,/n5/p' src/n.txt
+===END===
+VERDICT allow

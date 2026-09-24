@@ -1,0 +1,5 @@
+# spec.md § transform, array-of-tables append: the object becomes a new `[[bin]]` table after the
+# last one, keys in the typed order, and every earlier byte is kept.
+# toml-append-non-object-to-array-of-tables-refused is the control.
+bin.name = "lets"
+args = ["transform", "Cargo.toml", "--append", 'bin[]={"name":"b","path":"src/b.rs"}']

@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"path":"fresh.sh","outcome":"created","lines":1,"bytes":8,"sha":"c51af3858716","check":{"layer":"structure","status":"ok","errors_before":0,"errors_after":0},"omitted":[],"stats":{"lines":1,"bytes":8,"tokens_est":null}}

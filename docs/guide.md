@@ -1,0 +1,14 @@
+lets — Locate · Edit · Transform · Show          one call, bounded output, post-state returned
+
+  show   <target>...            read files, ranges, anchors, symbols — several per call
+  find   <pattern> [path]...    search; hits print as path:line; capped at 50, says so
+                                -F/-i/-w · -A/-B/-C context · --files/-l · --count/-c
+                                grep's -n/--line-number -r -R -E -H are accepted as no-ops
+  edit   <target> --old --new   exact-once replace; --all; --insert-after; --from - for batches
+  transform <file> --set k=v    --append k=v; JSON/YAML/TOML/frontmatter keys, formatting preserved
+  write  <path> < stdin         create a file; refuses to overwrite without --force
+
+  targets   f.ts   f.ts:40-80   "f.ts@'regex'" -A 20   f.ts#funcName   f.md#'Heading'
+  exits     0 done · 1 none/over cap · 2 ambiguous · 3 check failed (reverted) · 4 over budget
+            5 changed since --if · 6 outside tree · 7 unsupported file · 8 batch partly written
+  after an edit the changed region is in the output — do not cat or sed -n to check it

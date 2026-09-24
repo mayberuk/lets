@@ -1,0 +1,4 @@
+COMMAND
+head -c 100 src/a.ts
+===END===
+VERDICT allow

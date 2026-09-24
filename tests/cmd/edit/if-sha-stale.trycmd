@@ -1,0 +1,9 @@
+`--if` names the hash the caller last saw. A hash the file does not have is exit 5 and no write: the caller re-reads rather than overwriting a change it never saw.
+
+```console
+$ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:000000000000
+? 5
+usage.ts changed since sha:000000000000 (now sha:c5525cc20b61)
+ERROR_CODE=changed
+
+```

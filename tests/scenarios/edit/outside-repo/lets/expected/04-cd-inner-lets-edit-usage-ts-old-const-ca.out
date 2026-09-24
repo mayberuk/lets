@@ -1,0 +1,7 @@
+── ../usage.ts · 1 replacement · line 6 · exact
+4 	  if (!id) return
+5 	  const now = clock.now()
+6~	  const cap = 20
+7 	  if (now > cap) return
+8 	  const total = usageCap + id.length
+── check: structure ok · sha:c5525cc20b61→419c5d6249b3

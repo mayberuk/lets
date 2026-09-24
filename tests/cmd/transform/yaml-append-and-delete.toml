@@ -1,0 +1,6 @@
+bin.name = "lets"
+args = ["transform", "config/settings.yaml", "--append", "allow[]=gh", "--delete", "legacy"]
+
+[fs]
+base = "../../fixtures/transform"
+sandbox = true

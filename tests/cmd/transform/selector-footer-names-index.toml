@@ -1,0 +1,5 @@
+# surface.md § Declarations, `Omission::SelectorResolved`: a typed selector is named beside the
+# index it resolved to, `{selector} → {resolved}`, after the check and sha segments of the footer.
+# set-attr-selector-resolved's header names only the resolved key; this footer names both.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "plugins[name=gitty].version=2.0"]

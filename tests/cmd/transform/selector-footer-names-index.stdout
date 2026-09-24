@@ -1,0 +1,7 @@
+── c.json · json · set plugins[2].version · line 5
+3 	    { "name": "alpha", "version": "1.0" },
+4 	    { "name": "beta", "version": "1.1" },
+5~	    { "name": "gitty", "version": "2.0" }
+6 	  ]
+7 	}
+── check: json ok · sha:[..]→[..] · plugins[name=gitty].version → plugins[2].version

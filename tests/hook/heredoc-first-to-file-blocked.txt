@@ -1,0 +1,11 @@
+COMMAND
+cat <<'EOF' > out2.ts
+y
+EOF
+===END===
+VERDICT block
+REASON lets write takes the same heredoc on stdin.
+REPLACEMENT
+run: lets write --force out2.ts
+===END===
+COMPARE write

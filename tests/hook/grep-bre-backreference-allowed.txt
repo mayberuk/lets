@@ -1,0 +1,4 @@
+COMMAND
+grep '\(a\)\1' src/grep.txt
+===END===
+VERDICT allow

@@ -1,0 +1,28 @@
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Unicode-3.0 is the one addition to MIT/Apache/BSD: `unicode-ident` carries it under an AND,
+# and every proc-macro reaches that through `syn`.
+allow = ["Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "MIT", "Unicode-3.0"]
+private = { ignore = true }
+
+[bans]
+# Catches a grammar crate that brings a second `tree-sitter` runtime.
+multiple-versions = "deny"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

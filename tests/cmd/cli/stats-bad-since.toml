@@ -1,0 +1,7 @@
+# The unit is validated at parse time, so a bad `--since` is a usage error even while `stats`
+# itself is not built.
+bin.name = "lets"
+args = ["stats", "--since", "7x"]
+
+[status]
+code = 64

@@ -1,0 +1,12 @@
+A file with no bundled grammar is named as skipped, never guessed at: the edit lands and the
+footer says which layer did not run.
+
+```console
+$ lets edit widget.vue --old 'cap' --new 'limit'
+── widget.vue · 1 replacement · line 2 · exact
+1 	<template>
+2~	  <span>{{ limit }}</span>
+3 	</template>
+── sha:da828baa490c→a97d99c23045 · check: skipped (no grammar for .vue)
+
+```

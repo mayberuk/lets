@@ -1,0 +1,2 @@
+── 2 hits in 1 file · «fooname\|barname» had no hits, read grep-style as «fooname|barname»
+2  src/names.go

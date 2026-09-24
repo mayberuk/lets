@@ -1,0 +1,6 @@
+# Compares hashes rather than a byte-exact golden, so jsonc-parser's formatting stays its own.
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install claude-code; hash1=$(sha256sum \"$HOME/.claude/settings.json\" | cut -d' ' -f1); \"$CARGO_BIN_EXE_lets\" hooks install claude-code; hash2=$(sha256sum \"$HOME/.claude/settings.json\" | cut -d' ' -f1); if [ \"$hash1\" = \"$hash2\" ]; then echo 'settings.json byte-identical across reinstall'; else echo 'settings.json changed across reinstall'; fi"]
+
+[fs]
+sandbox = true

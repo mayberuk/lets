@@ -1,0 +1,4 @@
+COMMAND
+if true; then cat src/a.ts; fi
+===END===
+VERDICT allow

@@ -1,0 +1,12 @@
+```console
+$ lets edit app.js --old 'function' --new 'functio'
+? 3
+── app.js · 1 replacement · line 1 · REVERTED
+1~	export functio usage(id) {          ← parse error
+2 	  const cap = 10
+3 	  return cap + id.length
+── check: failed → reverted · file unchanged · sha:0edfd9883665
+structure check failed for app.js: failed
+ERROR_CODE=check_failed
+
+```

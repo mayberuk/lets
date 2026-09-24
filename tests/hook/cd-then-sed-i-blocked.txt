@@ -1,0 +1,9 @@
+COMMAND
+cd src && sed -i 's/foo/baz/g' c.ts
+===END===
+VERDICT block
+REASON `cd src` kept; lets edit replaces the exact text and shows the changed lines.
+REPLACEMENT
+run: cd src && lets edit c.ts --old 'foo' --new 'baz' --all
+===END===
+COMPARE write

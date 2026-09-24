@@ -1,0 +1,4 @@
+COMMAND
+grep -E 'a{,2}' src/grep.txt
+===END===
+VERDICT allow

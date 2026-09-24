@@ -1,0 +1,4 @@
+COMMAND
+grep -n 'alpha\|\<beta' src/grep.txt
+===END===
+VERDICT allow

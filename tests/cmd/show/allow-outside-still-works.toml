@@ -1,0 +1,5 @@
+bin.name = "lets"
+args = ["show", "small.md", "--allow-outside"]
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

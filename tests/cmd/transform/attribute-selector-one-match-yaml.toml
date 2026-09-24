@@ -1,0 +1,5 @@
+# spec.md § transform, attribute selectors: `services[name=web]` is the one sequence item whose
+# `name` is `web`, index 1; only its `image` changes, and the footer names the resolution.
+# The JSON counterpart is set-attr-selector-resolved; attribute-selector-ambiguous is the control.
+bin.name = "lets"
+args = ["transform", "compose.yaml", "--set", "services[name=web].image=nginx:1.27"]

@@ -1,0 +1,8 @@
+bin.name = "lets"
+args = ["find", "(unclosed", "small.md"]
+
+[status]
+code = 1
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

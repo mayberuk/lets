@@ -1,0 +1,4 @@
+# spec.md § Targets: `C#.md:2` names no file, and `C#.md` is the longest prefix that does, so
+# only `:2` is read as the suffix. Without the prefix rule `#` splits first and `C` is not found.
+bin.name = "lets"
+args = ["show", "C#.md:2"]

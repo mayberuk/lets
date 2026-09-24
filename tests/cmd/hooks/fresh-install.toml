@@ -1,0 +1,8 @@
+# `sh -c` rather than `bin.name = "lets"`: the tier's own `HOME` wins over a case's env on a shared
+# key, so the case sets its sandboxed `HOME` itself, and puts the binary under test first on PATH
+# because install refuses unless a bare `lets` resolves to it.
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install claude-code"]
+
+[fs]
+sandbox = true

@@ -1,0 +1,2 @@
+bin.name = "lets"
+args = ["write", "scripts/new-check.sh", "--force"]

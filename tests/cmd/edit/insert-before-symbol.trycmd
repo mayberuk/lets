@@ -1,0 +1,11 @@
+```console
+$ lets edit usage.ts --insert-before '#usage' --new '/** Returns the running total for id. */'
+── usage.ts · inserted 1 line before #usage (line 3)
+1 	import { usageCap } from './config'
+2 	import { clock } from './clock'
+3+	/** Returns the running total for id. */
+4 	export function usage(id: string) {
+5 	  if (!id) return
+── check: structure ok · sha:c5525cc20b61→45b5b2745608
+
+```

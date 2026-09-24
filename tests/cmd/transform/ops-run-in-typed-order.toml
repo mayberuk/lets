@@ -1,0 +1,6 @@
+bin.name = "lets"
+args = ["transform", "config/order.yaml", "--set", "a=1", "--delete", "b", "--set", "b=2"]
+
+[fs]
+base = "../../fixtures/transform"
+sandbox = true

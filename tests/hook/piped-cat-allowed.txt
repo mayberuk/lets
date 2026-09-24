@@ -1,0 +1,4 @@
+COMMAND
+cat config/app.json | wc -l
+===END===
+VERDICT allow

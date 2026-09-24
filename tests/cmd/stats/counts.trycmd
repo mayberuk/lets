@@ -1,0 +1,14 @@
+```console
+$ lets stats --dir .
+sessions          1
+bash calls        5
+lets calls        3
+  edit            2
+  show            1
+hook blocks       1
+blocks followed   1
+calls saved       1
+read calls        1
+read bytes       10
+
+```

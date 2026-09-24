@@ -1,0 +1,5 @@
+import { usageCap } from './config'
+import { clock } from './clock'
+/** Returns the running total for id. */
+export function usage(id: string) {
+  if (!id) return

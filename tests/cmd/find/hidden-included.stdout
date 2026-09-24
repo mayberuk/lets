@@ -1,0 +1,3 @@
+── .hidden-file
+1:	hidden fixture file, «excluded from a default find» by dotfile skipping, included with --hidden
+── 1 hit in 1 file · searched 7 files · ignored 1 (gitignore 1) · skipped 1 (binary 1)

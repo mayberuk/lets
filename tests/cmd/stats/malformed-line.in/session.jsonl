@@ -1,0 +1,2 @@
+not json at all {{{
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"lets show a.ts"}}]}}

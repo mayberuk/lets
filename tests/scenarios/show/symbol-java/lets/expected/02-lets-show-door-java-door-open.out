@@ -1,0 +1,5 @@
+── Door.java#Door.open  (6-8 of 13 · via tree-sitter) · sha:aa3319d5ea2c
+6 	    public void open() {
+7 	        shut = false;
+8 	    }
+── showed 1 target · 3 lines

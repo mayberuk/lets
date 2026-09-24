@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+log="${LETS_TEST_LOG:?}"
+printf 'lets %s\n' "$*" >>"$log"
+case "${1:-}" in
+  version)
+    if [ "${2:-}" = "--json" ]; then
+      printf '{"version":"%s"}\n' "${LETS_FAKE_VERSION:-1.2.3}"
+    fi
+    ;;
+  update)
+    if [ "${2:-}" = "--check" ]; then
+      exit "${LETS_FAKE_CHECK_EXIT:-0}"
+    fi
+    ;;
+  hooks)
+    printf 'hooks %s %s done\n' "${2:-}" "${3:-}"
+    ;;
+esac

@@ -1,0 +1,4 @@
+COMMAND
+grep -n '\+a' src/grep.txt
+===END===
+VERDICT allow

@@ -1,0 +1,10 @@
+---
+source: tests/json_snapshots.rs
+expression: run.err
+---
+error: the argument '--json' cannot be used with '--jsonl'
+
+Usage: lets show --json <TARGETS>...
+
+For more information, try '--help'.
+ERROR_CODE=usage

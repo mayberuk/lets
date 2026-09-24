@@ -1,0 +1,10 @@
+# A relative CODEX_HOME would resolve against whatever directory the install ran in, so it is a
+# usage error naming the value, and nothing is written anywhere: the sandbox stays empty.
+bin.name = "sh"
+args = ["-c", "export HOME=\"$(pwd)/home\"; export CODEX_HOME=codex-config; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install codex; status=$?; ls -A; exit \"$status\""]
+
+[status]
+code = 64
+
+[fs]
+sandbox = true

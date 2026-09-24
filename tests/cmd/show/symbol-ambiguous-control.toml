@@ -1,0 +1,5 @@
+bin.name = "lets"
+args = ["show", "store.go#Store.Open"]
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

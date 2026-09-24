@@ -1,0 +1,6 @@
+COMMAND
+cat >> src/b.ts <<'EOF'
+appended
+EOF
+===END===
+VERDICT allow

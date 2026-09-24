@@ -1,0 +1,7 @@
+# The typed value is refused, not the document: an integer past i64 is exit 64 `usage` naming
+# TOML's range, and the `.out` tree shows c.toml unchanged. toml-integer-i64-max is the control.
+bin.name = "lets"
+args = ["transform", "c.toml", "--set", "b=99999999999999999999"]
+
+[status]
+code = 64

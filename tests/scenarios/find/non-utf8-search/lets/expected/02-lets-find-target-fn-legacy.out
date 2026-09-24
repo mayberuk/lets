@@ -1,0 +1,3 @@
+── legacy/m.rs
+3:	fn «target_fn»() { 1 }
+── 1 hit in 1 file · searched 1 file · skipped 2 (binary 2)

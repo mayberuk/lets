@@ -1,0 +1,13 @@
+COMMAND
+cat -n src/a.ts
+===END===
+VERDICT block
+REASON lets show reads several files and ranges in one call.
+REPLACEMENT
+run: lets show src/a.ts
+===END===
+COMPARE read
+ORACLE
+# cat -n prefixes each line with its number, which the read comparison would take as content.
+cat src/a.ts
+===END===

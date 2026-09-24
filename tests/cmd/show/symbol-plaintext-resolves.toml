@@ -1,0 +1,4 @@
+# spec.md § Targets: `#name` in a file with no bundled grammar falls back to the plaintext
+# heuristic. `fun greet` is a keyword definition whose `{` closes on line 5.
+bin.name = "lets"
+args = ["show", "greet.kt#greet"]

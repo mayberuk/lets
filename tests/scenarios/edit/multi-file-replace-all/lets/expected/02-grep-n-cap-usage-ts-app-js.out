@@ -1,0 +1,4 @@
+usage.ts:6:  const cap = 20
+usage.ts:7:  if (now > cap) return
+app.js:2:  const cap = 20
+app.js:3:  return cap + id.length

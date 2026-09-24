@@ -1,0 +1,4 @@
+COMMAND
+grep -n foo *
+===END===
+VERDICT allow

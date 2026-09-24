@@ -1,0 +1,32 @@
+A hash shorter than a `show` header prints is refused before the file is read: a short prefix
+can collide, and a stale-guard that collides is not a guard.
+
+```console
+$ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:abc
+? 64
+error: invalid value 'sha:abc' for [..]: --if takes sha: and 12 or more lowercase hex digits, as a show header prints it
+...
+ERROR_CODE=usage
+
+```
+
+Uppercase hex is refused too; a show header never prints it.
+
+```console
+$ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:0123456789AB
+? 64
+error: invalid value 'sha:0123456789AB' for [..]: --if takes sha: and 12 or more lowercase hex digits, as a show header prints it
+...
+ERROR_CODE=usage
+
+```
+
+The control: a well-formed hash passes validation and reaches the stale check, which the file fails.
+
+```console
+$ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:000000000000
+? 5
+usage.ts changed since sha:000000000000 (now sha:c5525cc20b61)
+ERROR_CODE=changed
+
+```

@@ -1,0 +1,10 @@
+# spec.md § show exit 1, "a target matched nothing (others still shown)", and the footer contract:
+# both missing targets are named in the footer and on stderr, not only the first.
+bin.name = "lets"
+args = ["show", "nope1.ts", "small.md:3", "nope2.ts"]
+
+[status]
+code = 1
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

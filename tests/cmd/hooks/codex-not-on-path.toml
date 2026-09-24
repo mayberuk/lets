@@ -1,0 +1,10 @@
+# The hooks run a bare `lets`, so installing from a binary PATH does not reach would wire hooks
+# that cannot run. No `set -e`: the script captures `lets`'s exit code before checking `.codex`.
+bin.name = "sh"
+args = ["-c", "export HOME=\"$(pwd)/home\"; export PATH=\"$(pwd)/empty\"; \"$CARGO_BIN_EXE_lets\" hooks install codex; status=$?; if [ -e \"$HOME/.codex\" ]; then echo unexpected-codex-dir-exists; else echo no-codex-dir-created; fi; exit \"$status\""]
+
+[status]
+code = 1
+
+[fs]
+sandbox = true

@@ -1,0 +1,2 @@
+a JSON object to append (an array of tables takes only objects) not found in bin
+ERROR_CODE=not_found

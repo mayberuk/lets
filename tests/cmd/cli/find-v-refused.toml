@@ -1,0 +1,10 @@
+# `find` has no complement mode, so `-v` is refused rather than ignored: ignoring it would print
+# the very lines the caller asked to drop. The replacement command is the last line before the code.
+bin.name = "lets"
+args = ["find", "-v", "filler", "."]
+
+[status]
+code = 64
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

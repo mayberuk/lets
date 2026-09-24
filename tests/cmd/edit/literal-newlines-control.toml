@@ -1,0 +1,4 @@
+# The control for `literal-newlines.toml`: the same CR-bearing `--new`, joined with the file's
+# own line ending instead of taken verbatim, so the CR never reaches the file.
+bin.name = "lets"
+args = ["edit", "lf.txt", "--old", "beta", "--new", "BETA\r\nGAMMA"]

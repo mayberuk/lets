@@ -1,0 +1,3 @@
+── c.json · json · set a · line 1
+1~	{"a": 2}
+── check: json ok · sha:29b1075590b4→4f052b9006ba · check: skipped (@cargo found no Cargo.toml)

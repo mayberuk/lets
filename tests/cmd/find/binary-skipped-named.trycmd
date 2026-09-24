@@ -1,0 +1,19 @@
+A file holding a NUL is not text to search, and the footer and `omitted` name the skip rather
+than letting the search read as covering it. The last call is the control: with only the text
+file as the root nothing is skipped, so nothing is named.
+
+```console
+$ lets find needle
+── text.txt
+1:	«needle»
+── 1 hit in 1 file · searched 1 file · skipped 1 (binary 1)
+
+$ lets find needle --json
+[..]"omitted":[{"skipped":{"binary":1,"too_large":0,"unreadable":0}}][..]
+
+$ lets find needle text.txt
+── text.txt
+1:	«needle»
+── 1 hit in 1 file · searched 1 file
+
+```

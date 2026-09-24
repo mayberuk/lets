@@ -1,0 +1,4 @@
+COMMAND
+cat app/[slug]/page.tsx
+===END===
+VERDICT allow

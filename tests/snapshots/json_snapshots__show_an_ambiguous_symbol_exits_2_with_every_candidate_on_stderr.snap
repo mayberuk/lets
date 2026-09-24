@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"error":{"slug":"ambiguous","message":"store.go#Open is ambiguous (2 candidates)\n  store.go:44\tfunc Open(path string) (*Store, error) {\n  store.go:213\tfunc (s *Store) Open(ctx context.Context) error {"},"omitted":[],"stats":{"lines":0,"bytes":0,"tokens_est":null}}

@@ -1,0 +1,9 @@
+# FAKE_LATEST_TAG unset: the fake fails the lookup the way curl does with no network.
+bin.name = "sh"
+args = ["-c", "export PATH=\"$(pwd)/fake-bin:$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; export FAKE_CURL_LOG=\"$(pwd)/curl-calls\"; unset FAKE_LATEST_TAG; \"$CARGO_BIN_EXE_lets\" update --check"]
+
+[status]
+code = 7
+
+[fs]
+sandbox = true

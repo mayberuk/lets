@@ -1,0 +1,4 @@
+COMMAND
+grep -E 'v\d' src/grep.txt
+===END===
+VERDICT allow

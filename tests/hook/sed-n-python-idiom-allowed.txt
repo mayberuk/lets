@@ -1,0 +1,4 @@
+COMMAND
+sed -n '/^def target/,/^}/p' src/sym.py
+===END===
+VERDICT allow

@@ -1,0 +1,9 @@
+bin.name = "lets"
+args = ["transform", "broken/invalid.json", "--set", "a=1"]
+
+[status]
+code = 3
+
+[fs]
+base = "../../fixtures/transform"
+sandbox = true

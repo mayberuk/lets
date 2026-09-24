@@ -1,0 +1,8 @@
+# surface.md § Declarations, `Error::Usage`: `--from -` input that is not JSONL exits 64 `usage`
+# and names the line. Line 1 is well formed, so the refusal comes before any file is touched, and
+# the `.out` tree shows c.json unchanged.
+bin.name = "lets"
+args = ["transform", "--from", "-"]
+
+[status]
+code = 64

@@ -1,0 +1,7 @@
+```console
+$ lets bogus
+? 64
+...
+ERROR_CODE=usage
+
+```

@@ -1,0 +1,7 @@
+# CODEX_HOME redirects the install target away from `$HOME/.codex`: `lets hooks install codex`
+# writes only there, touches neither the working tree's own `.codex/` nor `AGENTS.md` anywhere.
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; export CODEX_HOME=\"$(pwd)/codex-config\"; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install codex >/dev/null; test -f \"$CODEX_HOME/hooks.json\" && echo hooks-json-at-codex-home; test ! -e \"$(pwd)/.codex\" && echo no-dot-codex-in-working-tree; test ! -e \"$HOME/.codex\" && echo no-dot-codex-under-home; test ! -e \"$CODEX_HOME/AGENTS.md\" && echo no-agents-md-written"]
+
+[fs]
+sandbox = true

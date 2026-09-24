@@ -1,0 +1,6 @@
+search-with-context
+too-many-hits
+non-utf8-search
+unreadable-subdir
+glob-narrowing
+grep-style-alternation

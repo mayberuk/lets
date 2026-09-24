@@ -1,0 +1,5 @@
+bin.name = "lets"
+args = ["write", "f.txt"]
+
+[status]
+code = 1

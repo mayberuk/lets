@@ -1,0 +1,2 @@
+line 1: "new" must be a string
+ERROR_CODE=usage

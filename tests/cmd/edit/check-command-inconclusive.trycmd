@@ -1,0 +1,13 @@
+A checker that already failed before the edit cannot judge it, so the edit is kept and the verdict says so.
+
+```console
+$ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check checker-fail
+── usage.ts · 1 replacement · line 6 · exact
+4 	  if (!id) return
+5 	  const now = clock.now()
+6~	  const cap = 20
+7 	  if (now > cap) return
+8 	  const total = usageCap + id.length
+── check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: checker-fail inconclusive (failed before and after)
+
+```

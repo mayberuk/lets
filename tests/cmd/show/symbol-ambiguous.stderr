@@ -1,0 +1,4 @@
+store.go#Open is ambiguous (2 candidates)
+  store.go:44	func Open(path string) (*Store, error) {
+  store.go:213	func (s *Store) Open(ctx context.Context) error {
+ERROR_CODE=ambiguous

@@ -1,0 +1,2 @@
+CODEX_HOME=codex-config is a relative path · set it to an absolute path, or unset it to install under ~/.codex
+ERROR_CODE=usage

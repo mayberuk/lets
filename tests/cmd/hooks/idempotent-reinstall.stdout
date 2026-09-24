@@ -1,0 +1,7 @@
+added the PreToolUse hook
+added the SubagentStart hook
+added the SessionStart hook
+the PreToolUse hook was already installed
+the SubagentStart hook was already installed
+the SessionStart hook was already installed
+settings.json byte-identical across reinstall

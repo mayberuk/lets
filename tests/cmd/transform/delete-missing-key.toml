@@ -1,0 +1,9 @@
+bin.name = "lets"
+args = ["transform", "config/app.json", "--delete", "features.missing"]
+
+[status]
+code = 1
+
+[fs]
+base = "../../fixtures/transform"
+sandbox = true

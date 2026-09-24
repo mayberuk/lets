@@ -1,0 +1,2 @@
+bin.name = "sh"
+args = ["-c", "listing=$(ls -A \"$HOME\"); if [ -z \"$listing\" ]; then echo empty; else echo not-empty; fi"]

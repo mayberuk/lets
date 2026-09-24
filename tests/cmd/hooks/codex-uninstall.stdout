@@ -1,0 +1,3 @@
+removed the PreToolUse hook
+nothing to remove
+hooks.json byte-identical after install then uninstall

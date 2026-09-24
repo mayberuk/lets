@@ -1,0 +1,9 @@
+```console
+$ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:abc
+? 64
+error: invalid value 'sha:abc' for '--if <IF_SHA>': --if takes sha: and 12 or more lowercase hex digits, as a show header prints it
+
+For more information, try '--help'.
+ERROR_CODE=usage
+
+```

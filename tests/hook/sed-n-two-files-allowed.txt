@@ -1,0 +1,4 @@
+COMMAND
+sed -n '1,2p' src/n.txt src/b.ts
+===END===
+VERDICT allow

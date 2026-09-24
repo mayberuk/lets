@@ -1,0 +1,13 @@
+`golangci-lint` is a real external checker: the sibling `.requires` file names it and the `go` toolchain it drives, and the case is skipped by name on a box that has neither. The fixture builds and passes the default linters before and after the edit, so `ok` is the only verdict the checker can reach.
+
+```console
+$ lets edit usage.go --old 'base + len(id)' --new 'base*2 + len(id)' --check 'golangci-lint run'
+── usage.go · 1 replacement · line 5 · exact
+3   func Usage(id string) int {
+4   	base := 10
+5~  	limit := base*2 + len(id)
+6   	return limit
+7   }
+── check: golangci-lint run ok · sha:0dde909e3573→880ac56683ec
+
+```

@@ -1,0 +1,11 @@
+# spec.md § edit exit 7 (unsupported file), shared by transform: a TypeScript file is text, so
+# the message names the real reason rather than "binary file".
+bin.name = "lets"
+args = ["transform", "big.ts", "--set", "a=1"]
+
+[status]
+code = 7
+
+[fs]
+base = "../../../target/cmd-fixtures/read"
+sandbox = true

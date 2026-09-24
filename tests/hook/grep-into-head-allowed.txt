@@ -1,0 +1,4 @@
+COMMAND
+grep -n 'line 1' src/a.ts | head -2
+===END===
+VERDICT allow

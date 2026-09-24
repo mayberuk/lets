@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"lets edit replaces the exact text and shows the changed lines.\nrun: lets edit src/a.ts notes.md --old 'line' --new 'row' --all"}}

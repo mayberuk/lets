@@ -1,0 +1,5 @@
+bin.name = "lets"
+args = ["edit", "--from", "-"]
+
+[status]
+code = 64

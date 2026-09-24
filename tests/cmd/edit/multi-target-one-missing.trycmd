@@ -1,0 +1,9 @@
+```console
+$ lets edit app.js cap.py --old 'const cap = 10' --new 'const cap = 20'
+? 1
+── 0 of 2 applied · nothing written · fix cap.py and re-run
+--old not found in cap.py
+  nearest: line 2	    cap = 10
+ERROR_CODE=not_found
+
+```

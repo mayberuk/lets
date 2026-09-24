@@ -1,0 +1,4 @@
+COMMAND
+cd "$D" && cat src/a.ts
+===END===
+VERDICT allow

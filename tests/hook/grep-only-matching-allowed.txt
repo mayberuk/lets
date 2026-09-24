@@ -1,0 +1,4 @@
+COMMAND
+grep -o 'foo[A-Z]' src/c.ts
+===END===
+VERDICT allow

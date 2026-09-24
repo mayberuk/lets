@@ -1,0 +1,10 @@
+```console
+$ lets edit lib.rs --old 'let cap = 10;' --new 'let cap = 20;'
+── lib.rs · 1 replacement · line 2 · exact
+1 	pub fn usage(id: &str) -> usize {
+2~	    let cap = 20;
+3 	    cap + id.len()
+4 	}
+── check: structure ok · sha:4524d71069e8→0822e5131981
+
+```

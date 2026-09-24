@@ -1,0 +1,4 @@
+COMMAND
+git diff > changes.patch
+===END===
+VERDICT allow

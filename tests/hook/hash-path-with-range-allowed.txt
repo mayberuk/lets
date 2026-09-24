@@ -1,0 +1,4 @@
+COMMAND
+head -n 1 C#.md
+===END===
+VERDICT allow

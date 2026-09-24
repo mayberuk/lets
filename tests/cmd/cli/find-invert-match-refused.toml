@@ -1,0 +1,8 @@
+bin.name = "lets"
+args = ["find", "--invert-match", "filler", "."]
+
+[status]
+code = 64
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

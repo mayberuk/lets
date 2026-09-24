@@ -1,0 +1,4 @@
+COMMAND
+npm test > results.log 2>&1
+===END===
+VERDICT allow

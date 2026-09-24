@@ -1,0 +1,11 @@
+COMMAND
+cat > src/x.sh <<'EOF'
+echo hi
+EOF
+===END===
+VERDICT block
+REASON lets write takes the same heredoc on stdin.
+REPLACEMENT
+run: lets write --force src/x.sh
+===END===
+COMPARE write

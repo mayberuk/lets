@@ -1,0 +1,93 @@
+[package]
+name = "lets"
+version = "0.0.1"
+edition = "2024"
+# 1.96 does not build: yamlpath's transitive `tree-sitter-iter` 1.30.1 requires rustc 1.97.0.
+rust-version = "1.97"
+description = "Locate, edit, transform and show files in one bounded call, for coding agents"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mayberuk/lets"
+homepage = "https://github.com/mayberuk/lets"
+readme = "README.md"
+keywords = ["cli", "agents", "claude-code", "codex", "files"]
+categories = ["command-line-utilities", "development-tools"]
+# Installed from GitHub releases only; `lets update` resolves them from `repository`.
+publish = false
+
+[lib]
+name = "lets"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lets"
+path = "src/main.rs"
+
+[dependencies]
+blake3 = "1.8.7"
+clap = { version = "4.6.7", features = ["derive"] }
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
+ignore = "0.4.33"
+jsonc-parser = { version = "0.33.2", features = ["cst"] }
+regex = "1.13.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"
+tempfile = "3.27.0"
+thiserror = "2"
+toml_edit = "0.25.15"
+# Not 0.27: yamlpath needs `^0.26.9`, and tree-sitter's `links` allows one version per binary.
+# 0.26.13 covers ABI 13-15, which every bundled grammar was generated at.
+tree-sitter = "0.26.13"
+tree-sitter-language = "0.1.8"
+yamlpatch = "1.30.1"
+yamlpath = "1.30.1"
+
+# `tree-sitter-md`'s `parser` feature stays off: it links a second tree-sitter runtime.
+tree-sitter-bash = "0.25.1"
+tree-sitter-c = "0.24.2"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-json = "0.24.8"
+tree-sitter-md = "0.5.3"
+tree-sitter-php = "0.24.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-rust = "0.24.2"
+tree-sitter-swift = "0.7.3"
+tree-sitter-toml-ng = "0.7.0"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-yaml = "0.7.2"
+
+[dev-dependencies]
+divan = "0.1.21"
+insta = "1.48.0"
+proptest = "1.11.0"
+trycmd = "1.2.1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[[bench]]
+name = "wall_clock"
+path = "benches/wall_clock.rs"
+harness = false
+
+[[bench]]
+name = "alloc"
+path = "benches/alloc.rs"
+harness = false
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# thiserror's `#[error]` already states every failure.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# The library's only consumer is this crate's own binary.
+must_use_candidate = "allow"

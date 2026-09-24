@@ -1,0 +1,14 @@
+database = { host = "localhost", port = 5432 }
+meta.owner = "platform"
+
+[server]
+port = 8080
+timeout   =    30 # seconds
+
+[[servers]]
+name = "alpha"
+port = 9000
+
+[[servers]]
+name = "beta"
+port = 9001

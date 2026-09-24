@@ -1,0 +1,4 @@
+services[name=web].image is ambiguous (2 candidates)
+  compose.yaml:2	services[0].name="web"
+  compose.yaml:4	services[1].name="web"
+ERROR_CODE=ambiguous

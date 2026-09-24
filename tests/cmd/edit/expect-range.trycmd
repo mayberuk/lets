@@ -1,0 +1,13 @@
+Lines locate, content confirms: the range is replaced only because line 6 is the whole line `--expect` named. The whole line goes, so `--new` carries its indentation.
+
+```console
+$ lets edit usage.ts:6 --expect 'const cap = 10' --new '  const cap = 20'
+── usage.ts · 1 replacement · line 6 · expect matched
+4 	  if (!id) return
+5 	  const now = clock.now()
+6~	  const cap = 20
+7 	  if (now > cap) return
+8 	  const total = usageCap + id.length
+── check: structure ok · sha:c5525cc20b61→419c5d6249b3
+
+```

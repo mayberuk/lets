@@ -1,0 +1,17 @@
+── [HOME]/.codex/hooks.json  (1-15 of 15) · sha:3282e66b609d
+ 1 	{
+ 2 	  "hooks": {
+ 3 	    "PreToolUse": [
+ 4 	      {
+ 5 	        "matcher": "Bash",
+ 6 	        "hooks": [
+ 7 	          {
+ 8 	            "type": "command",
+ 9 	            "command": "lets hook classify"
+10 	          }
+11 	        ]
+12 	      }
+13 	    ]
+14 	  }
+15 	}
+── showed 1 target · 15 lines
