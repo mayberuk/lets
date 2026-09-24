@@ -2,8 +2,26 @@
 //! `\(` and `(`, `\+` and `+`), and `a\|b` carried across reports no hits with confidence, so a
 //! pattern is translated exactly or not at all. A `grep -E` pattern is refused where they part.
 
-/// grep's own `RE_DUP_MAX`: grep rejects a larger bound itself.
-const MAX_INTERVAL_BOUND: u32 = 32_767;
+/// Apple's grep compiles with libc's TRE in `REG_ENHANCED` mode and FreeBSD's with libregex: both
+/// read `\|`, `\+` and `\?` as GNU does, but not a `$` before `\|` or a bound over 255.
+const BSD_GREP: bool = cfg!(any(
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+));
+
+/// These BSDs' grep calls plain POSIX `regcomp`, which reads BRE `\|`, `\+` and `\?` as literals.
+const BRE_GNU_OPERATORS: bool = !cfg!(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+));
+
+/// grep's own `RE_DUP_MAX` (glibc 32,767; Darwin `sys/syslimits.h` and the BSDs 255): grep
+/// rejects a larger bound itself.
+const MAX_INTERVAL_BOUND: u32 = if BSD_GREP { 255 } else { 32_767 };
 
 /// The `regex` crate also accepts `ascii` and `word`, which grep rejects.
 const POSIX_CLASSES: [&str; 12] = [
@@ -48,6 +66,10 @@ pub(super) fn translate(pattern: &str) -> Option<String> {
     while let Some((at, c)) = chars.next() {
         last = match c {
             '\\' => match chars.next()?.1 {
+                '|' | '+' | '?' if !BRE_GNU_OPERATORS => return None,
+                // An empty branch matches every line to GNU grep; BSD regex rejects it, or reads a
+                // `\|` that opens a branch as a literal bar.
+                '|' | ')' if last == Last::Nothing => return None,
                 '|' => {
                     out.push('|');
                     Last::Nothing
@@ -96,6 +118,8 @@ pub(super) fn translate(pattern: &str) -> Option<String> {
                 out.push('^');
                 Last::Anchor
             },
+            // Apple's TRE reads a `$` before `\|` as a literal, FreeBSD's libregex as an anchor.
+            '$' if BSD_GREP && pattern[at + 1..].starts_with(r"\|") => return None,
             '$' if ends_a_branch(&pattern[at + 1..]) => {
                 out.push('$');
                 Last::Anchor
@@ -121,7 +145,7 @@ pub(super) fn translate(pattern: &str) -> Option<String> {
             },
         };
     }
-    (depth == 0).then_some(out)
+    (depth == 0 && last != Last::Nothing).then_some(out)
 }
 
 /// The dialects share every operator, so this refuses where they part: `\d`, `\s` and `\w` are
@@ -153,14 +177,12 @@ pub(super) fn translate_extended(pattern: &str) -> Option<String> {
                 },
                 _ => return None,
             },
+            '|' | ')' if last == Last::Nothing => return None,
             '|' => {
                 out.push('|');
                 Last::Nothing
             },
             '(' => {
-                if chars.peek().is_some_and(|&(_, next)| next == ')') {
-                    return None;
-                }
                 depth += 1;
                 out.push('(');
                 Last::Nothing
@@ -199,7 +221,7 @@ pub(super) fn translate_extended(pattern: &str) -> Option<String> {
             },
         };
     }
-    (depth == 0).then_some(out)
+    (depth == 0 && last != Last::Nothing).then_some(out)
 }
 
 /// A class, not a backslash escape: `lets find` retries a no-hit pattern in grep's reading,
@@ -443,9 +465,94 @@ mod tests {
     fn a_dollar_anchors_only_where_a_branch_ends() {
         assert_eq!(translated("a$"), "a$");
         assert_eq!(translated(r"\(a$\)"), "(a$)");
-        assert_eq!(translated(r"a$\|b"), "a$|b");
         assert_eq!(translated("a$b"), r"a\$b");
         assert_eq!(translated("$$"), r"\$$");
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    )))]
+    #[test]
+    fn a_dollar_before_an_escaped_bar_anchors() {
+        assert_eq!(translated(r"a$\|b"), "a$|b");
+    }
+
+    /// Apple's TRE reads this `$` as a literal and FreeBSD's libregex as an anchor.
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))]
+    #[test]
+    fn on_bsd_a_dollar_before_an_escaped_bar_does_not_translate() {
+        untranslated(r"a$\|b");
+        assert_eq!(translated(r"\(a$\)"), "(a$)");
+        assert_eq!(translated("a$"), "a$");
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    )))]
+    #[test]
+    fn a_bound_over_255_translates_where_grep_allows_32767() {
+        assert_eq!(translated(r"x\{256\}"), "x{256}");
+        assert_eq!(extended("x{2,1000}"), "x{2,1000}");
+    }
+
+    /// `RE_DUP_MAX` is 255 in Darwin's `sys/syslimits.h` and the BSD libcs, so grep rejects more.
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))]
+    #[test]
+    fn on_bsd_a_bound_over_255_does_not_translate() {
+        assert_eq!(translated(r"x\{255\}"), "x{255}");
+        untranslated(r"x\{256\}");
+        not_extended("x{256}");
+        not_extended("x{2,256}");
+    }
+
+    #[cfg(any(target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    #[test]
+    fn where_grep_is_posix_only_a_gnu_operator_escape_does_not_translate() {
+        for pattern in [r"a\|b", r"a\+", r"a\?"] {
+            untranslated(pattern);
+        }
+        assert_eq!(translated(r"\(a\)\{2\}"), "(a){2}");
+    }
+
+    /// GNU grep matches every line; BSD regex rejects the pattern or reads that bar as a literal.
+    #[test]
+    fn an_empty_branch_or_group_does_not_translate() {
+        for pattern in [
+            r"\|", r"a\|", r"\|a", r"a\|\|b", r"\(\|a\)", r"\(a\|\)", r"\(\)",
+        ] {
+            untranslated(pattern);
+        }
+        for pattern in ["|", "a|", "|a", "a||b", "(|a)", "(a|)", "()"] {
+            not_extended(pattern);
+        }
+        assert_eq!(extended("^|a"), "^|a");
+    }
+
+    #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly")))]
+    #[test]
+    fn a_branch_holding_only_an_anchor_is_not_empty() {
+        assert_eq!(translated(r"^\|a"), "^|a");
+        assert_eq!(translated(r"a\|b"), "a|b");
     }
 
     #[test]

@@ -51,6 +51,7 @@ grep-bre-alternation-blocked
 grep-bre-alternation-word-start-allowed
 grep-bre-backreference-allowed
 grep-bre-double-quoted-brace-backtick-blocked
+grep-bre-empty-alternation-allowed
 grep-bre-group-before-literal-paren-blocked
 grep-bre-group-blocked
 grep-bre-heading-interval-blocked
@@ -73,6 +74,7 @@ grep-displayed-blocked
 grep-double-quoted-escape-blocked
 grep-double-quoted-gnu-escape-allowed
 grep-ere-alternation-blocked
+grep-ere-empty-alternation-allowed
 grep-ere-leading-star-allowed
 grep-ere-open-interval-allowed
 grep-ere-perl-class-in-bracket-allowed
