@@ -50,7 +50,7 @@ code, pre, kbd, samp { font-family: var(--mono); font-variant-ligatures: none; }
 :focus-visible { outline: 2px solid var(--blue-top); outline-offset: 2px; border-radius: 4px; }
 [hidden] { display: none !important; }
 .vh { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.skip { position: absolute; left: 12px; top: -60px; z-index: 200; background: var(--paper); color: var(--ink); padding: 8px 12px; border-radius: 6px; box-shadow: var(--shadow); }
+.skip { position: absolute; left: 12px; top: -60px; z-index: 200; background: var(--paper); color: var(--ink); padding: 9px 12px; border-radius: 6px; box-shadow: var(--shadow); }
 .skip:focus { top: 44px; }
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transparent; }
@@ -120,6 +120,7 @@ code, pre, kbd, samp { font-family: var(--mono); font-variant-ligatures: none; }
 .hb .lead, .hb .ctl { display: flex; align-items: center; gap: 6px; flex: none; }
 .hb .lead svg { width: 18px; height: 18px; }
 .ctl button {
+  position: relative;
   width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 0; cursor: pointer; color: var(--ink);
   background: color-mix(in srgb, var(--ink) 8%, transparent); display: grid; place-items: center;
   transition: background .12s;
@@ -202,7 +203,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; user-select: none;
 .toast > svg { width: 30px; height: 30px; }
 .toast b { display: block; font-size: 15px; }
 .toast span { font-size: 14px; color: var(--ink-2); }
-.toast button { border: 0; background: none; color: var(--ink-2); width: 28px; height: 28px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; }
+.toast button { position: relative; border: 0; background: none; color: var(--ink-2); width: 28px; height: 28px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; }
 .toast button:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
 .toast button svg { width: 16px; height: 16px; }
 
@@ -225,6 +226,14 @@ body.dragging, body.dragging * { cursor: grabbing !important; user-select: none;
 .picker input:checked + .sw-prev { outline: 2px solid var(--blue-top); outline-offset: 2px; }
 .picker input:focus-visible + .sw-prev { outline: 3px solid var(--blue-top); outline-offset: 3px; }
 .picker label:hover .sw-prev { filter: brightness(1.04); }
+
+@media (pointer: coarse) {
+  .panel a, .panel .pbtn { min-height: 44px; display: flex; align-items: center; }
+  .pbtn { min-width: 44px; justify-content: center; }
+  .key { min-height: 44px; }
+  .ctl button::before, .toast button::before { content: ''; position: absolute; inset: -10px; }
+  summary { padding-block: 12px; margin-block: -12px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }

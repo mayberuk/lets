@@ -115,11 +115,13 @@ function initAnatomy() {
   const mark = (n: string | null) => keyed.forEach((el) => el.classList.toggle('on', n !== null && el.dataset.n === n));
   keyed.forEach((el) => {
     const n = el.dataset.n!;
+    // Tapping an <li> fires a ghost mouseenter before its click, so a hover binding here
+    // would double-toggle it; the legend items rely on click alone.
+    if (el.tagName === 'LI') { el.addEventListener('click', () => mark(el.classList.contains('on') ? null : n)); return; }
     el.addEventListener('mouseenter', () => mark(n));
     el.addEventListener('mouseleave', () => mark(null));
     el.addEventListener('focus', () => mark(n));
     el.addEventListener('blur', () => mark(null));
-    if (el.tagName === 'LI') el.addEventListener('click', () => mark(el.classList.contains('on') ? null : n));
   });
 }
 

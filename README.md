@@ -11,6 +11,9 @@ output whose footer names everything it left out.
 [![platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS-blue)](#install)
 [![works with](https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex-blueviolet)](#agent-setup)
 
+Website: [lets.mayberuk.com](https://lets.mayberuk.com). An agent reading this repo instead
+should start at [lets.mayberuk.com/llms.txt](https://lets.mayberuk.com/llms.txt).
+
 ## Install
 
 ```console

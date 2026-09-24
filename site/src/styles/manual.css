@@ -89,7 +89,7 @@
   .icons { position: static; width: auto; flex-direction: row; gap: 2px; overflow-x: auto; margin: calc(var(--panel-h) + 6px) 0 0; padding: 6px 10px 8px; }
   .icon { flex: none; width: 76px; padding: 4px 2px 5px; }
   .icon svg { width: 40px; height: 40px; }
-  .icon span { font-size: 12px; }
+  .icon span { font-size: 14px; }
   .icon.trash { display: none; }
   .desk { padding: 4px 10px 30px; }
   .manual > .hb { position: static; }
@@ -116,4 +116,13 @@
   .prose td { border: 0; padding: 3px 0; }
   .prose td + td[data-label]::before { content: attr(data-label) ': '; color: var(--ink-3); font-size: 13.5px; }
   .prose tbody tr:hover td { background: none; }
+}
+
+@media (pointer: coarse) {
+  .tree a { min-height: 44px; }
+  .pages dt a:not(.md) { display: inline-flex; align-items: center; min-height: 44px; }
+  .pages dt .md { position: relative; }
+  .pages dt .md::before { content: ''; position: absolute; inset: -15px -11px; }
+  .back-top { display: inline-flex; align-items: center; min-height: 44px; }
+  .foot .meta a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; }
 }

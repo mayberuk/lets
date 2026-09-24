@@ -227,7 +227,7 @@ html:not(.js) .cmp-panel + .cmp-panel { border-top: 1px solid var(--hair); }
   .xp { white-space: pre-wrap; overflow-wrap: anywhere; }
   .xp code { width: auto; }
   .legend { padding: 4px 14px 12px; background: var(--paper); }
-  .legend li { display: grid; grid-template-columns: 32px 1fr; align-items: start; padding: 7px 6px; font-size: 14.5px; line-height: 1.45; border-top: 1px solid var(--hair); border-radius: 4px; cursor: pointer; }
+  .legend li { display: grid; grid-template-columns: 32px 1fr; align-items: center; min-height: 44px; padding: 7px 6px; font-size: 14.5px; line-height: 1.45; border-top: 1px solid var(--hair); border-radius: 4px; cursor: pointer; }
   .legend li.on { background: var(--hl); }
 }
 @container (min-width: 641px) { .legend { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); } }
@@ -482,6 +482,19 @@ html.js .nojs { display: none !important; }
   .cmd { font-size: 14px; }
   .turn .why { display: block; margin-left: 0; }
 }
+@media (pointer: coarse) {
+  .switch { position: relative; }
+  .switch::before { content: ''; position: absolute; inset: -6px; }
+  .cmp-tabs [role="tab"] { min-height: 44px; display: flex; align-items: center; }
+  .cmdlink { min-height: 44px; display: flex; align-items: center; }
+  .cmdlink code { flex: 1; }
+  .list td:first-child a { min-height: 44px; }
+  .tabs a { min-height: 44px; }
+  .agent-links a { min-height: 44px; align-items: center; }
+  .foot .meta a { min-height: 44px; display: flex; align-items: center; }
+  .cmdwrap input { padding-block: 12px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pl.on { transform: none; }
   .roller span { transition: none; }
