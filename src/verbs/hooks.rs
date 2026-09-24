@@ -18,50 +18,21 @@ pub(crate) const LEGACY_PARAGRAPH: &str = "For reading, finding and editing file
 /// batching to 0 of 192 model requests, against about 26% for plain Claude Code.
 pub(crate) const CLAUDE_CODE_PARAGRAPH: &str = r#"# File work: use `lets` through Bash
 
-`lets` is installed here. It is the dedicated tool for reading, searching and editing text files, and it runs through Bash, so it fits both "prefer the dedicated tool" and "work through Bash". Use it wherever you would otherwise reach for `cat`, `head`, `tail`, `sed -n`, `grep`, `rg`, `sed -i`, `cat > file`, or the Read tool on a text file.
-
-Why it is worth the switch: one call covers several files or ranges, every line comes back numbered, the output is bounded, and the footer names anything it left out. An edit returns the changed lines with a parse check, and that output is the verification, so no follow-up read is needed.
-
 | Instead of | Run |
 |---|---|
-| `cat a.ts`, `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |
-| `sed -n '40,80p' f.ts`, Read with an offset | `lets show f.ts:40-80` |
-| reading a whole file to find one function | `lets show f.ts#computeFee` (a markdown section: `f.md#'Setup'`) |
-| `grep -n -A 5 'pattern' f.ts` | `lets show "f.ts@'pattern'" -A 5` |
-| `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` (`-i`, `-w`, `-F`, `-C 3`, `--files`, `--count` work) |
-| `sed -i 's/a/b/'`, the Edit tool | `lets edit f.ts --old 'a' --new 'b'` (`--old` is any exact substring that occurs once; `--all` for every match) |
-| the same replacement in many files, e.g. a rename | `lets edit a.go b.go c.go --old 'oldName' --new 'newName' --all` |
-| editing JSON, YAML or TOML | `lets transform package.json --set version=1.4.0 --append plugins=b` |
+| `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |
+| `sed -n '40,80p' f.ts` | `lets show f.ts:40-80` |
+| find one function | `lets show f.ts#computeFee` |
+| `grep -n -A 5 'x' f.ts` | `lets show "f.ts@'x'" -A 5` |
+| `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` |
+| `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
+| several edits, one call | `lets edit --from - <<'LETS'` (`lets guide`) |
+| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
 
-For a multi-line edit, or edits across several files, send one batch on stdin. Nothing inside it needs escaping, and either every edit lands or none does. Each `old` block is the shortest exact text that occurs once, not necessarily whole lines:
+Exact `cat`, `head -n` and `sed -n` reads become `lets show`; `grep`/`rg` searches and `sed -i` substitutions it recognizes are denied with the matching `lets` command.
 
-```
-lets edit --from - <<'LETS'
-@@ a.ts
-<<<<<<< old
-cap = 10
-======= new
-cap = 20
->>>>>>>
-@@ b.ts insert-after @'^import'
-======= new
-import x from 'y'
->>>>>>>
-LETS
-```
-
-`lets show` and `lets find` only read, so they are as safe to run in parallel as Read calls: when you need several reads or searches that do not depend on each other, send them as separate Bash calls in the same response, or name every file in one `lets show`. Each round trip re-reads the whole conversation, so fewer responses is what saves cost.
-
-Each output line is a line number, a tab, then the file's line byte for byte. Run `lets` without `| head`, `| tail` or `2>/dev/null`: the output is already bounded, its last line names what was left out, and a failed call prints its fix on stderr, ending with an `ERROR_CODE=` line. Over 50 hits, `lets find` prints no hit lines but lists the files holding the most hits, so narrow the path to one of them or make the pattern more specific. When another program will parse the result, add `--json`.
-
-Exit codes:
-- 1: nothing matched. `edit` shows the nearest match and any indentation difference; `show` still prints the targets it did find.
-- 2: `--old` matched more than once, and every candidate is listed as `path:line`. Lengthen `--old` or narrow the target to a line range such as `f.ts:40-40`.
-- 3: the edit broke the file's syntax, so it was put back and the file is unchanged.
-- 8: a batch partly landed, and the footer names which files changed.
-
-Keep using Read for images and PDFs, and plain Bash for work that is not reading, searching or editing files: git, builds, tests, `ls`."#;
+Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files."#;
 
 /// Codex's entry stays bare: whether Codex runs a hook command through a shell is unverified.
 pub(crate) const CLASSIFY_COMMAND: &str = "lets hook classify";
@@ -1064,6 +1035,23 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
         assert_eq!(output.stdout.len(), expected.len());
         assert_eq!(output.status.code(), Some(0));
+    }
+
+    #[test]
+    fn the_session_start_paragraph_stays_under_its_1_050_byte_budget() {
+        let printed = format!("{CLAUDE_CODE_PARAGRAPH}\n");
+        assert!(
+            printed.len() <= 1_050,
+            "printed paragraph is {} bytes, over the 1,050-byte SessionStart budget",
+            printed.len()
+        );
+    }
+
+    #[test]
+    fn the_session_start_paragraph_keeps_the_no_pipe_sentence() {
+        assert!(CLAUDE_CODE_PARAGRAPH.contains("Do not pipe"));
+        assert!(CLAUDE_CODE_PARAGRAPH.contains("head`/`tail"));
+        assert!(CLAUDE_CODE_PARAGRAPH.contains("2>/dev/null"));
     }
 
     #[test]

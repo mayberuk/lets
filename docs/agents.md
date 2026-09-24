@@ -93,50 +93,21 @@ system prompt any more.
 
 > # File work: use `lets` through Bash
 >
-> `lets` is installed here. It is the dedicated tool for reading, searching and editing text files, and it runs through Bash, so it fits both "prefer the dedicated tool" and "work through Bash". Use it wherever you would otherwise reach for `cat`, `head`, `tail`, `sed -n`, `grep`, `rg`, `sed -i`, `cat > file`, or the Read tool on a text file.
->
-> Why it is worth the switch: one call covers several files or ranges, every line comes back numbered, the output is bounded, and the footer names anything it left out. An edit returns the changed lines with a parse check, and that output is the verification, so no follow-up read is needed.
->
 > | Instead of | Run |
 > |---|---|
-> | `cat a.ts`, `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |
-> | `sed -n '40,80p' f.ts`, Read with an offset | `lets show f.ts:40-80` |
-> | reading a whole file to find one function | `lets show f.ts#computeFee` (a markdown section: `f.md#'Setup'`) |
-> | `grep -n -A 5 'pattern' f.ts` | `lets show "f.ts@'pattern'" -A 5` |
-> | `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` (`-i`, `-w`, `-F`, `-C 3`, `--files`, `--count` work) |
-> | `sed -i 's/a/b/'`, the Edit tool | `lets edit f.ts --old 'a' --new 'b'` (`--old` is any exact substring that occurs once; `--all` for every match) |
-> | the same replacement in many files, e.g. a rename | `lets edit a.go b.go c.go --old 'oldName' --new 'newName' --all` |
-> | editing JSON, YAML or TOML | `lets transform package.json --set version=1.4.0 --append plugins=b` |
+> | `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |
+> | `sed -n '40,80p' f.ts` | `lets show f.ts:40-80` |
+> | find one function | `lets show f.ts#computeFee` |
+> | `grep -n -A 5 'x' f.ts` | `lets show "f.ts@'x'" -A 5` |
+> | `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` |
+> | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
+> | several edits, one call | `lets edit --from - <<'LETS'` (`lets guide`) |
+| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 > | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
 >
-> For a multi-line edit, or edits across several files, send one batch on stdin. Nothing inside it needs escaping, and either every edit lands or none does. Each `old` block is the shortest exact text that occurs once, not necessarily whole lines:
+> Exact `cat`, `head -n` and `sed -n` reads become `lets show`; `grep`/`rg` searches and `sed -i` substitutions it recognizes are denied with the matching `lets` command.
 >
-> ```
-> lets edit --from - <<'LETS'
-> @@ a.ts
-> <<<<<<< old
-> cap = 10
-> ======= new
-> cap = 20
-> >>>>>>>
-> @@ b.ts insert-after @'^import'
-> ======= new
-> import x from 'y'
-> >>>>>>>
-> LETS
-> ```
->
-> `lets show` and `lets find` only read, so they are as safe to run in parallel as Read calls: when you need several reads or searches that do not depend on each other, send them as separate Bash calls in the same response, or name every file in one `lets show`. Each round trip re-reads the whole conversation, so fewer responses is what saves cost.
->
-> Each output line is a line number, a tab, then the file's line byte for byte. Run `lets` without `| head`, `| tail` or `2>/dev/null`: the output is already bounded, its last line names what was left out, and a failed call prints its fix on stderr, ending with an `ERROR_CODE=` line. Over 50 hits, `lets find` prints no hit lines but lists the files holding the most hits, so narrow the path to one of them or make the pattern more specific. When another program will parse the result, add `--json`.
->
-> Exit codes:
-> - 1: nothing matched. `edit` shows the nearest match and any indentation difference; `show` still prints the targets it did find.
-> - 2: `--old` matched more than once, and every candidate is listed as `path:line`. Lengthen `--old` or narrow the target to a line range such as `f.ts:40-40`.
-> - 3: the edit broke the file's syntax, so it was put back and the file is unchanged.
-> - 8: a batch partly landed, and the footer names which files changed.
->
-> Keep using Read for images and PDFs, and plain Bash for work that is not reading, searching or editing files: git, builds, tests, `ls`.
+> Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.
 
 `docs/design/system-append.md` holds a longer, alternative form, per verb, for a harness that can
 afford it.
@@ -153,6 +124,23 @@ hook error to every session start. Nothing is written to `~/.claude/system-appen
 and no alias is printed to add by hand; a file an earlier install left there is kept, and named as
 no longer used, on every following install.
 
+## Rewrite versus deny
+
+The `PreToolUse` hook (`lets hook classify`) rewrites only an exact `cat`, `head -n` or `sed -n`
+read that a single `lets show` would reproduce line for line. A recognized `grep`/`rg` search, a
+`sed -i 's/…/…/g'` global substitution, a heredoc-fed `cat > file`, a sensitive path (a dotfile,
+key or credential), and any read `lets show` would not print exactly, all keep the deny instead,
+which always names a runnable `lets` command. Everything the classifier does not recognize — an
+`awk`, `less`, `nl` or `tee` read, `tail -n`, `echo >`, an unrecognized `grep`/`rg` flag, or a
+`sed -i` substitution missing its trailing `g` — is not classified at all and runs exactly as
+typed, neither rewritten nor denied. Codex always gets the deny — a rewrite is Claude
+Code only. Before a rewrite, or before naming a path in a deny, the hook reads the `Read` and
+`Edit` deny and ask rules from every Claude Code settings tier (managed, user, project, local) and
+steps aside — allowing the original command through — when one of those rules already covers the
+path, so Claude Code's own rule decides, not the hook's. The limit: a rule passed only through
+`--settings`, `--disallowedTools`, or set for one session, is invisible to the hook, which reads
+only the settings files on disk.
+
 ## The SubagentStart line
 
 `--append-system-prompt` does not reach a non-fork subagent, so the same paragraph (spec.md §
@@ -160,47 +148,18 @@ Discovery) arrives instead as SubagentStart `additionalContext`:
 
 > # File work: use `lets` through Bash
 >
-> `lets` is installed here. It is the dedicated tool for reading, searching and editing text files, and it runs through Bash, so it fits both "prefer the dedicated tool" and "work through Bash". Use it wherever you would otherwise reach for `cat`, `head`, `tail`, `sed -n`, `grep`, `rg`, `sed -i`, `cat > file`, or the Read tool on a text file.
->
-> Why it is worth the switch: one call covers several files or ranges, every line comes back numbered, the output is bounded, and the footer names anything it left out. An edit returns the changed lines with a parse check, and that output is the verification, so no follow-up read is needed.
->
 > | Instead of | Run |
 > |---|---|
-> | `cat a.ts`, `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |
-> | `sed -n '40,80p' f.ts`, Read with an offset | `lets show f.ts:40-80` |
-> | reading a whole file to find one function | `lets show f.ts#computeFee` (a markdown section: `f.md#'Setup'`) |
-> | `grep -n -A 5 'pattern' f.ts` | `lets show "f.ts@'pattern'" -A 5` |
-> | `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` (`-i`, `-w`, `-F`, `-C 3`, `--files`, `--count` work) |
-> | `sed -i 's/a/b/'`, the Edit tool | `lets edit f.ts --old 'a' --new 'b'` (`--old` is any exact substring that occurs once; `--all` for every match) |
-> | the same replacement in many files, e.g. a rename | `lets edit a.go b.go c.go --old 'oldName' --new 'newName' --all` |
-> | editing JSON, YAML or TOML | `lets transform package.json --set version=1.4.0 --append plugins=b` |
+> | `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |
+> | `sed -n '40,80p' f.ts` | `lets show f.ts:40-80` |
+> | find one function | `lets show f.ts#computeFee` |
+> | `grep -n -A 5 'x' f.ts` | `lets show "f.ts@'x'" -A 5` |
+> | `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` |
+> | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
+> | several edits, one call | `lets edit --from - <<'LETS'` (`lets guide`) |
+| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 > | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
 >
-> For a multi-line edit, or edits across several files, send one batch on stdin. Nothing inside it needs escaping, and either every edit lands or none does. Each `old` block is the shortest exact text that occurs once, not necessarily whole lines:
+> Exact `cat`, `head -n` and `sed -n` reads become `lets show`; `grep`/`rg` searches and `sed -i` substitutions it recognizes are denied with the matching `lets` command.
 >
-> ```
-> lets edit --from - <<'LETS'
-> @@ a.ts
-> <<<<<<< old
-> cap = 10
-> ======= new
-> cap = 20
-> >>>>>>>
-> @@ b.ts insert-after @'^import'
-> ======= new
-> import x from 'y'
-> >>>>>>>
-> LETS
-> ```
->
-> `lets show` and `lets find` only read, so they are as safe to run in parallel as Read calls: when you need several reads or searches that do not depend on each other, send them as separate Bash calls in the same response, or name every file in one `lets show`. Each round trip re-reads the whole conversation, so fewer responses is what saves cost.
->
-> Each output line is a line number, a tab, then the file's line byte for byte. Run `lets` without `| head`, `| tail` or `2>/dev/null`: the output is already bounded, its last line names what was left out, and a failed call prints its fix on stderr, ending with an `ERROR_CODE=` line. Over 50 hits, `lets find` prints no hit lines but lists the files holding the most hits, so narrow the path to one of them or make the pattern more specific. When another program will parse the result, add `--json`.
->
-> Exit codes:
-> - 1: nothing matched. `edit` shows the nearest match and any indentation difference; `show` still prints the targets it did find.
-> - 2: `--old` matched more than once, and every candidate is listed as `path:line`. Lengthen `--old` or narrow the target to a line range such as `f.ts:40-40`.
-> - 3: the edit broke the file's syntax, so it was put back and the file is unchanged.
-> - 8: a batch partly landed, and the footer names which files changed.
->
-> Keep using Read for images and PDFs, and plain Bash for work that is not reading, searching or editing files: git, builds, tests, `ls`.
+> Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.

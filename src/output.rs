@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fmt;
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::ser::SerializeStruct as _;
 use serde::{Serialize, Serializer};
@@ -77,7 +77,7 @@ impl Response {
 #[serde(rename_all = "snake_case")]
 pub enum Body {
     Targets(Vec<TargetBlock>),
-    Files(Vec<PathBuf>),
+    Files(#[serde(serialize_with = "lossy_paths")] Vec<PathBuf>),
     Counts(Vec<CountRow>),
     Raw { field: &'static str, text: String },
     Edit(Vec<EditResult>),
@@ -98,6 +98,7 @@ pub struct UpdateCheck {
 #[derive(Debug, Serialize)]
 pub struct TargetBlock {
     pub target: String,
+    #[serde(serialize_with = "lossy_path")]
     pub path: PathBuf,
     /// `None` for a `find` hit block, whose header is the bare path.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -181,7 +182,18 @@ fn is_zero(n: &usize) -> bool {
 #[derive(Debug, Serialize)]
 pub struct CountRow {
     pub count: usize,
+    #[serde(serialize_with = "lossy_path")]
     pub path: PathBuf,
+}
+
+/// `serde_json` refuses a non-UTF-8 `PathBuf`, so JSON carries the lossy name the text shows.
+/// A path `find` walked to can be any bytes; one from an argument was already UTF-8.
+fn lossy_path<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(&path.display())
+}
+
+fn lossy_paths<S: Serializer>(paths: &[PathBuf], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(paths.iter().map(|path| path.display().to_string()))
 }
 
 #[derive(Debug, Serialize)]
@@ -471,10 +483,13 @@ pub enum Omission {
     TopFiles {
         shown: usize,
     },
+    /// The counts are files a filter rejected directly. A rejected directory is named instead,
+    /// never entered, so the files under it are counted nowhere.
     Ignored {
         gitignore: usize,
         hidden: usize,
         other: usize,
+        dirs: IgnoredDirs,
     },
     CheckSkipped {
         reason: String,
@@ -514,6 +529,7 @@ pub enum Omission {
         lines: usize,
     },
     Unreadable {
+        #[serde(serialize_with = "lossy_path")]
         path: PathBuf,
     },
     CrlfMatched,
@@ -529,6 +545,21 @@ pub enum Omission {
         pattern: String,
         read_as: String,
     },
+}
+
+/// Per source, because the source is what says whether `--no-ignore` or `--hidden` brings a
+/// directory back. A name is a lossy string, as a failed target's is: `serde_json` refuses a
+/// non-UTF-8 `PathBuf`.
+#[derive(Debug, Default, Serialize)]
+pub struct IgnoredDirs {
+    pub gitignore: NamedDirs,
+    pub hidden: NamedDirs,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct NamedDirs {
+    pub named: Vec<String>,
+    pub more: usize,
 }
 
 impl fmt::Display for Omission {
@@ -557,11 +588,15 @@ impl fmt::Display for Omission {
                 gitignore,
                 hidden,
                 other,
-            } => write_parts(f, "ignored", [
-                ("gitignore", *gitignore),
-                ("hidden", *hidden),
-                ("other", *other),
-            ]),
+                dirs,
+            } => {
+                let files = [
+                    ("gitignore", *gitignore),
+                    ("hidden", *hidden),
+                    ("other", *other),
+                ];
+                write_ignored(f, files, dirs)
+            },
             Omission::CheckSkipped { reason } => write!(f, "check: skipped ({reason})"),
             Omission::CheckInconclusive { layer, reason } => {
                 write!(f, "check: {layer} inconclusive ({reason})")
@@ -627,6 +662,53 @@ impl fmt::Display for Omission {
             ),
         }
     }
+}
+
+/// A file count of zero is left out, as a zero part is, and so is a source that pruned nothing.
+fn write_ignored(
+    f: &mut fmt::Formatter<'_>,
+    files: [(&str, usize); 3],
+    dirs: &IgnoredDirs,
+) -> fmt::Result {
+    let counted = files.iter().any(|(_, n)| *n > 0);
+    if counted {
+        write_parts(f, "ignored", files)?;
+    }
+    let sources = [("gitignore", &dirs.gitignore), ("hidden", &dirs.hidden)];
+    let mut open = false;
+    for (source, list) in sources {
+        if list.named.is_empty() && list.more == 0 {
+            continue;
+        }
+        f.write_str(match (open, counted) {
+            (true, _) => " \u{b7} ",
+            (false, true) => " \u{b7} ignored dirs (",
+            (false, false) => "ignored dirs (",
+        })?;
+        open = true;
+        f.write_str(source)?;
+        for (i, dir) in list.named.iter().enumerate() {
+            f.write_str(if i == 0 { " " } else { ", " })?;
+            write_escaped(f, dir)?;
+            f.write_str("/")?;
+        }
+        if list.more > 0 {
+            write!(f, " (+{} more)", list.more)?;
+        }
+    }
+    if open { f.write_str(")") } else { Ok(()) }
+}
+
+/// A directory name can hold a newline, which would end the one-line footer early.
+fn write_escaped(f: &mut fmt::Formatter<'_>, name: &str) -> fmt::Result {
+    for c in name.chars() {
+        if c.is_control() {
+            write!(f, "{}", c.escape_debug())?;
+        } else {
+            f.write_char(c)?;
+        }
+    }
+    Ok(())
 }
 
 /// A zero part is left out: naming a source that removed nothing reads as a narrowing.
@@ -1305,7 +1387,7 @@ fn render_jsonl(resp: &Response) -> String {
         },
         Body::Files(paths) => {
             for path in paths {
-                push_json_line(&mut out, path);
+                push_json_line(&mut out, &path.display().to_string());
             }
         },
         Body::Counts(rows) => {
@@ -1588,6 +1670,7 @@ mod tests {
             gitignore: 9,
             hidden: 3,
             other: 0,
+            dirs: IgnoredDirs::default(),
         }];
         let out = render(&resp, Format::Text, &opts());
 
@@ -1633,6 +1716,7 @@ mod tests {
                 gitignore: 9,
                 hidden: 3,
                 other: 0,
+                dirs: IgnoredDirs::default(),
             },
             Omission::HitCap { hits: 312, cap: 50 },
         ];
@@ -1642,6 +1726,96 @@ mod tests {
             out,
             "── find 'onBack' · ignored 12 (gitignore 9 · hidden 3) · over the 50-hit cap · \
              narrow the pattern or the paths, or --files · ~0.9k tokens\n"
+        );
+    }
+
+    fn named(names: &[&str], more: usize) -> NamedDirs {
+        NamedDirs {
+            named: names.iter().map(|name| (*name).to_owned()).collect(),
+            more,
+        }
+    }
+
+    fn ignored(files: (usize, usize), gitignore: NamedDirs, hidden: NamedDirs) -> Omission {
+        Omission::Ignored {
+            gitignore: files.0,
+            hidden: files.1,
+            other: 0,
+            dirs: IgnoredDirs { gitignore, hidden },
+        }
+    }
+
+    #[test]
+    fn ignored_directories_follow_the_file_counts_grouped_by_the_source_that_pruned_them() {
+        assert_eq!(
+            ignored((1, 2), named(&["target"], 0), named(&[".github"], 0)).to_string(),
+            "ignored 3 (gitignore 1 \u{b7} hidden 2) \u{b7} ignored dirs (gitignore target/ \u{b7} \
+             hidden .github/)"
+        );
+    }
+
+    #[test]
+    fn a_source_that_pruned_no_directory_is_not_named() {
+        assert_eq!(
+            ignored((0, 0), named(&["target", "build"], 0), named(&[], 0)).to_string(),
+            "ignored dirs (gitignore target/, build/)"
+        );
+        assert_eq!(
+            ignored((0, 0), named(&[], 0), named(&[".github"], 0)).to_string(),
+            "ignored dirs (hidden .github/)"
+        );
+    }
+
+    #[test]
+    fn ignored_files_alone_print_no_directory_list() {
+        assert_eq!(
+            ignored((1, 2), named(&[], 0), named(&[], 0)).to_string(),
+            "ignored 3 (gitignore 1 \u{b7} hidden 2)"
+        );
+    }
+
+    #[test]
+    fn each_source_counts_the_directories_it_pruned_past_the_named_ones() {
+        assert_eq!(
+            ignored((0, 0), named(&["a", "b", "c", "d"], 3), named(&[".e"], 2)).to_string(),
+            "ignored dirs (gitignore a/, b/, c/, d/ (+3 more) \u{b7} hidden .e/ (+2 more))"
+        );
+    }
+
+    #[test]
+    fn a_control_character_in_a_directory_name_is_escaped_onto_the_footer_line() {
+        let out = ignored((0, 0), named(&[], 0), named(&[".a\nb", ".c\td"], 0)).to_string();
+
+        assert_eq!(out, "ignored dirs (hidden .a\\nb/, .c\\td/)");
+        assert!(!out.contains('\n'), "{out:?}");
+    }
+
+    #[test]
+    fn a_directory_name_with_no_control_character_is_written_as_is() {
+        assert_eq!(
+            ignored((0, 0), named(&["caf\u{e9} dir"], 0), named(&[], 0)).to_string(),
+            "ignored dirs (gitignore caf\u{e9} dir/)"
+        );
+    }
+
+    #[test]
+    fn ignored_directories_reach_json_per_source_as_names_and_a_more_count() {
+        let mut resp = targets(vec![], 0);
+        resp.omitted = vec![ignored((0, 1), named(&["target"], 2), named(&[".a\nb"], 0))];
+        let value: serde_json::Value =
+            serde_json::from_str(&render(&resp, Format::Json, &opts())).expect("valid JSON");
+
+        assert_eq!(
+            value["omitted"][0]["ignored"],
+            serde_json::json!({
+                "gitignore": 0,
+                "hidden": 1,
+                "other": 0,
+                "dirs": {
+                    "gitignore": {"named": ["target"], "more": 2},
+                    "hidden": {"named": [".a\nb"], "more": 0},
+                },
+            })
         );
     }
 

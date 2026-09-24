@@ -1,0 +1,5 @@
+── src/lib.rs
+1:	fn «quokka»() {}
+── target/debug/out.txt
+1:	«quokka» built
+── 2 hits in 2 files · searched 8 files · ignored 2 (hidden 2) · ignored dirs (hidden .config/, .home/, .run/) · skipped 1 (binary 1) · target/locked unreadable

@@ -3,18 +3,21 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch};
 use ignore::overrides::{Override, OverrideBuilder};
-use ignore::{DirEntry, WalkBuilder, WalkState};
+use ignore::{DirEntry, IncrementalIgnore, WalkBuilder, WalkState};
 use regex::{Regex, RegexBuilder};
 
 use crate::cli::{FindArgs, Global};
 use crate::error::Error;
 use crate::hook::bre;
-use crate::output::{Body, CountRow, Footer, Line, Marker, Omission, Response, Stats, TargetBlock};
+use crate::output::{
+    Body, CountRow, Footer, IgnoredDirs, Line, Marker, NamedDirs, Omission, Response, Stats,
+    TargetBlock,
+};
 use crate::{Outcome, fs, window};
 
 pub fn run(args: &FindArgs, global: &Global, _format: crate::output::Format) -> Outcome {
@@ -107,20 +110,19 @@ fn search(
 
     let mut walk = Walk::default();
     let mut found = Found::default();
-    let builder = walker(&search_paths, !args.hidden, !global.no_ignore, &overrides);
-    let traversal = traversal.unwrap_or_else(|| traversal_of(&search_paths));
-    // The membership walks need nothing from the search, so they run beside it.
-    let pools = std::thread::scope(|scope| {
-        let pools = Pools::spawn(scope, args, global, &search_paths, &overrides);
-        match traversal {
-            Traversal::Sequential => search.sequential(builder, &mut walk, &mut found),
-            Traversal::Parallel { threads } => {
-                search.parallel(builder, threads, &search_paths, &mut walk, &mut found);
-            },
-        }
-        pools.map(Pools::join)
-    });
-    let walked = walk_omissions(args, global, &walk, pools.as_ref());
+    let (builder, filters) = walker(&search_paths, !args.hidden, !global.no_ignore, &overrides);
+    match traversal.unwrap_or_else(|| traversal_of(&search_paths)) {
+        Traversal::Sequential => search.sequential(builder, filters, &mut walk, &mut found),
+        Traversal::Parallel { threads } => search.parallel(
+            builder,
+            filters.as_ref(),
+            threads,
+            &search_paths,
+            &mut walk,
+            &mut found,
+        ),
+    }
+    let walked = walk_omissions(args, &walk);
     let hits = found.total_hits;
     let mut outcome = if args.files {
         let mut files = found.files;
@@ -265,7 +267,15 @@ fn build_searcher(args: &FindArgs) -> Searcher {
         .build()
 }
 
-fn walker(paths: &[PathBuf], hidden: bool, gitignore: bool, globs: &Override) -> WalkBuilder {
+/// `ignore` reports nothing it filtered out, so the walk runs with its gitignore and dotfile
+/// filters off and each traversal applies `Filters`, `ignore`'s own matchers, in their place.
+/// `None` when neither filter is on.
+fn walker(
+    paths: &[PathBuf],
+    hidden: bool,
+    gitignore: bool,
+    globs: &Override,
+) -> (WalkBuilder, Option<Filters>) {
     let mut builder = WalkBuilder::new(&paths[0]);
     for path in &paths[1..] {
         builder.add(path);
@@ -273,14 +283,135 @@ fn walker(paths: &[PathBuf], hidden: bool, gitignore: bool, globs: &Override) ->
     builder
         // As with `rg -g`, a matching glob outranks gitignore and the dotfile rule for that file.
         .overrides(globs.clone())
-        .hidden(hidden)
+        .hidden(false)
         .ignore(gitignore)
         .git_ignore(gitignore)
         .git_global(gitignore)
-        .git_exclude(gitignore)
+        .git_exclude(gitignore);
+    // Built while the builder's filters are on: a matcher snapshots them.
+    let filters = (hidden || gitignore).then(|| {
+        let matchers = builder.build_matchers();
+        Filters {
+            roots: paths.to_vec(),
+            fresh: matchers.clone(),
+            matchers,
+            hidden,
+            parents: 0,
+            parent: PathBuf::new(),
+        }
+    });
+    builder
+        .ignore(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
         // `ignore` never applies this predicate to a root entry, so every consumer re-tests it.
         .filter_entry(|entry| !in_git_dir(entry.path()));
-    builder
+    (builder, filters)
+}
+
+/// A sequential walk cannot skip a directory it has yielded, so there the filters run as the entry
+/// predicate, replacing the walker's `.git` one. Rejections land in the returned list.
+fn judge_as_predicate(
+    builder: &mut WalkBuilder,
+    filters: Option<Filters>,
+) -> Arc<Mutex<Vec<Rejection>>> {
+    let rejected = Arc::new(Mutex::new(Vec::new()));
+    let Some(filters) = filters else {
+        return rejected;
+    };
+    let filters = Mutex::new(filters);
+    let sink = Arc::clone(&rejected);
+    builder.filter_entry(move |entry| {
+        if in_git_dir(entry.path()) {
+            return false;
+        }
+        let verdict = filters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .judge(entry);
+        let Some(rejection) = verdict else {
+            return true;
+        };
+        sink.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(rejection);
+        false
+    });
+    rejected
+}
+
+/// One matcher per root, in `roots` order, built with the dotfile rule off: a match is
+/// gitignore's, and the dotfile rule applies only where gitignore said nothing, as in `ignore`.
+/// A matcher keeps the compiled rules of every directory it judged a child of and never drops
+/// one, so each copy goes back to `fresh`, the matchers as built, every `MATCHER_PARENTS_MAX`
+/// directories: its memory is bounded by that times the tree's depth, not by the tree.
+#[derive(Clone)]
+struct Filters {
+    roots: Vec<PathBuf>,
+    matchers: Vec<IncrementalIgnore>,
+    fresh: Vec<IncrementalIgnore>,
+    hidden: bool,
+    /// Directories whose children this copy judged since it was last fresh.
+    parents: usize,
+    parent: PathBuf,
+}
+
+/// Measured on the musl build over a 75,661-directory tree at 24 threads, p50 and peak RSS: 205 ms
+/// and 96 MB at 16, 190 ms and 102 MB at 64, 189 ms and 114 MB at 256; never reset, 378 MB.
+const MATCHER_PARENTS_MAX: usize = 64;
+
+enum Rejection {
+    GitignoredDir(PathBuf),
+    HiddenDir(PathBuf),
+    Gitignored,
+    Dotfile,
+    /// A symlink or special file: never a search candidate, so no bucket claims it.
+    NotAFile,
+}
+
+impl Filters {
+    /// `ignore` never filters a root entry, whatever its name.
+    fn judge(&mut self, entry: &DirEntry) -> Option<Rejection> {
+        if entry.depth() == 0 {
+            return None;
+        }
+        if let Some(parent) = entry.path().parent()
+            && parent.as_os_str() != self.parent.as_os_str()
+        {
+            self.parents += 1;
+            if self.parents > MATCHER_PARENTS_MAX {
+                self.matchers.clone_from(&self.fresh);
+                self.parents = 0;
+            }
+            parent.clone_into(&mut self.parent);
+        }
+        let kind = entry.file_type();
+        let is_dir = kind.is_some_and(|kind| kind.is_dir());
+        let root = root_index(entry.path(), &self.roots);
+        let relative = entry
+            .path()
+            .strip_prefix(&self.roots[root])
+            .unwrap_or(entry.path());
+        let matched = self.matchers[root].matched(relative, is_dir);
+        let dotfile = self.hidden
+            && matched.is_none()
+            && entry.file_name().as_encoded_bytes().first() == Some(&b'.');
+        if !matched.is_ignore() && !dotfile {
+            return None;
+        }
+        Some(if is_dir && dotfile {
+            Rejection::HiddenDir(display_path(entry.path()))
+        } else if is_dir {
+            Rejection::GitignoredDir(display_path(entry.path()))
+        } else if !kind.is_some_and(|kind| kind.is_file()) {
+            Rejection::NotAFile
+        } else if dotfile {
+            Rejection::Dotfile
+        } else {
+            Rejection::Gitignored
+        })
+    }
 }
 
 fn in_git_dir(path: &Path) -> bool {
@@ -592,17 +723,20 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-/// `reached` holds every file the walk yielded, read or not, so a file it refused is never also
-/// charged to a filter.
+/// `gitignored` and `dotfiles` count files a filter rejected directly: a file under a rejected
+/// directory is covered by that directory's name, since the walk never enters it.
 #[derive(Default)]
 struct Walk {
-    reached: usize,
     searched: usize,
     binary: usize,
     too_large: usize,
     unreadable: usize,
     unreadable_dirs: Vec<PathBuf>,
     lossy: BTreeMap<PathBuf, Vec<usize>>,
+    gitignored: usize,
+    dotfiles: usize,
+    gitignored_dirs: Vec<PathBuf>,
+    hidden_dirs: Vec<PathBuf>,
 }
 
 impl Walk {
@@ -615,7 +749,6 @@ impl Walk {
                     Skip::TooLarge => self.too_large += 1,
                     Skip::Unreadable => self.unreadable += 1,
                 }
-                self.reached += 1;
                 return;
             },
             FileOutcome::Searched {
@@ -626,7 +759,6 @@ impl Walk {
             } => (lossy_lines, hits, lines, first_match),
         };
         self.searched += 1;
-        self.reached += 1;
         if hits == 0 {
             return;
         }
@@ -653,6 +785,32 @@ impl Walk {
         }
     }
 
+    fn reject(&mut self, rejection: Rejection) {
+        match rejection {
+            Rejection::GitignoredDir(dir) => self.gitignored_dirs.push(dir),
+            Rejection::HiddenDir(dir) => self.hidden_dirs.push(dir),
+            Rejection::Gitignored => self.gitignored += 1,
+            Rejection::Dotfile => self.dotfiles += 1,
+            Rejection::NotAFile => {},
+        }
+    }
+
+    /// A file the walk reached but could not search is named in `Skipped`, so `other` stays zero.
+    fn ignored(&self) -> Option<Omission> {
+        if self.gitignored + self.dotfiles == 0
+            && self.gitignored_dirs.is_empty()
+            && self.hidden_dirs.is_empty()
+        {
+            return None;
+        }
+        Some(Omission::Ignored {
+            gitignore: self.gitignored,
+            hidden: self.dotfiles,
+            other: 0,
+            dirs: name_dirs(&self.gitignored_dirs, &self.hidden_dirs),
+        })
+    }
+
     fn skipped(&self) -> Option<Omission> {
         (self.binary + self.too_large + self.unreadable > 0).then_some(Omission::Skipped {
             binary: self.binary,
@@ -676,19 +834,52 @@ struct Found {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Traversal {
     Sequential,
-    /// `threads` of 0 lets `ignore` choose: the available cores, at most 12.
+    /// `threads` of 0 lets `ignore` pick.
     Parallel {
         threads: usize,
     },
 }
 
-/// A file root is one read, so any file root keeps the sequential walk, which needs no sort.
+/// The most entries a tree may hold and still be walked on one thread. Measured on the musl build
+/// over flat trees of three-line files, p50: one thread 4.7 ms against the pool's 6.6 ms at 400
+/// files, 15.9 ms against 9.4 ms at 2,000. Starting the pool costs about 2.5 ms.
+const SEQUENTIAL_WALK_MAX_ENTRIES: usize = 512;
+
+/// The most directories the size probe lists. A listing costs about 13 µs on the musl build, and
+/// probing this repository's root to the entry budget listed 90 of them, 1.3 ms.
+const SEQUENTIAL_WALK_MAX_DIRS: usize = 8;
+
+/// A file root is one read, so any file root keeps the sequential walk, which needs no sort. So
+/// does a small tree; the probe stops listing once the tree is known to be large.
 fn traversal_of(roots: &[PathBuf]) -> Traversal {
-    if roots.iter().all(|root| root.is_dir()) {
-        Traversal::Parallel { threads: 0 }
-    } else {
-        Traversal::Sequential
+    if !roots.iter().all(|root| root.is_dir()) {
+        return Traversal::Sequential;
     }
+    let mut budget = SEQUENTIAL_WALK_MAX_ENTRIES;
+    let mut unlisted: std::collections::VecDeque<PathBuf> = roots.iter().cloned().collect();
+    let mut listed = 0;
+    while let Some(dir) = unlisted.pop_front() {
+        if listed == SEQUENTIAL_WALK_MAX_DIRS {
+            return Traversal::Parallel { threads: 0 };
+        }
+        listed += 1;
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            let Some(left) = budget.checked_sub(1) else {
+                return Traversal::Parallel { threads: 0 };
+            };
+            budget = left;
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                unlisted.push_back(entry.path());
+            }
+        }
+    }
+    Traversal::Sequential
 }
 
 enum FileOutcome {
@@ -715,7 +906,14 @@ struct Search<'a> {
 }
 
 impl Search<'_> {
-    fn sequential(&self, mut builder: WalkBuilder, walk: &mut Walk, found: &mut Found) {
+    fn sequential(
+        &self,
+        mut builder: WalkBuilder,
+        filters: Option<Filters>,
+        walk: &mut Walk,
+        found: &mut Found,
+    ) {
+        let rejected = judge_as_predicate(&mut builder, filters);
         let mut engine = build_searcher(self.args);
         // Readdir order differs between two machines holding the same tree.
         for entry in builder.sort_by_file_path(Path::cmp).build() {
@@ -728,13 +926,21 @@ impl Search<'_> {
                 Ok(_) => {},
             }
         }
+        let rejected =
+            std::mem::take(&mut *rejected.lock().unwrap_or_else(PoisonError::into_inner));
+        for rejection in rejected {
+            walk.reject(rejection);
+        }
     }
 
     /// Workers finish in scheduler order, so every file is collected and sorted into the sequential
-    /// walk's order before any is recorded.
+    /// walk's order before any is recorded. Each worker judges entries with its own copy of the
+    /// filters: one shared behind a lock serialised the workers, 19 ms against 8.5 ms for `rg` at
+    /// this repository's root. A rejected directory is listed but never entered.
     fn parallel(
         &self,
         mut builder: WalkBuilder,
+        filters: Option<&Filters>,
         threads: usize,
         roots: &[PathBuf],
         walk: &mut Walk,
@@ -744,14 +950,33 @@ impl Search<'_> {
         builder.threads(threads).build_parallel().run(|| {
             let tx = tx.clone();
             let mut engine = build_searcher(self.args);
+            let mut filters = filters.cloned();
             Box::new(move |entry| {
                 let visit = match entry {
                     Err(err) => Visit::Unlistable(error_path(&err)),
-                    Ok(entry) if is_candidate(&entry) => {
-                        let outcome = self.file(entry.path(), &mut engine);
-                        Visit::File(entry.into_path(), outcome)
+                    Ok(entry) => {
+                        let rejection = filters.as_mut().and_then(|filters| filters.judge(&entry));
+                        match rejection {
+                            Some(rejection) => {
+                                let next = if matches!(
+                                    rejection,
+                                    Rejection::GitignoredDir(_) | Rejection::HiddenDir(_)
+                                ) {
+                                    WalkState::Skip
+                                } else {
+                                    WalkState::Continue
+                                };
+                                tx.send(Visit::Rejected(rejection))
+                                    .expect("the receiver is dropped only after the walk returns");
+                                return next;
+                            },
+                            None if is_candidate(&entry) => {
+                                let outcome = self.file(entry.path(), &mut engine);
+                                Visit::File(entry.into_path(), outcome)
+                            },
+                            None => return WalkState::Continue,
+                        }
                     },
-                    Ok(_) => return WalkState::Continue,
                 };
                 tx.send(visit)
                     .expect("the receiver is dropped only after the walk returns");
@@ -766,6 +991,7 @@ impl Search<'_> {
             match visit {
                 Visit::File(path, outcome) => files.push((root_index(&path, roots), path, outcome)),
                 Visit::Unlistable(dir) => dirs.push((root_index(&dir, roots), dir)),
+                Visit::Rejected(rejection) => walk.reject(rejection),
             }
         }
         files.sort_unstable_by(|(root_a, a, _), (root_b, b, _)| {
@@ -838,6 +1064,7 @@ fn root_index(path: &Path, roots: &[PathBuf]) -> usize {
 enum Visit {
     File(PathBuf, FileOutcome),
     Unlistable(PathBuf),
+    Rejected(Rejection),
 }
 
 fn is_candidate(entry: &DirEntry) -> bool {
@@ -882,19 +1109,14 @@ impl Read for Utf16Guard {
     }
 }
 
-fn walk_omissions(
-    args: &FindArgs,
-    global: &Global,
-    walk: &Walk,
-    pools: Option<&Pools<usize>>,
-) -> Vec<Omission> {
+fn walk_omissions(args: &FindArgs, walk: &Walk) -> Vec<Omission> {
     let mut walked = Vec::new();
     if !args.globs.is_empty() {
         walked.push(Omission::Glob {
             patterns: args.globs.clone(),
         });
     }
-    walked.extend(pools.and_then(|pools| ignored_omission(args, global, walk, pools)));
+    walked.extend(walk.ignored());
     walked.extend(walk.skipped());
     walked.extend(
         walk.unreadable_dirs
@@ -913,106 +1135,42 @@ fn error_path(error: &ignore::Error) -> PathBuf {
     }
 }
 
-/// The file sets the ignored buckets are differences against; the gitignore-only walk runs only
-/// when both filters are active.
-struct Pools<T> {
-    pool: T,
-    gitignore_only: Option<T>,
-}
+/// Bounds the footer as `TOP_FILES_SHOWN` bounds the file map: a monorepo can reject a
+/// `node_modules/` per package.
+const IGNORED_DIRS_NAMED: usize = 5;
 
-type Walking<'scope> = std::thread::ScopedJoinHandle<'scope, usize>;
-
-impl<'scope> Pools<Walking<'scope>> {
-    fn spawn<'env>(
-        scope: &'scope std::thread::Scope<'scope, 'env>,
-        args: &FindArgs,
-        global: &Global,
-        paths: &'env [PathBuf],
-        globs: &'env Override,
-    ) -> Option<Self> {
-        if args.hidden && global.no_ignore {
-            return None;
-        }
-        // The glob narrows the pool too: a file it excluded was not left out by a filter.
-        let pool = scope.spawn(|| count_files(&walker(paths, false, false, globs)));
-        let gitignore_only = (!args.hidden && !global.no_ignore)
-            .then(|| scope.spawn(|| count_files(&walker(paths, false, true, globs))));
-        Some(Pools {
-            pool,
-            gitignore_only,
-        })
-    }
-
-    fn join(self) -> Pools<usize> {
-        let join = |handle: Walking<'scope>| {
-            handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        };
-        Pools {
-            pool: join(self.pool),
-            gitignore_only: self.gitignore_only.map(join),
-        }
-    }
-}
-
-/// `ignore` applies the dotfile rule only where gitignore said nothing, so a file both walks
-/// dropped is gitignore's, and a `!` line re-including a dotfile keeps it out of `hidden`.
-fn ignored_omission(
-    args: &FindArgs,
-    global: &Global,
-    walk: &Walk,
-    pools: &Pools<usize>,
-) -> Option<Omission> {
-    // Every filtered walk yields a subset of the unfiltered one, so set differences are counts.
-    // `saturating_sub` only masks a violation of that invariant instead of underflowing, so the
-    // debug build still catches one.
-    debug_assert!(
-        walk.reached <= pools.pool,
-        "the unfiltered pool ({}) undercounted the filtered walk ({})",
-        pools.pool,
-        walk.reached
-    );
-    let excluded = pools.pool.saturating_sub(walk.reached);
-
-    let (gitignore, hidden) = if args.hidden {
-        (excluded, 0)
-    } else if global.no_ignore {
-        (0, excluded)
-    } else {
-        let gitignore_only = pools
-            .gitignore_only
-            .expect("spawned whenever neither --hidden nor --no-ignore is set");
-        debug_assert!(
-            walk.reached <= gitignore_only,
-            "the gitignore-only pool ({}) undercounted the filtered walk ({})",
-            gitignore_only,
-            walk.reached
-        );
-        let hidden = gitignore_only.saturating_sub(walk.reached);
-        (excluded - hidden.min(excluded), hidden.min(excluded))
+/// Shallowest first, so a nested rejection never hides a top-level `target/`, with the path
+/// breaking ties, since a parallel walk rejects directories in scheduler order. Each source that
+/// pruned anything keeps its shallowest name, so the footer names a directory per flag.
+fn name_dirs(gitignored: &[PathBuf], hidden: &[PathBuf]) -> IgnoredDirs {
+    let order = |a: &&PathBuf, b: &&PathBuf| {
+        let depth = |dir: &PathBuf| dir.components().count();
+        depth(a).cmp(&depth(b)).then_with(|| a.cmp(b))
     };
-    // A reached file that could not be searched is named in `Skipped`, so `other` stays zero.
-    (gitignore + hidden > 0).then_some(Omission::Ignored {
-        gitignore,
-        hidden,
-        other: 0,
-    })
-}
-
-fn count_files(builder: &WalkBuilder) -> usize {
-    let files = std::sync::atomic::AtomicUsize::new(0);
-    builder.clone().threads(0).build_parallel().run(|| {
-        Box::new(|entry| {
-            if let Ok(entry) = entry
-                && is_candidate(&entry)
-            {
-                files.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            WalkState::Continue
-        })
-    });
-    files.into_inner()
+    let mut sources: [Vec<&PathBuf>; 2] = [gitignored.iter().collect(), hidden.iter().collect()];
+    for dirs in &mut sources {
+        dirs.sort_unstable_by(order);
+    }
+    let mut taken = sources.each_ref().map(|dirs| usize::from(!dirs.is_empty()));
+    while taken.iter().sum::<usize>() < IGNORED_DIRS_NAMED {
+        let next = [0, 1]
+            .into_iter()
+            .filter(|&source| taken[source] < sources[source].len())
+            .min_by(|&a, &b| order(&sources[a][taken[a]], &sources[b][taken[b]]));
+        let Some(source) = next else { break };
+        taken[source] += 1;
+    }
+    let named = |source: usize| NamedDirs {
+        named: sources[source][..taken[source]]
+            .iter()
+            .map(|dir| dir.display().to_string())
+            .collect(),
+        more: sources[source].len() - taken[source],
+    };
+    IgnoredDirs {
+        gitignore: named(0),
+        hidden: named(1),
+    }
 }
 
 #[cfg(test)]
@@ -1096,6 +1254,7 @@ mod tests {
                     gitignore,
                     hidden,
                     other,
+                    ..
                 },
             ] => (*gitignore, *hidden, *other),
             other => panic!("expected exactly one Omission::Ignored, got {other:?}"),
@@ -1513,6 +1672,7 @@ mod tests {
                     gitignore,
                     hidden,
                     other,
+                    ..
                 },
             ] => {
                 assert_eq!(*gitignore, 1, "ignored.txt only");
@@ -2486,7 +2646,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_under_a_gitignored_directory_is_still_counted_as_gitignore_while_a_glob_is_active() {
+    fn a_gitignored_directory_is_named_while_a_glob_is_active() {
         // A glob matches files, never the directory above one, so `node_modules/` is pruned first.
         let Some(dir) = repo() else { return };
         std::fs::create_dir(dir.path().join("node_modules")).expect("a nested directory");
@@ -2503,10 +2663,352 @@ mod tests {
         };
         let targets: Vec<&str> = blocks.iter().map(|block| block.target.as_str()).collect();
         assert_eq!(targets, ["x.log"]);
-        assert_eq!(named(&outcome), ["glob *.log", "ignored 1 (gitignore 1)"]);
+        assert_eq!(named(&outcome), [
+            "glob *.log",
+            "ignored dirs (gitignore node_modules/)"
+        ]);
         assert_eq!(
             outcome.response.footer.summary,
             "1 hit in 1 file \u{b7} searched 1 file"
+        );
+    }
+
+    /// `target/locked` is unlistable: had the walk entered `target/`, it would be named unreadable.
+    fn gitignored_target(dir: &Workdir) -> bool {
+        for sub in ["target", "target/debug", "target/locked", ".cache", "src"] {
+            std::fs::create_dir(dir.path().join(sub)).expect("a nested directory");
+        }
+        write(dir, ".gitignore", "target/\n*.log\n");
+        write(dir, "target/debug/build.rs", "needle\n");
+        write(dir, "target/locked/deep.rs", "needle\n");
+        write(dir, ".cache/entry.txt", "needle\n");
+        write(dir, "src/main.rs", "needle\n");
+        write(dir, "src/run.log", "needle\n");
+        locked_dir(dir, "target/locked")
+    }
+
+    #[test]
+    fn a_gitignored_target_directory_is_named_and_never_entered() {
+        let Some(dir) = repo() else { return };
+        let modes_bite = gitignored_target(&dir);
+
+        let sequential = run_with(
+            &find_args("needle", &[]),
+            &global_args(),
+            Some(Traversal::Sequential),
+        );
+        let parallel = run_with(
+            &find_args("needle", &[]),
+            &global_args(),
+            Some(Traversal::Parallel { threads: 4 }),
+        );
+        unlock_dir(&dir, "target/locked");
+
+        let Body::Targets(blocks) = &sequential.response.body else {
+            panic!("expected Body::Targets");
+        };
+        let targets: Vec<&str> = blocks.iter().map(|block| block.target.as_str()).collect();
+        assert_eq!(targets, ["src/main.rs"]);
+        assert_eq!(
+            named(&sequential),
+            [
+                "ignored 2 (gitignore 1 \u{b7} hidden 1) \u{b7} ignored dirs (gitignore target/ \u{b7} \
+              hidden .cache/)"
+            ],
+            "src/run.log is gitignore's and .gitignore is a dotfile; the files under .cache/ and \
+             target/ are counted nowhere"
+        );
+        assert_eq!(rendered(&parallel), rendered(&sequential));
+        if !modes_bite {
+            eprintln!(
+                "skipped (a_gitignored_target_directory_is_named_and_never_entered, unreadable \
+                 control): mode 0o000 did not refuse this reader"
+            );
+        }
+    }
+
+    #[test]
+    fn the_same_tree_searched_with_no_ignore_enters_target_and_names_its_unreadable_directory() {
+        let Some(dir) = repo() else { return };
+        let modes_bite = gitignored_target(&dir);
+        let mut global = global_args();
+        global.no_ignore = true;
+
+        let outcome = run_find(&find_args("needle", &[]), &global);
+        unlock_dir(&dir, "target/locked");
+        if !modes_bite {
+            eprintln!(
+                "skipped (the_same_tree_searched_with_no_ignore_enters_target_and_names_its_\
+                 unreadable_directory): mode 0o000 did not refuse this reader"
+            );
+            return;
+        }
+
+        let Body::Targets(blocks) = &outcome.response.body else {
+            panic!("expected Body::Targets");
+        };
+        let targets: Vec<&str> = blocks.iter().map(|block| block.target.as_str()).collect();
+        assert_eq!(targets, [
+            "src/main.rs",
+            "src/run.log",
+            "target/debug/build.rs"
+        ]);
+        assert_eq!(named(&outcome), [
+            "ignored 1 (hidden 1) \u{b7} ignored dirs (hidden .cache/)",
+            "target/locked unreadable",
+        ]);
+    }
+
+    #[test]
+    fn with_hidden_no_dotfile_or_hidden_directory_is_named() {
+        let Some(dir) = repo() else { return };
+        gitignored_target(&dir);
+        let mut args = find_args("needle", &[]);
+        args.hidden = true;
+
+        let outcome = run_find(&args, &global_args());
+        unlock_dir(&dir, "target/locked");
+
+        let Body::Targets(blocks) = &outcome.response.body else {
+            panic!("expected Body::Targets");
+        };
+        let targets: Vec<&str> = blocks.iter().map(|block| block.target.as_str()).collect();
+        assert_eq!(targets, [".cache/entry.txt", "src/main.rs"]);
+        assert_eq!(named(&outcome), [
+            "ignored 1 (gitignore 1) \u{b7} ignored dirs (gitignore target/)"
+        ]);
+    }
+
+    #[test]
+    fn only_the_first_five_ignored_directories_are_named_in_path_order_within_a_depth() {
+        let Some(dir) = repo() else { return };
+        let names = ["g", "b", "f", "a", "e", "c", "d"];
+        for name in names {
+            std::fs::create_dir(dir.path().join(name)).expect("a nested directory");
+            write(&dir, &format!("{name}/x.txt"), "needle\n");
+        }
+        write(&dir, ".gitignore", "/[a-g]/\n");
+        write(&dir, "kept.txt", "needle\n");
+
+        let parallel = Some(Traversal::Parallel { threads: 8 });
+        let outcome = run_with(&find_args("needle", &[]), &global_args(), parallel);
+
+        let Some(Omission::Ignored { dirs, .. }) = outcome
+            .response
+            .omitted
+            .iter()
+            .find(|omission| matches!(omission, Omission::Ignored { .. }))
+        else {
+            panic!(
+                "expected an Omission::Ignored: {:?}",
+                outcome.response.omitted
+            );
+        };
+        assert_eq!(dirs.gitignore.named, ["a", "b", "c", "d", "e"]);
+        assert_eq!(dirs.gitignore.more, 2, "f/ and g/");
+        assert!(dirs.hidden.named.is_empty() && dirs.hidden.more == 0);
+        assert_eq!(named(&outcome), [
+            "ignored 1 (hidden 1) \u{b7} ignored dirs (gitignore a/, b/, c/, d/, e/ (+2 more))"
+        ]);
+    }
+
+    #[test]
+    fn a_top_level_ignored_directory_is_named_before_a_nested_one_it_sorts_after() {
+        let Some(dir) = repo() else { return };
+        for sub in ["a", "a/deep", "z"] {
+            std::fs::create_dir(dir.path().join(sub)).expect("a nested directory");
+        }
+        write(&dir, "a/deep/x.txt", "needle\n");
+        write(&dir, "z/x.txt", "needle\n");
+        write(&dir, "a/kept.txt", "needle\n");
+        write(&dir, ".gitignore", "deep/\n/z/\n");
+
+        let outcome = run_with(
+            &find_args("needle", &[]),
+            &global_args(),
+            Some(Traversal::Sequential),
+        );
+
+        assert_eq!(named(&outcome), [
+            "ignored 1 (hidden 1) \u{b7} ignored dirs (gitignore z/, a/deep/)"
+        ]);
+    }
+
+    fn footer_of(outcome: &Outcome) -> String {
+        let text = crate::output::render(&outcome.response, Format::Text, &RenderOptions {
+            numbers: true,
+            quiet: true,
+            cost_first: false,
+        });
+        let footer = text.lines().last().unwrap_or_default();
+        footer
+            .rsplit_once(" \u{b7} ~")
+            .map_or(footer, |(omissions, _cost)| omissions)
+            .to_owned()
+    }
+
+    fn json_dirs(outcome: &Outcome) -> serde_json::Value {
+        let json = crate::output::render(&outcome.response, Format::Json, &RenderOptions {
+            numbers: true,
+            quiet: true,
+            cost_first: false,
+        });
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let ignored = value["omitted"]
+            .as_array()
+            .and_then(|omitted| omitted.iter().find_map(|omission| omission.get("ignored")))
+            .unwrap_or_else(|| panic!("expected an ignored omission: {json}"));
+        ignored["dirs"].clone()
+    }
+
+    /// Six gitignored top-level directories would fill the five names alone.
+    fn six_gitignored_and_one_nested_hidden(dir: &Workdir) {
+        for sub in ["a", "b", "c", "d", "e", "f", "x", "x/.h"] {
+            std::fs::create_dir(dir.path().join(sub)).expect("a nested directory");
+            write(dir, &format!("{sub}/n.txt"), "needle\n");
+        }
+        write(dir, ".gitignore", "/[a-f]/\n");
+    }
+
+    #[test]
+    fn each_source_that_pruned_a_directory_keeps_a_name_when_the_other_fills_the_five() {
+        let Some(dir) = repo() else { return };
+        six_gitignored_and_one_nested_hidden(&dir);
+
+        for traversal in [Traversal::Sequential, Traversal::Parallel { threads: 4 }] {
+            let outcome = run_with(&find_args("needle", &[]), &global_args(), Some(traversal));
+
+            assert_eq!(
+                named(&outcome),
+                [
+                    "ignored 1 (hidden 1) \u{b7} ignored dirs (gitignore a/, b/, c/, d/ (+2 more) \
+                  \u{b7} hidden x/.h/)"
+                ],
+                "{traversal:?}: .gitignore is the hidden file; x/.h/ is deeper than all six, yet \
+                 the only name that says --hidden brings a directory back"
+            );
+        }
+    }
+
+    #[test]
+    fn with_hidden_the_gitignored_directories_alone_take_all_five_names() {
+        let Some(dir) = repo() else { return };
+        six_gitignored_and_one_nested_hidden(&dir);
+        let mut args = find_args("needle", &[]);
+        args.hidden = true;
+
+        let outcome = run_find(&args, &global_args());
+
+        assert_eq!(named(&outcome), [
+            "ignored dirs (gitignore a/, b/, c/, d/, e/ (+1 more))"
+        ]);
+    }
+
+    #[test]
+    fn with_no_ignore_the_hidden_directory_alone_is_named() {
+        let Some(dir) = repo() else { return };
+        six_gitignored_and_one_nested_hidden(&dir);
+        let mut global = global_args();
+        global.no_ignore = true;
+
+        let outcome = run_find(&find_args("needle", &[]), &global);
+
+        assert_eq!(named(&outcome), [
+            "ignored 1 (hidden 1) \u{b7} ignored dirs (hidden x/.h/)"
+        ]);
+    }
+
+    /// `None` where the filesystem refuses a name that is not UTF-8, as APFS does.
+    #[cfg(unix)]
+    fn gitignored_dir_named(dir: &Workdir, name: &[u8]) -> Option<()> {
+        use std::os::unix::ffi::OsStrExt as _;
+        let path = dir.path().join(std::ffi::OsStr::from_bytes(name));
+        std::fs::create_dir(&path).ok()?;
+        std::fs::write(path.join("n.txt"), "needle\n").expect("test fixture writes");
+        write(dir, "kept.txt", "needle\n");
+        write(dir, ".gitignore", "bad*\n");
+        Some(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pruned_directory_whose_name_is_not_utf8_reaches_json_lossily_as_text_shows_it() {
+        let Some(dir) = repo() else { return };
+        if gitignored_dir_named(&dir, b"bad\xffdir").is_none() {
+            eprintln!(
+                "skipped (a_pruned_directory_whose_name_is_not_utf8_reaches_json_lossily_as_text_\
+                 shows_it): the filesystem refused a non-UTF-8 name"
+            );
+            return;
+        }
+
+        for traversal in [Traversal::Sequential, Traversal::Parallel { threads: 4 }] {
+            let outcome = run_with(&find_args("needle", &[]), &global_args(), Some(traversal));
+
+            assert_eq!(
+                json_dirs(&outcome)["gitignore"],
+                serde_json::json!({"named": ["bad\u{fffd}dir"], "more": 0}),
+                "{traversal:?}"
+            );
+            assert_eq!(
+                footer_of(&outcome),
+                "\u{2500}\u{2500} 1 hit in 1 file \u{b7} searched 1 file \u{b7} ignored 1 (hidden 1) \
+                 \u{b7} ignored dirs (gitignore bad\u{fffd}dir/)",
+                "{traversal:?}: .gitignore is the hidden file"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pruned_directory_whose_name_is_utf8_reaches_json_as_is() {
+        let Some(dir) = repo() else { return };
+        gitignored_dir_named(&dir, b"bad\xc3\xa9dir").expect("a UTF-8 name");
+
+        let outcome = run_find(&find_args("needle", &[]), &global_args());
+
+        assert_eq!(
+            json_dirs(&outcome)["gitignore"],
+            serde_json::json!({"named": ["bad\u{e9}dir"], "more": 0})
+        );
+    }
+
+    fn hidden_dir_named(dir: &Workdir, name: &str) {
+        std::fs::create_dir(dir.path().join(name)).expect("a nested directory");
+        write(dir, &format!("{name}/n.txt"), "needle\n");
+        write(dir, "kept.txt", "needle\n");
+    }
+
+    #[test]
+    fn a_newline_in_a_pruned_directory_name_is_escaped_and_the_footer_stays_one_line() {
+        let Some(dir) = repo() else { return };
+        hidden_dir_named(&dir, ".a\nb");
+
+        let outcome = run_find(&find_args("needle", &[]), &global_args());
+
+        assert_eq!(
+            footer_of(&outcome),
+            "\u{2500}\u{2500} 1 hit in 1 file \u{b7} searched 1 file \u{b7} ignored dirs (hidden \
+             .a\\nb/)"
+        );
+        assert_eq!(
+            json_dirs(&outcome)["hidden"],
+            serde_json::json!({"named": [".a\nb"], "more": 0}),
+            "JSON escapes the newline itself, so the name reaches it whole"
+        );
+    }
+
+    #[test]
+    fn a_pruned_directory_name_with_no_control_character_is_footed_as_is() {
+        let Some(dir) = repo() else { return };
+        hidden_dir_named(&dir, ".a b");
+
+        let outcome = run_find(&find_args("needle", &[]), &global_args());
+
+        assert_eq!(
+            footer_of(&outcome),
+            "\u{2500}\u{2500} 1 hit in 1 file \u{b7} searched 1 file \u{b7} ignored dirs (hidden \
+             .a b/)"
         );
     }
 
@@ -2570,18 +3072,81 @@ mod tests {
         );
     }
 
-    #[test]
-    fn roots_that_are_all_directories_take_the_parallel_walk() {
+    /// `src/` plus `files` files under it: `files + 1` entries.
+    fn tree_of(files: usize) -> tempfile::TempDir {
         let root = tempfile::TempDir::new().expect("temp dir");
         std::fs::create_dir(root.path().join("src")).expect("a nested directory");
-        let roots = [root.path().to_path_buf(), root.path().join("src")];
+        for n in 0..files {
+            std::fs::write(root.path().join(format!("src/f{n}.txt")), "needle\n")
+                .expect("test fixture writes");
+        }
+        root
+    }
 
-        assert_eq!(traversal_of(&roots), Traversal::Parallel { threads: 0 });
+    #[test]
+    fn a_directory_tree_over_the_entry_budget_takes_the_parallel_walk() {
+        let root = tree_of(SEQUENTIAL_WALK_MAX_ENTRIES);
+
+        assert_eq!(
+            traversal_of(&[root.path().to_path_buf()]),
+            Traversal::Parallel { threads: 0 }
+        );
+    }
+
+    #[test]
+    fn a_directory_tree_at_the_entry_budget_is_walked_on_one_thread() {
+        let root = tree_of(SEQUENTIAL_WALK_MAX_ENTRIES - 1);
+
+        assert_eq!(
+            traversal_of(&[root.path().to_path_buf()]),
+            Traversal::Sequential
+        );
+    }
+
+    #[test]
+    fn a_tree_of_more_directories_than_the_probe_lists_takes_the_parallel_walk() {
+        let root = tempfile::TempDir::new().expect("temp dir");
+        for n in 0..SEQUENTIAL_WALK_MAX_DIRS {
+            std::fs::create_dir(root.path().join(format!("d{n}"))).expect("a nested directory");
+        }
+
+        assert_eq!(
+            traversal_of(&[root.path().to_path_buf()]),
+            Traversal::Parallel { threads: 0 },
+            "the root and its {SEQUENTIAL_WALK_MAX_DIRS} subdirectories are one listing too many"
+        );
+    }
+
+    #[test]
+    fn a_tree_of_as_many_directories_as_the_probe_lists_is_walked_on_one_thread() {
+        let root = tempfile::TempDir::new().expect("temp dir");
+        for n in 1..SEQUENTIAL_WALK_MAX_DIRS {
+            std::fs::create_dir(root.path().join(format!("d{n}"))).expect("a nested directory");
+        }
+
+        assert_eq!(
+            traversal_of(&[root.path().to_path_buf()]),
+            Traversal::Sequential
+        );
+    }
+
+    #[test]
+    fn a_git_directory_counts_nothing_toward_the_entry_budget() {
+        let root = tree_of(SEQUENTIAL_WALK_MAX_ENTRIES - 1);
+        std::fs::create_dir(root.path().join(".git")).expect("a nested directory");
+        for n in 0..10 {
+            std::fs::write(root.path().join(format!(".git/o{n}")), "x").expect("fixture writes");
+        }
+
+        assert_eq!(
+            traversal_of(&[root.path().to_path_buf()]),
+            Traversal::Sequential
+        );
     }
 
     #[test]
     fn a_root_that_is_an_explicit_file_keeps_the_walk_sequential() {
-        let root = tempfile::TempDir::new().expect("temp dir");
+        let root = tree_of(SEQUENTIAL_WALK_MAX_ENTRIES);
         std::fs::write(root.path().join("a.ts"), "needle\n").expect("test fixture writes");
         let roots = [root.path().to_path_buf(), root.path().join("a.ts")];
 
@@ -2657,6 +3222,131 @@ mod tests {
             &opts,
         ));
         both
+    }
+
+    /// Three times the reset limit of sibling directories, each with its own `.gitignore`, so a
+    /// copy's rules must come back right after every reset.
+    fn many_ignoring_directories(dir: &Workdir) -> usize {
+        let dirs = 3 * MATCHER_PARENTS_MAX;
+        write(dir, ".gitignore", "gen/\n");
+        for i in 0..dirs {
+            let sub = format!("p{i:03}");
+            std::fs::create_dir_all(dir.path().join(&sub).join("gen")).expect("nested directories");
+            write(dir, &format!("{sub}/.gitignore"), "*.skip\n");
+            for name in ["keep.txt", "x.skip", "gen/g.txt"] {
+                write(dir, &format!("{sub}/{name}"), "needle\n");
+            }
+        }
+        dirs
+    }
+
+    /// `ignore` exposes no count of the directories a matcher holds, so its `Debug` form is read.
+    fn compiled_dirs(matchers: &[IncrementalIgnore]) -> usize {
+        matchers
+            .iter()
+            .map(|matcher| format!("{matcher:?}").matches("Allowed(").count())
+            .sum()
+    }
+
+    fn judge_sorted_walk(mut judge: impl FnMut(&DirEntry)) {
+        let roots = [PathBuf::from(".")];
+        let (mut builder, _) = walker(&roots, true, true, &Override::empty());
+        for entry in builder.sort_by_file_path(Path::cmp).build().flatten() {
+            judge(&entry);
+        }
+    }
+
+    #[test]
+    fn a_filters_copy_ends_a_walk_holding_at_most_the_parent_limit_of_directories() {
+        let Some(dir) = repo() else { return };
+        let dirs = many_ignoring_directories(&dir);
+        let roots = [PathBuf::from(".")];
+        let (_, filters) = walker(&roots, true, true, &Override::empty());
+        let mut filters = filters.expect("both filters are on");
+
+        judge_sorted_walk(|entry| {
+            filters.judge(entry);
+        });
+
+        let held = compiled_dirs(&filters.matchers);
+        assert!(
+            held <= MATCHER_PARENTS_MAX,
+            "held {held} of {dirs} directories"
+        );
+    }
+
+    #[test]
+    fn a_bare_matcher_on_the_same_tree_ends_it_holding_every_directory() {
+        let Some(dir) = repo() else { return };
+        let dirs = many_ignoring_directories(&dir);
+        let roots = [PathBuf::from(".")];
+        let (_, filters) = walker(&roots, true, true, &Override::empty());
+        let mut matchers = filters.expect("both filters are on").matchers;
+
+        judge_sorted_walk(|entry| {
+            if entry.depth() > 0 {
+                let relative = entry.path().strip_prefix(".").unwrap_or(entry.path());
+                let is_dir = entry.file_type().is_some_and(|kind| kind.is_dir());
+                matchers[0].matched(relative, is_dir);
+            }
+        });
+
+        let held = compiled_dirs(&matchers);
+        assert!(
+            held >= dirs,
+            "held {held} of {dirs} directories: the measure no longer sees the growth"
+        );
+    }
+
+    #[test]
+    fn every_directory_s_own_gitignore_still_applies_after_its_matcher_is_reset() {
+        let Some(dir) = repo() else { return };
+        let dirs = many_ignoring_directories(&dir);
+        let args = FindArgs {
+            files: true,
+            ..find_args("needle", &[])
+        };
+        let expected: Vec<PathBuf> = (0..dirs)
+            .map(|i| PathBuf::from(format!("p{i:03}/keep.txt")))
+            .collect();
+
+        for traversal in [Traversal::Sequential, Traversal::Parallel { threads: 4 }] {
+            let outcome = run_with(&args, &global_args(), Some(traversal));
+
+            let Body::Files(files) = &outcome.response.body else {
+                panic!("expected Body::Files");
+            };
+            assert_eq!(files, &expected, "{traversal:?}");
+            assert_eq!(
+                ignored_bucket(&outcome),
+                (dirs, dirs + 1, 0),
+                "{traversal:?}: every x.skip is its directory's gitignore's, every .gitignore is \
+                 hidden"
+            );
+        }
+    }
+
+    #[test]
+    fn the_same_tree_with_no_ignore_lists_every_skip_and_gen_file() {
+        let Some(dir) = repo() else { return };
+        let dirs = many_ignoring_directories(&dir);
+        let args = FindArgs {
+            files: true,
+            ..find_args("needle", &[])
+        };
+        let mut global = global_args();
+        global.no_ignore = true;
+
+        let outcome = run_with(&args, &global, Some(Traversal::Parallel { threads: 4 }));
+
+        let Body::Files(files) = &outcome.response.body else {
+            panic!("expected Body::Files");
+        };
+        assert_eq!(
+            files.len(),
+            3 * dirs,
+            "keep.txt, x.skip and gen/g.txt per directory"
+        );
     }
 
     #[test]
@@ -2812,5 +3502,219 @@ mod tests {
         };
         let targets: Vec<&str> = blocks.iter().map(|block| block.target.as_str()).collect();
         assert_eq!(targets, ["a/f.txt", "a/g.txt", "a-b/f.txt"]);
+    }
+
+    /// Every flag pair `find` can run with, as `(--hidden, --no-ignore)`.
+    const FLAG_PAIRS: [(bool, bool); 4] =
+        [(false, false), (true, false), (false, true), (true, true)];
+
+    fn sorted(mut files: Vec<PathBuf>) -> Vec<PathBuf> {
+        files.sort();
+        files
+    }
+
+    /// The files `find` opens, from `walker` and the filters each traversal applies, through both.
+    fn files_find_walks(root: &Path, hidden: bool, no_ignore: bool) -> Vec<PathBuf> {
+        let roots = [root.to_path_buf()];
+        let (mut builder, filters) = walker(&roots, !hidden, !no_ignore, &Override::empty());
+        let (tx, rx) = mpsc::channel();
+        builder.build_parallel().run(|| {
+            let tx = tx.clone();
+            let mut filters = filters.clone();
+            Box::new(move |entry| {
+                let Ok(entry) = entry else {
+                    return WalkState::Continue;
+                };
+                match filters.as_mut().and_then(|filters| filters.judge(&entry)) {
+                    Some(Rejection::GitignoredDir(_) | Rejection::HiddenDir(_)) => WalkState::Skip,
+                    Some(_) => WalkState::Continue,
+                    None => {
+                        if is_candidate(&entry) {
+                            tx.send(display_path(entry.path()))
+                                .expect("the receiver outlives the walk");
+                        }
+                        WalkState::Continue
+                    },
+                }
+            })
+        });
+        drop(tx);
+        let parallel = sorted(rx.into_iter().collect());
+
+        judge_as_predicate(&mut builder, filters);
+        let sequential = sorted(
+            builder
+                .build()
+                .filter_map(Result::ok)
+                .filter(is_candidate)
+                .map(|entry| display_path(entry.path()))
+                .collect(),
+        );
+        assert_eq!(parallel, sequential, "parallel against sequential");
+        sequential
+    }
+
+    /// `ignore`'s own walker with its own filters on: the set `find` searched before it applied
+    /// the filters itself.
+    fn files_the_standard_walker_yields(
+        root: &Path,
+        hidden: bool,
+        no_ignore: bool,
+    ) -> Vec<PathBuf> {
+        sorted(
+            WalkBuilder::new(root)
+                .hidden(!hidden)
+                .ignore(!no_ignore)
+                .git_ignore(!no_ignore)
+                .git_global(!no_ignore)
+                .git_exclude(!no_ignore)
+                .filter_entry(|entry| !in_git_dir(entry.path()))
+                .build()
+                .filter_map(Result::ok)
+                .filter(is_candidate)
+                .map(|entry| display_path(entry.path()))
+                .collect(),
+        )
+    }
+
+    /// `None` when `rg` is not installed.
+    fn files_rg_lists(root: &Path, hidden: bool, no_ignore: bool) -> Option<Vec<PathBuf>> {
+        let mut rg = std::process::Command::new("rg");
+        rg.arg("--files");
+        if hidden {
+            rg.arg("--hidden");
+        }
+        if no_ignore {
+            rg.arg("--no-ignore");
+        }
+        let run = rg.arg(root).output().ok()?;
+        let listed = String::from_utf8(run.stdout).expect("UTF-8 fixture paths");
+        Some(sorted(
+            listed
+                .lines()
+                .map(|line| display_path(Path::new(line)))
+                .filter(|path| !in_git_dir(path))
+                .collect(),
+        ))
+    }
+
+    fn assert_the_walk_matches_the_standard_walker_and_rg(root: &Path, test: &str) {
+        for (hidden, no_ignore) in FLAG_PAIRS {
+            let flags = format!("--hidden {hidden}, --no-ignore {no_ignore}");
+            let ours = files_find_walks(root, hidden, no_ignore);
+            assert_eq!(
+                ours,
+                files_the_standard_walker_yields(root, hidden, no_ignore),
+                "{flags}"
+            );
+            match files_rg_lists(root, hidden, no_ignore) {
+                Some(rg) => assert_eq!(ours, rg, "rg --files, {flags}"),
+                None => eprintln!("skipped ({test}, rg arm): rg absent"),
+            }
+        }
+    }
+
+    /// Each file holds `needle`, so `find needle --files` lists every file the search opened.
+    fn layered_ignore_rules(dir: &Workdir) {
+        for sub in ["sub", "sub/deeper", "build", "secret", ".hidden"] {
+            std::fs::create_dir(dir.path().join(sub)).expect("a nested directory");
+        }
+        for (name, text) in [
+            (".gitignore", "*.log\nbuild/\n!.env\n"),
+            ("sub/.gitignore", "!keep.log\n*.tmp\n"),
+            (".ignore", "secret/\n"),
+        ] {
+            write(dir, name, &format!("{text}# needle\n"));
+        }
+        for name in [
+            "a.txt",
+            "top.log",
+            ".env",
+            ".config.toml",
+            "sub/code.rs",
+            "sub/keep.log",
+            "sub/x.tmp",
+            "sub/deeper/y.tmp",
+            "sub/deeper/z.log",
+            "sub/deeper/z.rs",
+            "build/out.txt",
+            "secret/s.txt",
+            ".hidden/h.txt",
+        ] {
+            write(dir, name, "needle\n");
+        }
+    }
+
+    #[test]
+    fn nested_gitignore_negation_ignore_file_and_hidden_directory_walk_as_rg_does() {
+        let Some(dir) = repo() else { return };
+        layered_ignore_rules(&dir);
+
+        assert_the_walk_matches_the_standard_walker_and_rg(
+            Path::new("."),
+            "nested_gitignore_negation_ignore_file_and_hidden_directory_walk_as_rg_does",
+        );
+        let expected: Vec<PathBuf> = [
+            ".env",
+            "a.txt",
+            "sub/code.rs",
+            "sub/deeper/z.rs",
+            "sub/keep.log",
+        ]
+        .map(PathBuf::from)
+        .to_vec();
+        assert_eq!(
+            files_find_walks(Path::new("."), false, false),
+            expected,
+            "!.env re-includes a dotfile; sub/'s !keep.log outranks the root's *.log, but not \
+             for sub/deeper/z.log"
+        );
+    }
+
+    #[test]
+    fn find_files_on_layered_ignore_rules_lists_what_rg_files_lists() {
+        let Some(dir) = repo() else { return };
+        layered_ignore_rules(&dir);
+        let mut args = find_args("needle", &[]);
+        args.files = true;
+        let Some(rg) = files_rg_lists(Path::new("."), false, false) else {
+            eprintln!(
+                "skipped (find_files_on_layered_ignore_rules_lists_what_rg_files_lists): rg absent"
+            );
+            return;
+        };
+
+        for traversal in [Traversal::Sequential, Traversal::Parallel { threads: 4 }] {
+            let outcome = run_with(&args, &global_args(), Some(traversal));
+
+            let Body::Files(files) = &outcome.response.body else {
+                panic!("expected Body::Files");
+            };
+            assert_eq!(files, &rg, "{traversal:?}");
+            assert_eq!(
+                named(&outcome),
+                [
+                    "ignored 8 (gitignore 4 \u{b7} hidden 4) \u{b7} ignored dirs (gitignore build/, \
+                     secret/ \u{b7} hidden .hidden/)"
+                ],
+                "{traversal:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_generated_corpus_walks_as_rg_does() {
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corpus");
+        if !corpus.join(".manifest").is_file() {
+            eprintln!(
+                "skipped (the_generated_corpus_walks_as_rg_does): no generated corpus; run `cargo \
+                 run --manifest-path tests/corpusgen/Cargo.toml --release`"
+            );
+            return;
+        }
+        assert_the_walk_matches_the_standard_walker_and_rg(
+            &corpus,
+            "the_generated_corpus_walks_as_rg_does",
+        );
     }
 }

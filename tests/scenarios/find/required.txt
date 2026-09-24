@@ -4,3 +4,4 @@ non-utf8-search
 unreadable-subdir
 glob-narrowing
 grep-style-alternation
+gitignored-target

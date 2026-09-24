@@ -3,7 +3,7 @@
 
 mod support;
 
-use support::sandbox::sandbox;
+use support::sandbox::{Run, Sandbox, sandbox};
 
 fn last_line(stream: &str) -> &str {
     stream.lines().last().unwrap_or_default()
@@ -286,4 +286,159 @@ fn write_an_existing_path_without_force_as_json() {
     assert_eq!(last_line(&run.err), "ERROR_CODE=exists");
     assert!(run.out.contains("\"outcome\":\"exists\""), "{}", run.out);
     insta::assert_snapshot!(run.out);
+}
+
+/// `None` where the filesystem refuses the name: APFS refuses one that is not UTF-8.
+#[cfg(unix)]
+fn hit_file_named(sandbox: &Sandbox, name: &[u8]) -> Option<()> {
+    use std::os::unix::ffi::OsStrExt as _;
+    std::fs::write(
+        sandbox.path().join(std::ffi::OsStr::from_bytes(name)),
+        "zyzzyva\n",
+    )
+    .ok()
+}
+
+/// Every JSON form of a hit carries the name the text header shows: 0xff becomes U+FFFD, as
+/// `Path::display` renders it.
+#[cfg(unix)]
+fn assert_every_json_form_names(sandbox: &Sandbox, shown: &str) {
+    let text = sandbox.lets(["find", "zyzzyva"]);
+    assert_eq!(text.code, 0, "{}", text.err);
+    assert_eq!(
+        text.out.lines().next(),
+        Some(format!("\u{2500}\u{2500} {shown}").as_str())
+    );
+
+    let json = sandbox.lets(["find", "zyzzyva", "--json"]);
+    assert_eq!(json.code, 0, "{}", json.err);
+    let object: serde_json::Value = serde_json::from_str(&json.out).expect("one JSON object");
+    assert_eq!(object["targets"][0]["path"], shown);
+    assert_eq!(object["targets"][0]["target"], shown);
+
+    let files = sandbox.lets(["find", "zyzzyva", "--files", "--json"]);
+    assert_eq!(files.code, 0, "{}", files.err);
+    let object: serde_json::Value = serde_json::from_str(&files.out).expect("one JSON object");
+    assert_eq!(object["files"], serde_json::json!([shown]));
+
+    let counts = sandbox.lets(["find", "zyzzyva", "--count", "--json"]);
+    assert_eq!(counts.code, 0, "{}", counts.err);
+    let object: serde_json::Value = serde_json::from_str(&counts.out).expect("one JSON object");
+    assert_eq!(
+        object["counts"],
+        serde_json::json!([{"count": 1, "path": shown}])
+    );
+
+    for (args, key) in [
+        (&["find", "zyzzyva", "--jsonl"][..], Some("path")),
+        (&["find", "zyzzyva", "--files", "--jsonl"][..], None),
+        (&["find", "zyzzyva", "--count", "--jsonl"][..], Some("path")),
+    ] {
+        let run = sandbox.lets(args);
+        assert_eq!(run.code, 0, "{args:?}: {}", run.err);
+        let first: serde_json::Value =
+            serde_json::from_str(run.out.lines().next().expect("a first record"))
+                .expect("a JSON record");
+        let name = key.map_or(&first, |key| &first[key]);
+        assert_eq!(name, shown, "{args:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hit_in_a_file_whose_name_is_not_utf8_reaches_json_as_the_text_header_names_it() {
+    let sandbox = sandbox("read");
+    if hit_file_named(&sandbox, b"bad\xffhit.txt").is_none() {
+        eprintln!(
+            "skipped (a_hit_in_a_file_whose_name_is_not_utf8_reaches_json_as_the_text_header_\
+             names_it): the filesystem refused a non-UTF-8 name"
+        );
+        return;
+    }
+
+    assert_every_json_form_names(&sandbox, "bad\u{fffd}hit.txt");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hit_in_a_file_whose_name_is_utf8_reaches_json_as_is() {
+    let sandbox = sandbox("read");
+    hit_file_named(&sandbox, "caf\u{e9}-hit.txt".as_bytes()).expect("a UTF-8 name is accepted");
+
+    assert_every_json_form_names(&sandbox, "caf\u{e9}-hit.txt");
+}
+
+/// `None` where the filesystem refuses the name, or mode 0o000 does not refuse this reader (root).
+#[cfg(unix)]
+fn run_with_an_unreadable_dir_named(sandbox: &Sandbox, name: &[u8]) -> Option<(Run, Run)> {
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let locked = sandbox.path().join(std::ffi::OsStr::from_bytes(name));
+    std::fs::create_dir(&locked).ok()?;
+    std::fs::write(locked.join("inside.txt"), "zyzzyva\n").expect("test fixture writes");
+    std::fs::write(sandbox.path().join("kept.txt"), "zyzzyva\n").expect("test fixture writes");
+    let mode = |bits| std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(bits));
+    mode(0o000).expect("chmod the locked directory");
+    let refused = std::fs::read_dir(&locked).is_err();
+    let runs = (
+        sandbox.lets(["find", "zyzzyva"]),
+        sandbox.lets(["find", "zyzzyva", "--json"]),
+    );
+    // Left at 0o000, the sandbox's temp directory could not be removed.
+    mode(0o755).expect("restore the locked directory");
+    refused.then_some(runs)
+}
+
+#[cfg(unix)]
+fn assert_the_unreadable_dir_is_named(text: &Run, json: &Run, shown: &str) {
+    assert_eq!(text.code, 0, "{}", text.err);
+    assert!(
+        text.out
+            .lines()
+            .last()
+            .is_some_and(|footer| footer.contains(&format!("{shown} unreadable"))),
+        "{}",
+        text.out
+    );
+    assert_eq!(json.code, 0, "{}", json.err);
+    let object: serde_json::Value = serde_json::from_str(&json.out).expect("one JSON object");
+    let omitted = object["omitted"].as_array().expect("an omitted array");
+    assert!(
+        omitted.contains(&serde_json::json!({"unreadable": {"path": shown}})),
+        "{}",
+        json.out
+    );
+    assert_eq!(object["targets"][0]["path"], "kept.txt");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_directory_whose_name_is_not_utf8_reaches_json_as_the_footer_names_it() {
+    let sandbox = sandbox("read");
+    let Some((text, json)) = run_with_an_unreadable_dir_named(&sandbox, b"locked\xffdir") else {
+        eprintln!(
+            "skipped (an_unreadable_directory_whose_name_is_not_utf8_reaches_json_as_the_footer_\
+             names_it): a non-UTF-8 name or mode 0o000 was not honoured here"
+        );
+        return;
+    };
+
+    assert_the_unreadable_dir_is_named(&text, &json, "locked\u{fffd}dir");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_directory_whose_name_is_utf8_reaches_json_as_is() {
+    let sandbox = sandbox("read");
+    let Some((text, json)) =
+        run_with_an_unreadable_dir_named(&sandbox, "locked-caf\u{e9}".as_bytes())
+    else {
+        eprintln!(
+            "skipped (an_unreadable_directory_whose_name_is_utf8_reaches_json_as_is): mode 0o000 \
+             did not refuse this reader"
+        );
+        return;
+    };
+
+    assert_the_unreadable_dir_is_named(&text, &json, "locked-caf\u{e9}");
 }

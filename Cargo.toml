@@ -62,8 +62,10 @@ tree-sitter-typescript = "0.23.2"
 tree-sitter-yaml = "0.7.2"
 
 # musl's own allocator measured 1.3-1.8x slower on `find` and `show`; glibc's is not replaced.
+# `override` also routes libc's own malloc (`opendir` and the like) through mimalloc: musl's global
+# malloc lock serialised the parallel walk, 100k futex calls on a 75k-directory tree against 76.
 [target.'cfg(target_env = "musl")'.dependencies]
-mimalloc = { version = "0.1.52", default-features = false }
+mimalloc = { version = "0.1.52", default-features = false, features = ["override"] }
 
 [dev-dependencies]
 divan = "0.1.21"

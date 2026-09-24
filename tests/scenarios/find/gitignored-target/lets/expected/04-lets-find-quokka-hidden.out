@@ -1,0 +1,3 @@
+── src/lib.rs
+1:	fn «quokka»() {}
+── 1 hit in 1 file · searched 8 files · ignored 1 (gitignore 1) · ignored dirs (gitignore target/) · skipped 1 (binary 1)

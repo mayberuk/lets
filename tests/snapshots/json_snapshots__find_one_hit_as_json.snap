@@ -2,4 +2,4 @@
 source: tests/json_snapshots.rs
 expression: run.out
 ---
-{"targets":[{"target":"big.ts","path":"big.ts","lines":[{"number":38,"marker":"hit","text":"«export function usage»(id: string) {"}]}],"omitted":[{"ignored":{"gitignore":1,"hidden":2,"other":0}},{"skipped":{"binary":1,"too_large":0,"unreadable":0}}],"stats":{"lines":1,"bytes":40,"tokens_est":null}}
+{"targets":[{"target":"big.ts","path":"big.ts","lines":[{"number":38,"marker":"hit","text":"«export function usage»(id: string) {"}]}],"omitted":[{"ignored":{"gitignore":1,"hidden":2,"other":0,"dirs":{"gitignore":{"named":[],"more":0},"hidden":{"named":[".config",".home",".run"],"more":0}}}},{"skipped":{"binary":1,"too_large":0,"unreadable":0}}],"stats":{"lines":1,"bytes":40,"tokens_est":null}}
