@@ -1,0 +1,21 @@
+---
+interface Props {
+  home: boolean;
+  path: string;
+}
+
+const { home, path } = Astro.props;
+const at = home ? '' : '/';
+const inDocs = path.startsWith('/docs/') ? 'page' : undefined;
+---
+<nav class="icons" aria-label="Desktop">
+  <a class="icon" href={home ? '#top' : '/'} data-for={home ? 'readme' : undefined}><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-readme"/></svg><span>README.md</span></a>
+  <a class="icon" href={`${at}#examples`} data-for={home ? 'anat' : undefined}><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-folder"/></svg><span>Examples</span></a>
+  <a class="icon" href={`${at}#try`} data-for={home ? 'term' : undefined}><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-terminal"/></svg><span>Try it</span></a>
+  <a class="icon" href={`${at}#trial`} data-for={home ? 'sheet' : undefined}><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-sheet"/></svg><span>Trial results</span></a>
+  <a class="icon" href="/docs/edit/" aria-current={inDocs}><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-manual"/></svg><span>Docs</span></a>
+  <a class="icon" href={home ? '#agents' : '/llms.txt'} data-for={home ? 'txt' : undefined}><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-txt"/></svg><span>llms.txt</span></a>
+  {home
+    ? <a class="icon trash" href="#trash" id="trash-icon" data-for="trash" aria-controls="trash"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-trash"/></svg><span>Trash</span></a>
+    : <a class="icon trash" href="/#trash"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-trash"/></svg><span>Trash</span></a>}
+</nav>

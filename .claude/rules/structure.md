@@ -4,6 +4,7 @@ paths:
   - tests/**
   - bench/**
   - docs/**
+  - site/**
 ---
 # Layout (`src/`, `tests/`, `bench/`, `docs/`)
 
@@ -21,15 +22,21 @@ pull request with its consumer named, not a file.
   paragraph and the SubagentStart line are excerpts kept in `docs/agents.md`.
 - Treat these as generated and regenerate them with the named recipe: `docs/examples/`
   (`just docs`), `bench/baselines/*` (`just bench-baseline`), `tests/scenarios/*/expected/*` and
-  trycmd snapshots (the overwrite env vars). CI diffs each of them.
+  trycmd snapshots (the overwrite env vars), `site/dist/` (`just site`). CI diffs each of them;
+  none is committed.
 - Name fixtures, cases and scenarios with stable ids in the filename; `required.txt` lists the
   ones that may not vanish.
+- Treat `site/` as the project website: an Astro static site built with Bun, deployed by
+  `.github/workflows/site.yml` to GitHub Pages at lets.mayberuk.com.
+- Keep `site/src/content/docs/*.md` as the one long-form CLI reference; `tests/site_docs.rs`
+  fails when a subcommand, flag, exit code or error slug drifts from it.
 
 ## Never
 - Hand-edit a generated file.
 - A `src/util.rs`, `src/common.rs`, or a `mod.rs` that holds logic.
-- A second place where the guide text, the crate table, the gate table or the exit codes are
-  written out.
+- A second, *unchecked* place where the guide text, the crate table, the gate table or the exit
+  codes are written out — `site/src/content/docs/*.md` holds the CLI reference and stays in sync
+  because `tests/site_docs.rs` enforces it.
 - A second crate in the workspace before a second binary needs the library.
 
 ```text

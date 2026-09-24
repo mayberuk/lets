@@ -1,0 +1,38 @@
+---
+import WindowControls from '../shell/WindowControls.astro';
+---
+<section class="win anat drag-ok" data-win="anat" data-title="anatomy.svg" data-icon="i-folder" id="examples" aria-labelledby="anat-t">
+          <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-folder"/></svg></span><h2 class="t" id="anat-t">anatomy.svg <span>— Image Viewer</span></h2><WindowControls /></div>
+          <div class="wb">
+            <figure class="sheet" aria-labelledby="dwg-cap" style="margin:0">
+              <div class="sheet-in">
+                <div class="vs">
+                  <p class="big was">3<small>calls<br>before</small></p>
+                  <ol class="phantoms" aria-label="Before: three calls">
+                    <li><code>sed -n '3,9p' src/usage.ts</code></li>
+                    <li><code>Edit &#123;"old_string": "const cap = 10", …&#125;</code></li>
+                    <li><code>sed -n '3,9p' src/usage.ts</code></li>
+                  </ol>
+                  <p class="big">1<small>call with<br>lets</small></p>
+                  <pre class="input"><code><span class="pr">$</span> lets edit src/usage.ts --old 'const cap = 10' --new 'const cap = 20'</code></pre>
+                </div>
+<pre class="xp" id="xp"><code><span class="pl" data-n="1" data-l="Where it landed" tabindex="0" aria-describedby="lg1">── src/usage.ts · 1 replacement · line 5 · exact
+</span><span class="pl" data-n="2" data-l="The edit, in place" tabindex="0" aria-describedby="lg2"><span class="g">3 </span>&#9;export function usage(id: string) &#123;
+<span class="g">4 </span>&#9;  const now = Date.now()
+</span><span class="pl" data-n="3" data-l="Now on disk: no re-read" tabindex="0" aria-describedby="lg3"><span class="chg"><span class="g">5~</span>&#9;  const cap = 20</span>
+</span><span class="pl" data-n="2" data-l="The edit, in place" tabindex="0" aria-describedby="lg2"><span class="g">6 </span>&#9;  if (!id) return
+<span class="g">7 </span>&#9;  if (count(id) &gt; cap) return
+</span><span class="pl">── <span class="pt" data-n="4" data-l="Parsed; a break reverts" tabindex="0" aria-describedby="lg4">check: structure ok</span> · <span class="pt" data-n="5" data-l="Guards the next edit" tabindex="0" aria-describedby="lg5">sha:75d31d847ffb→93b5daea8ace</span> · ~45 tokens</span></code></pre>
+              </div>
+              <ol class="legend" aria-label="Notes to the drawing">
+                <li data-n="1" id="lg1"><span class="bal" aria-hidden="true">1</span><span>Where it landed: file, replacement count and line.</span></li>
+                <li data-n="2" id="lg2"><span class="bal" aria-hidden="true">2</span><span>The edit in place, two lines either side.</span></li>
+                <li data-n="3" id="lg3"><span class="bal" aria-hidden="true">3</span><span>The line as it now reads on disk, so no re-read.</span></li>
+                <li data-n="4" id="lg4"><span class="bal" aria-hidden="true">4</span><span>Parsed before and after; a break reverts in this call.</span></li>
+                <li data-n="5" id="lg5"><span class="bal" aria-hidden="true">5</span><span>Hash before and after; with <code>--if</code>, the next edit refuses if the file moved.</span></li>
+              </ol>
+              <figcaption class="vbar" id="dwg-cap"><span>One edit, its output pulled apart</span><span>Real output · 100%</span></figcaption>
+            </figure>
+          </div>
+        </section>
+        <p class="min-note" data-js><span>anatomy.svg is minimised.</span><button type="button" class="key" data-restore="anat">Restore</button></p>

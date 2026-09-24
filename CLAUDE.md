@@ -14,6 +14,8 @@ arch, no index, no daemon, no config file.
 | `just lint` | `cargo +nightly fmt --check`, `cargo clippy --all-targets -D warnings`, `cargo-deny`, `cargo-machete`, `scripts/deps-gate.sh` |
 | `just check` | `lint` then `test`; the pre-commit and CI gate |
 | `just docs` | regenerate `docs/examples/` from passing trycmd cases |
+| `just site` | `bun install --frozen-lockfile` and build the website in `site/` to `site/dist/` |
+| `just site-check` | `site`, then check the built site; its own workflow, `site.yml`, not part of `check` |
 | `just bench-gate` | wall-clock and allocation gates against `bench/gates.rs` |
 | `just bench-baseline` | regenerate `bench/baselines/`; the diff is reviewed |
 | `just smoke-agent` | real `claude -p`, two arms, on demand; never CI |

@@ -1,0 +1,22 @@
+---
+interface Props {
+  home: boolean;
+  path: string;
+}
+
+const { home, path } = Astro.props;
+const at = home ? '' : '/';
+const inDocs = path.startsWith('/docs/') ? 'page' : undefined;
+---
+<header class="panel">
+  <a class="logo" href={home ? '#top' : '/'} aria-label={home ? 'lets, back to top' : 'lets, home'}><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-terminal"/></svg>lets</a>
+  <nav class="pnav" aria-label="Site">
+    <a href={`${at}#examples`} class="hide-s">Examples</a>
+    <a href="/docs/edit/" aria-current={inDocs}>Docs</a>
+    <a href={`${at}#agents`}>For agents</a>
+  </nav>
+  <div class="pright">
+    <a class="pquiet hide-s" href="https://github.com/mayberuk/lets">GitHub</a>
+    <button type="button" class="pbtn" id="appearance" aria-haspopup="dialog" aria-expanded="false" data-js><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#g-palette"/></svg><span class="pl-t">Appearance</span><span class="vh">: change the wallpaper</span></button>
+  </div>
+</header>

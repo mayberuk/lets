@@ -1,0 +1,23 @@
+---
+import WindowControls from '../shell/WindowControls.astro';
+import { PAIRS, paneOut, labels } from '../../data/compare';
+---
+<section class="win cmp-win drag-ok" data-win="cmp" data-title="Compare" data-icon="i-folder" aria-labelledby="cmp-t">
+          <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-folder"/></svg></span><h3 class="t" id="cmp-t">without lets ↔ with lets <span>— Compare</span></h3><WindowControls /></div>
+          <div class="wb">
+<div class="cmp-tabs" role="tablist" aria-label="Pairs" data-js>{PAIRS.map((p, i) => <button type="button" role="tab" id={`cmp-tab-${p.id}`} aria-controls={`cmp-${p.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>{p.tab}</button>)}</div>
+{PAIRS.map((p, i) => {
+  const names = labels(p);
+  return <div class="cmp-panel" role="tabpanel" id={`cmp-${p.id}`} aria-labelledby={`cmp-tab-${p.id}`} tabindex="0" data-hide={i === 0 ? undefined : ''}>
+  <h3 class="cmp-h">{p.title}</h3>
+  <p class="cmp-say">{p.say}</p>
+  <div class="cmp-grid">
+    <div class="pane pane-l"><p class="pane-h"><span>Without lets</span><b>{p.turns.length} turns</b></p><ol class="trows">{p.turns.map(([cmd, note, link], n) => <li class="trow" data-link={link}><span class="tn" aria-hidden="true">{n + 1}</span><code>{cmd}</code><span class="tnote">{note}</span><span class="vh"> Made unnecessary by: {names[link]}</span></li>)}</ol></div>
+    <div class="bands" aria-hidden="true"><svg></svg></div>
+    <div class="pane pane-r"><p class="pane-h"><span>With lets</span><b>1 call</b></p><pre class="cout"><code><span class="after">$ {p.cmd}</span>{p.fold && <span class="plain el">{p.fold}</span>}<Fragment set:html={paneOut(p)} /></code></pre></div>
+  </div>
+</div>;
+})}
+          </div>
+        </section>
+        <p class="min-note" data-js><span>Compare is minimised.</span><button type="button" class="key" data-restore="cmp">Restore</button></p>

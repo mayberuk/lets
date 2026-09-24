@@ -1,0 +1,38 @@
+---
+import WindowControls from '../shell/WindowControls.astro';
+import recorded from '../../data/recorded.json';
+
+// `</` inside the JSON would close the script element early.
+const rec = JSON.stringify(recorded).replace(/<\//g, '<\\/');
+---
+<section class="win term-win drag-ok" data-win="term" data-title="Terminal" data-icon="i-terminal" aria-labelledby="term-t">
+          <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-terminal"/></svg></span><h3 class="t" id="term-t">demo — Terminal <span>(simulated)</span></h3><WindowControls /></div>
+          <div class="wb term">
+            <div class="term-out" id="term-out" role="log" aria-live="polite" aria-label="Terminal output" tabindex="0"><div class="nojs static"><span class="ps">demo $</span> lets show src/usage.ts#usage
+<span class="rl">── src/usage.ts#usage  (3-9 of 13 · via tree-sitter) · sha:6fae9e67700e</span>
+3 &#9;export function usage(id: string) &#123;
+4 &#9;  const now = Date.now()
+5 &#9;  const cap = 10
+6 &#9;  if (!id) return
+7 &#9;  if (count(id) &gt; cap) return
+8 &#9;  return total(id, now)
+9 &#9;&#125;
+<span class="rl">── showed 1 target · 7 lines · ~38 tokens</span>
+<span class="ps">demo $</span> lets edit src/usage.ts --old 'const cap = 10' --new 'const cap = 20'
+<span class="rl">── src/usage.ts · 1 replacement · line 5 · exact</span>
+3 &#9;export function usage(id: string) &#123;
+4 &#9;  const now = Date.now()
+<span class="chg">5~&#9;  const cap = 20</span>
+6 &#9;  if (!id) return
+7 &#9;  if (count(id) &gt; cap) return
+<span class="rl">── check: structure ok · sha:6fae9e67700e→06aa54dff860 · ~45 tokens</span>
+<span class="note">This transcript is static without JavaScript; with it, the terminal takes commands.</span></div></div>
+            <form class="term-line" id="term-form" autocomplete="off">
+              <label for="term-in"><b>demo</b> $</label>
+              <div class="cmdwrap"><input id="term-in" name="cmd" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="type a command, or help"><span class="caret" aria-hidden="true"></span><span class="measure" aria-hidden="true"></span></div>
+            </form>
+          </div>
+          <p class="term-note">A simulation: it replays output recorded from the real <code>lets</code> 0.0.1 binary on a two-file demo project. Nothing runs on your machine.</p>
+        </section>
+        <p class="min-note" data-js><span>The terminal is minimised.</span><button type="button" class="key" data-restore="term">Restore</button></p>
+<script type="application/json" id="rec" set:html={rec} />

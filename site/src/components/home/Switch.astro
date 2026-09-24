@@ -1,0 +1,68 @@
+---
+import WindowControls from '../shell/WindowControls.astro';
+---
+<section class="win sw-win drag-ok" data-win="two" data-title="Same task, two agents" data-icon="i-sheet" aria-labelledby="two-t">
+          <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-readme"/></svg></span><h3 class="t" id="two-t">Same task, two agents</h3><WindowControls /></div>
+          <div class="wb pad">
+            <div class="swbox" id="swbox" data-on="false">
+              <p class="task">Rename <code>usageCap</code> to <code>usageLimit</code> in two files, and confirm it.</p>
+              <div class="ctrl">
+                <div class="count off"><div class="roller" aria-hidden="true"><span id="roll">7</span></div><small><b>turns</b><span id="roll-l">lets off</span></small></div>
+                <div class="swi" data-on="false" id="swi" data-js>
+                  <span class="lab l-off" data-set="false" aria-hidden="true">off</span>
+                  <button type="button" class="switch" role="switch" aria-checked="false" aria-controls="swbox" aria-label="Use lets" id="sw"><span class="knob"></span></button>
+                  <span class="lab l-on" data-set="true" aria-hidden="true">lets on</span>
+                </div>
+                <div class="count on"><small style="text-align:right"><b>2 turns</b>with lets</small></div>
+              </div>
+              <div class="tx" id="tx">
+                <div class="when-off">
+                  <h4 class="vh">lets off: 7 turns, one command each</h4>
+                  <ol class="turns" id="stock">
+                    <li class="turn" data-to="0"><span class="turn-n">1</span><pre><code>grep -rn 'usageCap' .<span class="why">find the uses</span></code></pre></li>
+                    <li class="turn" data-to="1"><span class="turn-n">2</span><pre><code>cat src/config.ts<span class="why">read the first file</span></code></pre></li>
+                    <li class="turn" data-to="1"><span class="turn-n">3</span><pre><code>cat src/usage.ts<span class="why">read the second</span></code></pre></li>
+                    <li class="turn" data-to="1"><span class="turn-n">4</span><pre><code>Edit &#123;"file_path": "src/config.ts", …&#125;<span class="why">edit</span></code></pre></li>
+                    <li class="turn" data-to="1"><span class="turn-n">5</span><pre><code>Edit &#123;"file_path": "src/usage.ts", …&#125;<span class="why">edit</span></code></pre></li>
+                    <li class="turn" data-to="1"><span class="turn-n">6</span><pre><code>cat src/config.ts<span class="why">re-read to confirm</span></code></pre></li>
+                    <li class="turn" data-to="1"><span class="turn-n">7</span><pre><code>cat src/usage.ts<span class="why">re-read to confirm</span></code></pre></li>
+                  </ol>
+                </div>
+                <div class="when-on">
+                  <h4 class="vh">lets on: 2 turns</h4>
+                  <ol class="turns" id="withlets">
+                    <li class="turn"><span class="turn-n">1</span><pre class="o"><code><span class="cmdl">$ lets find usageCap</span>
+<span class="rl">── src/config.ts</span>
+1:&#9;export const <mark>«usageCap»</mark> = 10
+<span class="rl">── src/usage.ts</span>
+1:&#9;import &#123; <mark>«usageCap»</mark> &#125; from './config'
+<span class="rl">── 2 hits in 2 files · searched 3 files · ~17 tokens</span></code></pre></li>
+                    <li class="turn"><span class="turn-n">2</span><div style="min-width:0"><pre class="o"><code><span class="cmdl">$ lets edit --from - &lt;&lt;'LETS'</span></code></pre>
+<details class="batch"><summary>The batch: 2 edits, 12 lines</summary><pre class="o"><code>@@ src/config.ts
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; old
+export const usageCap = 10
+======= new
+export const usageLimit = 10
+&gt;&gt;&gt;&gt;&gt;&gt;&gt;
+@@ src/usage.ts
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; old
+import &#123; usageCap &#125; from './config'
+======= new
+import &#123; usageLimit &#125; from './config'
+&gt;&gt;&gt;&gt;&gt;&gt;&gt;
+LETS</code></pre></details><pre class="o"><code><span class="rl">── src/config.ts · 1 replacement · line 1 · exact</span>
+<span class="chg">1~&#9;export const usageLimit = 10</span>
+2 &#9;export const retries = 3
+<span class="rl">── src/usage.ts · 1 replacement · line 1 · exact</span>
+<span class="chg">1~&#9;import &#123; usageLimit &#125; from './config'</span>
+2 &#9;
+3 &#9;export function usage(id: string) &#123;
+<span class="rl">── 2 files · 2 edits · all applied · checks: structure ok ×2 · ~60 tokens</span></code></pre></div></li>
+                  </ol>
+                </div>
+              </div>
+              <p class="caption">The <code>lets</code> output is real, from a demo project. The stock turns follow habits found in 1,502 real Claude Code sessions.</p>
+            </div>
+          </div>
+        </section>
+        <p class="min-note" data-js><span>Same task, two agents is minimised.</span><button type="button" class="key" data-restore="two">Restore</button></p>
