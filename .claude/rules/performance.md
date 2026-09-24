@@ -29,6 +29,10 @@ in its own commit.
 - Render into one buffer and write locked stdout once.
 - Compile a regex once per invocation. Initialise a grammar only when a target needs it.
 - Let `grep-searcher` own line splitting and binary detection in `find`.
+- Walk with `ignore::WalkParallel` in `find` when the tree is large enough to pay for the threads,
+  and sort before rendering so stdout stays deterministic. A bench-gate before and after still
+  goes in the merge request.
+- Gate the binary we ship: the musl build on Linux, not the glibc one `cargo build` makes.
 - Quote `just bench-gate` numbers in any merge request that claims a performance change or
   touches `src/hook/`, `src/output.rs`, `src/matcher.rs`, `src/symbols/` or `src/verbs/find.rs`.
 - Measure on the generated corpus under `tests/fixtures/`, never on a real repo.
