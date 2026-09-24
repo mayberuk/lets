@@ -1,0 +1,8 @@
+# spec.md § transform: a selector two sequence items match is exit 2, listing each matching index
+# as a candidate on its own line, and the `.out` tree shows the file unchanged.
+# attribute-selector-one-match-yaml is the control.
+bin.name = "lets"
+args = ["transform", "compose.yaml", "--set", "services[name=web].image=c"]
+
+[status]
+code = 2

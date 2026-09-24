@@ -1,0 +1,5 @@
+services:
+  - name: web
+    image: a
+  - name: web
+    image: b

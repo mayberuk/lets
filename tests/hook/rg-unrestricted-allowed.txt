@@ -1,0 +1,4 @@
+COMMAND
+rg -uu alpha
+===END===
+VERDICT allow

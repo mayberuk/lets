@@ -1,0 +1,4 @@
+COMMAND
+cd /tmp && cat a.ts
+===END===
+VERDICT allow

@@ -1,0 +1,11 @@
+# The control for `append-flow-sequence.toml`: `title` is a scalar, so the append is refused
+# with a message that names the reason and no library debug text.
+bin.name = "lets"
+args = ["transform", "docs/note.md", "--append", "title=wiki"]
+
+[status]
+code = 1
+
+[fs]
+base = "../../fixtures/transform"
+sandbox = true

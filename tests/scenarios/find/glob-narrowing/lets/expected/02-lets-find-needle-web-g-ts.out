@@ -1,0 +1,3 @@
+── web/app.ts
+1:	const «needle» = 1;
+── 1 hit in 1 file · searched 1 file · glob *.ts

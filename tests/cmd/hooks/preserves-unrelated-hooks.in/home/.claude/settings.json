@@ -1,0 +1,16 @@
+{
+  // preserve: a teammate's own PreToolUse hook
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo unrelatedmarker"
+          }
+        ]
+      }
+    ]
+  }
+}

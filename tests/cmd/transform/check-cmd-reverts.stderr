@@ -1,0 +1,2 @@
+command check failed for config/app.json: `grep -q true {}` passed before the batch and failed after it · 1 file reverted
+ERROR_CODE=check_failed

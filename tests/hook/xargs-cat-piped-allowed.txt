@@ -1,0 +1,4 @@
+COMMAND
+xargs cat | sort
+===END===
+VERDICT allow

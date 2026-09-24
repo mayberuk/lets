@@ -1,0 +1,3 @@
+# The control for toml-integer-out-of-range-usage: i64::MAX itself fits and is written as typed.
+bin.name = "lets"
+args = ["transform", "c.toml", "--set", "b=9223372036854775807"]

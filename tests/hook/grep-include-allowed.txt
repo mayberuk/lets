@@ -1,0 +1,4 @@
+COMMAND
+grep -rn --include='*.ts' foo .
+===END===
+VERDICT allow

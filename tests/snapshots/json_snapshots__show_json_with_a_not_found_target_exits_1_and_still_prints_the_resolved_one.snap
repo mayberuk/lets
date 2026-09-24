@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"targets":[{"target":"small.md","path":"small.md","start":1,"end":15,"total":15,"sha":"bc4ff3a9b973","lines":[{"number":1,"marker":"none","text":"# Targets"},{"number":2,"marker":"none","text":""},{"number":3,"marker":"none","text":"One grammar every verb speaks."},{"number":4,"marker":"none","text":""},{"number":5,"marker":"none","text":"## Bottom line"},{"number":6,"marker":"none","text":""},{"number":7,"marker":"none","text":"Lines locate, content confirms."},{"number":8,"marker":"none","text":""},{"number":9,"marker":"none","text":"```sh"},{"number":10,"marker":"none","text":"# not a heading"},{"number":11,"marker":"none","text":"```"},{"number":12,"marker":"none","text":""},{"number":13,"marker":"none","text":"## Next"},{"number":14,"marker":"none","text":""},{"number":15,"marker":"none","text":"Something else."}]}],"omitted":[{"unresolved":{"target":"missing.ts","error":"not_found"}}],"stats":{"lines":15,"bytes":144,"tokens_est":null}}

@@ -1,0 +1,4 @@
+COMMAND
+env LC_ALL=C grep foo src/c.ts
+===END===
+VERDICT allow

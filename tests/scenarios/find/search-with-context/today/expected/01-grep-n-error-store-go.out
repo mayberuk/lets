@@ -1,0 +1,2 @@
+44:func Open(path string) (*Store, error) {
+213:func (s *Store) Open(ctx context.Context) error {

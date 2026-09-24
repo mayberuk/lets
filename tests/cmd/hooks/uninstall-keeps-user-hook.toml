@@ -1,0 +1,6 @@
+# The user's hook shares our matcher object, so the object and the hook must both survive.
+bin.name = "sh"
+args = ["-c", "export HOME=\"$(pwd)/home\"; \"$CARGO_BIN_EXE_lets\" hooks uninstall claude-code; f=\"$HOME/.claude/settings.json\"; echo user hooks: $(grep -c -F userhookmarker \"$f\"); echo lets hooks: $(grep -c -F 'lets hook classify' \"$f\"); echo matchers: $(grep -c -F '\"matcher\": \"Bash\"' \"$f\")"]
+
+[fs]
+sandbox = true

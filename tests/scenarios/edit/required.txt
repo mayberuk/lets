@@ -1,0 +1,13 @@
+ambiguous-old
+batch-across-files
+concurrent-edits-one-file
+em-dash-normalize
+insert-after-import
+insert-before-symbol
+lock-held-past-the-wait
+multi-file-replace-all
+old-not-found
+one-replacement
+outside-repo
+rename-everywhere
+typo-breaks-file

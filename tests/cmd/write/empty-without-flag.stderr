@@ -1,0 +1,2 @@
+f.txt: refuses empty stdin without --empty
+ERROR_CODE=empty_input

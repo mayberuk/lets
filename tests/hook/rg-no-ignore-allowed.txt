@@ -1,0 +1,4 @@
+COMMAND
+rg --no-ignore alpha
+===END===
+VERDICT allow

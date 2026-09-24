@@ -1,0 +1,7 @@
+# The control for toml-append-array-of-tables: an array of tables holds only tables, so a string
+# is refused with exit 1 naming the object it needs, and the `.out` tree shows nothing written.
+bin.name = "lets"
+args = ["transform", "Cargo.toml", "--append", "bin[]=src/c.rs"]
+
+[status]
+code = 1

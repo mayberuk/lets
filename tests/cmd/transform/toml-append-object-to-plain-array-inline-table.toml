@@ -1,0 +1,5 @@
+# A plain array holds values, so an object appended to it is an inline table, which is valid TOML,
+# rather than a refusal. `path` is typed before `name`, the reverse of alphabetical, and keeps that
+# order. toml-append-array-of-tables is the `[[header]]` counterpart.
+bin.name = "lets"
+args = ["transform", "c.toml", "--append", 'plugins[]={"path":"b.rs","name":"b"}']

@@ -1,0 +1,8 @@
+── store.go
+ 43-	// filler
+ 44:	func Open(path string) (*Store, «error») {
+ 45-		return nil, nil
+212-	// filler
+213:	func (s *Store) Open(ctx context.Context) «error» {
+214-		return nil
+── 2 hits in 1 file · searched 1 file

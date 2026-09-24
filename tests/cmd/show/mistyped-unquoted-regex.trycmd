@@ -1,0 +1,16 @@
+An `@` pattern the shell stripped of its quotes is refused with the quoted form to type, since no
+file is named `a.ts@cap`. The second call is the control: typed as suggested, the same pattern
+resolves.
+
+```console
+$ lets show a.ts@cap
+? 1
+a.ts@cap: no such file · did you mean "a.ts@'cap'"
+ERROR_CODE=not_found
+
+$ lets show "a.ts@'cap'"
+── a.ts@'cap'  (1-1 of 1) · sha:[..]
+1 	export const cap = 10;
+── showed 1 target · 1 line
+
+```

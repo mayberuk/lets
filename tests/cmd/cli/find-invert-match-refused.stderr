@@ -1,0 +1,2 @@
+error: lets find has no -v: it prints matching lines only · use grep -v to print the lines that do not match
+ERROR_CODE=usage

@@ -1,0 +1,6 @@
+── config/order.yaml · yaml · set a, b, delete b · lines 1, 2, 3
+1~	a: 1
+2-	b: 1          (deleted)
+2 	c: 3
+3+	b: 2
+── check: yaml ok · sha:971487121f76→0446606b84fc

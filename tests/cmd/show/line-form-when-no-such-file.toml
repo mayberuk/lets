@@ -1,0 +1,4 @@
+# The negative control for existing-file-wins-colon: with no `a:1` file present, the same `a:1`
+# target still reads as the line form it always did.
+bin.name = "lets"
+args = ["show", "a:1"]

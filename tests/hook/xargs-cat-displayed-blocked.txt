@@ -1,0 +1,9 @@
+COMMAND
+find src -name '*.ts' | sort | xargs cat
+===END===
+VERDICT block
+REASON lets show reads several files and ranges in one call.
+REPLACEMENT
+run: lets show $(find src -name '*.ts' | sort)
+===END===
+COMPARE read

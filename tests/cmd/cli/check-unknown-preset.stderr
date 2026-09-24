@@ -1,0 +1,3 @@
+error: invalid value '@nope' for [..]: unknown preset @nope · the presets are @auto, @cargo, @go, @tsc, @py
+...
+ERROR_CODE=usage

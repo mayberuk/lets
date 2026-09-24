@@ -1,0 +1,4 @@
+COMMAND
+cat src/a.ts | tail -5
+===END===
+VERDICT allow

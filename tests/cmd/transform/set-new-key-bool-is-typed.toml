@@ -1,0 +1,4 @@
+# The control for set-new-key-number-exact-text: a new key's `true` is the YAML boolean, written
+# plain, not the quoted string 'true'.
+bin.name = "lets"
+args = ["transform", "c.yaml", "--set", "enabled=true"]

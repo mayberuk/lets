@@ -1,0 +1,7 @@
+# The scenarios this directory may not lose silently.
+bump-frontmatter-date
+flip-two-json-keys
+yaml-append-and-delete
+outside-tree
+partial-batch
+bump-locked-dependency

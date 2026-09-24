@@ -1,0 +1,3 @@
+curl: (6) Could not resolve host: github.com
+update failed: resolving the latest release from https://github.com/mayberuk/lets/releases/latest failed: curl exit status: 6
+ERROR_CODE=update_failed

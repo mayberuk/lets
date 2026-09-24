@@ -1,0 +1,4 @@
+# spec.md § transform: `plugins[name=gitty]` resolves to the one element whose `name` is `gitty`,
+# index 2, and only that element changes. `version` already holds a string, so `2.0` stays one.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "plugins[name=gitty].version=2.0"]

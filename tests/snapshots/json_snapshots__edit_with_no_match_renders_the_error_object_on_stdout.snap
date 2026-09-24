@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"error":{"slug":"not_found","message":"--old not found in usage.ts\n  nearest: line 10\t}"},"omitted":[],"stats":{"lines":0,"bytes":0,"tokens_est":null}}

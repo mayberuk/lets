@@ -1,0 +1,13 @@
+# lets
+
+> Locate · Edit · Transform · Show — a file-operations CLI for coding agents. One Bash call
+> reads, locates, edits or transforms several files and returns bounded, numbered output
+> whose footer names everything left out.
+
+## Reference
+- [Guide](../docs/guide.md): the one-screen `lets guide` output — every verb, the target
+  grammar, every exit code.
+- [For a calling agent](../docs/agents.md): exit codes and slugs, the `--json`/`--jsonl`
+  shape, the footer contract, how discovery delivers this file's own existence to an agent.
+- [Examples](../docs/examples/): generated, passing command transcripts, one file per verb.
+- [README](../README.md): installation and a quickstart.

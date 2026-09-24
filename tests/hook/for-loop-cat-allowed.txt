@@ -1,0 +1,4 @@
+COMMAND
+for f in src/*.ts; do cat "$f"; done
+===END===
+VERDICT allow

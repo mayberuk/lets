@@ -1,0 +1,4 @@
+COMMAND
+sed -i 's/foo/baz/' src/c.ts
+===END===
+VERDICT allow

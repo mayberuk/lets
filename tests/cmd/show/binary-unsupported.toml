@@ -1,0 +1,8 @@
+bin.name = "lets"
+args = ["show", "binary.bin"]
+
+[status]
+code = 7
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

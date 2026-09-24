@@ -1,0 +1,23 @@
+# A standalone dist-workspace.toml declares its own members, even for one package.
+[workspace]
+members = ["cargo:."]
+
+[dist]
+# 0.33.0 is not on crates.io (`cargo info cargo-dist`), so pin the newest that installs.
+cargo-dist-version = "0.32.0"
+# Overrides the "don't distribute" dist infers from Cargo.toml's `publish = false`.
+dist = true
+ci = ["github"]
+installers = ["shell"]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+]
+# `lets update` runs the shell installer itself; dist's updater would be a second update path.
+install-updater = false
+
+# Native arm64: dist's default x86_64 Linux runner would cross-compile it.
+[dist.github-custom-runners]
+aarch64-unknown-linux-musl = "ubuntu-24.04-arm"

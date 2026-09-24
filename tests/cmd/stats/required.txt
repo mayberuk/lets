@@ -1,0 +1,6 @@
+counts.trycmd
+json-output.trycmd
+no-transcripts.trycmd
+malformed-line.trycmd
+non-utf8-line.trycmd
+two-multi-target-calls.trycmd

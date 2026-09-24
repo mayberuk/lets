@@ -1,0 +1,4 @@
+app.js is ambiguous (2 candidates)
+  app.js:2	  const cap = 20
+  app.js:3	  return cap + id.length
+ERROR_CODE=ambiguous

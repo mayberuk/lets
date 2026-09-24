@@ -1,0 +1,2 @@
+lets [VERSION] is the latest release
+--proto =https --tlsv1.2 --fail -sSI https://github.com/mayberuk/lets/releases/latest

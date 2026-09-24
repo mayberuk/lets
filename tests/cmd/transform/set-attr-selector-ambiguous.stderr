@@ -1,0 +1,4 @@
+plugins[name=gitty].version is ambiguous (2 candidates)
+  c.json:3	plugins[0].name="gitty"
+  c.json:4	plugins[1].name="gitty"
+ERROR_CODE=ambiguous

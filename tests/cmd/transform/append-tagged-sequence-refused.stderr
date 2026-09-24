@@ -1,0 +1,2 @@
+tags.yaml is unsupported: tags cannot be changed in place (a tagged YAML node)
+ERROR_CODE=unsupported_file

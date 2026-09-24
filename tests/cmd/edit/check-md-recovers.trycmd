@@ -1,0 +1,11 @@
+The markdown block grammar has no error state: an unterminated fence that would revert an edit in every other language parses clean here. Layer 2 is the validator for markdown.
+
+```console
+$ lets edit notes.md --old 'Layer 2 is the validator for markdown.' --new '```'
+── notes.md · 1 replacement · line 7 · exact
+5 	# Notes
+6 	In that case the agent – not the user – decides.
+7~	```
+── check: structure ok · sha:a4f8537ddc9b→e5d43c02dbf4
+
+```

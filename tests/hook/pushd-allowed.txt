@@ -1,0 +1,4 @@
+COMMAND
+pushd src && cat a.ts
+===END===
+VERDICT allow

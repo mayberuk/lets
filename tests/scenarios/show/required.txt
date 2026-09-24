@@ -1,0 +1,7 @@
+several-files
+line-range
+one-function
+symbol-java
+plaintext-fallback
+empty-file
+grep-style-regex

@@ -1,0 +1,6 @@
+── c.json · json · set build · line 4
+2 	  "name": "demo",
+3 	  "version": "3.9",
+4~	  "build": 8
+5 	}
+── check: json ok · sha:[..]→[..]

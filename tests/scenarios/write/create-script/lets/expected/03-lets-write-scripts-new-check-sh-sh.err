@@ -1,0 +1,2 @@
+scripts/new-check.sh exists (2 lines, sha:954b9f40bbee) · pass --force to overwrite
+ERROR_CODE=exists

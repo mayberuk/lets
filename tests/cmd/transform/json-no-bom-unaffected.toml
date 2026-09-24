@@ -1,0 +1,4 @@
+# The control for json-bom-preserved: the same text and op with no byte-order mark, and none is
+# written, so setting the mark aside and restoring it happens only when the file had one.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "a=2"]

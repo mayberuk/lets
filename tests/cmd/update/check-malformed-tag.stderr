@@ -1,0 +1,2 @@
+update failed: the latest release tag `nightly` is not vMAJOR.MINOR.PATCH
+ERROR_CODE=update_failed

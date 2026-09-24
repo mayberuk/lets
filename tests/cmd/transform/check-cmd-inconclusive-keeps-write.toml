@@ -1,0 +1,6 @@
+bin.name = "lets"
+args = ["transform", "config/app.json", "--set", "review.threads=3", "--check", "checker-fail"]
+
+[fs]
+base = "../../fixtures/transform"
+sandbox = true

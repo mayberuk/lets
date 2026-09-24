@@ -1,0 +1,6 @@
+{
+  "plugins": [
+    { "name": "gitty", "version": "1.0" },
+    { "name": "gitty", "version": "1.1" }
+  ]
+}

@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"targets":[],"omitted":[{"hit_cap":{"hits":64,"cap":50}},{"top_files":{"shown":1}}],"stats":{"lines":0,"bytes":0,"tokens_est":null},"top_files":[{"count":64,"path":"many-hits.txt"}]}

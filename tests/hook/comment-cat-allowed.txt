@@ -1,0 +1,4 @@
+COMMAND
+# cat src/a.ts
+===END===
+VERDICT allow

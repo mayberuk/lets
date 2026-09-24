@@ -1,0 +1,4 @@
+# spec.md § Targets: the regex suffix after a file prefix, as the line suffix in
+# existing-file-prefix-line.
+bin.name = "lets"
+args = ["show", "C#.md@'b'"]

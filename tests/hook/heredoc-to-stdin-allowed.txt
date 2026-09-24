@@ -1,0 +1,6 @@
+COMMAND
+jq . - <<'JSON'
+{}
+JSON
+===END===
+VERDICT allow

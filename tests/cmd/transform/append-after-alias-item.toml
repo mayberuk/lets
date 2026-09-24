@@ -1,0 +1,4 @@
+# `*x` resolves to `q` on line 1, so an insertion placed by the last item's span would rewrite
+# `x`. The `.out` tree holds the YAML meaning: `x` unchanged, `tags` with two items.
+bin.name = "lets"
+args = ["transform", "tags.yaml", "--append", "tags=wiki"]

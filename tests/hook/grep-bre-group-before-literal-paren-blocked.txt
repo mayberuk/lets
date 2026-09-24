@@ -1,0 +1,9 @@
+COMMAND
+grep -n 'app\.\(get\|post\)(' src/grep.txt
+===END===
+VERDICT block
+REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: lets find 'app\.(get|post)[(]' src/grep.txt
+===END===
+COMPARE search

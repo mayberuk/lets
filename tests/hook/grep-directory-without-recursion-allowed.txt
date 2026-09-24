@@ -1,0 +1,4 @@
+COMMAND
+grep foo src
+===END===
+VERDICT allow

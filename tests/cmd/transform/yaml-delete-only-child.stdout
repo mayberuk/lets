@@ -1,0 +1,6 @@
+── config/settings.yaml · yaml · delete legacy.token · line 4
+1 	allow:
+2 	  - ls
+3~	legacy: {}
+4-	  token: abc123 # remove me          (deleted)
+── check: yaml ok · sha:8246dbee199f→72dd850c63b5

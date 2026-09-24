@@ -1,0 +1,6 @@
+bin.name = "lets"
+args = ["transform", "config/app.toml", "--set", "server.port=1", "--budget", "1"]
+
+[fs]
+base = "../../fixtures/transform"
+sandbox = true

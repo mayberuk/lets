@@ -1,0 +1,11 @@
+```console
+$ lets edit main.go --old 'cap := 10' --new 'cap := 20'
+── main.go · 1 replacement · line 3 · exact
+1 	package main
+2 	func usage(id string) int {
+3~		cap := 20
+4 		return cap + len(id)
+5 	}
+── check: structure ok · sha:db91a17c0af6→723cc9310c11
+
+```

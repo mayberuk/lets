@@ -1,0 +1,13 @@
+`#limit` is a single-line plaintext match with no brace body, so its end is a guess
+(`end_guessed` true). `--insert-after` refuses before any write rather than anchoring on a
+guessed line, and names a command that anchors on the guessed span's last line instead. The
+anchor is wildcarded because trycmd reads its backslashes as path separators;
+`insert_after_line`'s unit tests pin its exact text, and `tests/cmd.rs` runs the command.
+
+```console
+$ lets edit greet.kt --insert-after '#limit' --new '// upper bound'
+? 1
+greet.kt#limit: the end of this symbol is a guess (plaintext heuristic) · use --insert-before, or anchor on its last line: lets edit greet.kt --insert-after [..] --new '// upper bound'
+ERROR_CODE=guessed_span
+
+```

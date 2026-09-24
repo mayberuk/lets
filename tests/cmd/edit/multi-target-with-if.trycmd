@@ -1,0 +1,7 @@
+```console
+$ lets edit usage.ts app.js --old 'const cap = 10' --new 'const cap = 20' --if sha:0123456789ab
+? 64
+--if takes one target · 2 were given
+ERROR_CODE=usage
+
+```

@@ -1,0 +1,11 @@
+COMMAND
+cat > src/b.ts <<'EOF'
+export const b = 2;
+EOF
+===END===
+VERDICT block
+REASON lets write takes the same heredoc on stdin.
+REPLACEMENT
+run: lets write --force src/b.ts
+===END===
+COMPARE write

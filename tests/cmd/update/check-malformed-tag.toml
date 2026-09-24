@@ -1,0 +1,8 @@
+bin.name = "sh"
+args = ["-c", "export PATH=\"$(pwd)/fake-bin:$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; export FAKE_CURL_LOG=\"$(pwd)/curl-calls\"; export FAKE_LATEST_TAG=nightly; \"$CARGO_BIN_EXE_lets\" update --check"]
+
+[status]
+code = 7
+
+[fs]
+sandbox = true

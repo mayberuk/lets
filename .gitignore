@@ -1,0 +1,37 @@
+/target
+
+# Un-ignore what ships, against the owner's global `*.md` ignore.
+!CLAUDE.md
+!README.md
+!docs/
+!docs/**
+!tests/
+!tests/**
+!scripts/
+!scripts/**
+
+# Public files a later phase adds.
+!LICENSE-*
+!CHANGELOG.md
+!CONTRIBUTING.md
+!docs/benchmarks.md
+
+# Design and research working docs stay local; nothing here ships.
+/docs/design/
+/docs/research/
+
+# Only the rules ship from .claude/; everything else is local working state.
+/.claude/*
+!/.claude/rules/
+!/.claude/rules/**
+
+__pycache__/
+*.pyc
+/logs/
+
+# Root-level scratch markdown never ships, e.g. /lets-explainer.md.
+/*.md
+!/CLAUDE.md
+!/README.md
+!/CHANGELOG.md
+!/CONTRIBUTING.md

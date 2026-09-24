@@ -1,0 +1,4 @@
+COMMAND
+grep '\<alpha' src/grep.txt
+===END===
+VERDICT allow

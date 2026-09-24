@@ -1,0 +1,2 @@
+# win.txt's CRLF endings are the fixture; a checkout or commit that normalises them erases the case.
+* -text

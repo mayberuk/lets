@@ -1,0 +1,4 @@
+# The control for set-existing-string-stays-string: `build` already holds a number, so `8` is
+# written as the number 8, unquoted.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "build=8"]

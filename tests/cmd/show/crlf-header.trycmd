@@ -1,0 +1,17 @@
+A file whose endings are mostly CRLF says so in its header, since the rendered lines cannot show a
+`\r`. The second call is the control: an LF file's header has no such segment.
+
+```console
+$ lets show win.txt
+── win.txt  (1-2 of 2) · crlf · sha:[..]
+1 	one
+2 	two
+── showed 1 target · 2 lines
+
+$ lets show unix.txt
+── unix.txt  (1-2 of 2) · sha:[..]
+1 	one
+2 	two
+── showed 1 target · 2 lines
+
+```

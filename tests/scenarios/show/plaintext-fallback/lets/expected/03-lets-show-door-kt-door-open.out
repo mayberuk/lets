@@ -1,0 +1,5 @@
+── door.kt#Door.open  (4-6 of 7 · via heuristic (plaintext)) · sha:26838b1b0565
+4 	    fun open() {
+5 	        println("open")
+6 	    }
+── showed 1 target · 3 lines

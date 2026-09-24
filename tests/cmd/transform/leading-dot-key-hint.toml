@@ -1,0 +1,8 @@
+# A `jq`-style `.version` is refused as not found, with the hint naming the flag that works;
+# nothing is written, as the `.out` tree shows. Every other `--set` case here is the control, a
+# key with no leading dot that applies.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", ".version=2"]
+
+[status]
+code = 1

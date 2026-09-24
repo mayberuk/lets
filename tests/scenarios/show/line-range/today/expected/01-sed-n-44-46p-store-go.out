@@ -1,0 +1,3 @@
+func Open(path string) (*Store, error) {
+	return nil, nil
+}

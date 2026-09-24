@@ -1,0 +1,8 @@
+# yamlpath cannot classify a tagged node and panics, and the release profile aborts on a panic:
+# exit 134 with no `ERROR_CODE`. The append is refused as an unsupported file instead, and the
+# `.out` tree shows the file unchanged.
+bin.name = "lets"
+args = ["transform", "tags.yaml", "--append", "tags=wiki"]
+
+[status]
+code = 7

@@ -1,0 +1,16 @@
+match.toml
+no-match.toml
+over-cap.toml
+cap-raised.toml
+files.toml
+count.toml
+gitignore-excluded.toml
+no-ignore-included.toml
+hidden-excluded.toml
+hidden-included.toml
+outside-tree.toml
+bad-regex.toml
+missing-roots.toml
+glob-narrows.trycmd
+binary-skipped-named.trycmd
+long-line-cut.trycmd

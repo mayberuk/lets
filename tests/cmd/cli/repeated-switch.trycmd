@@ -1,0 +1,25 @@
+A switch typed twice, as grep takes it (`-i … -i`), runs as if typed once; the second call is the
+control with it typed once. A value option typed twice is still refused: last-wins would drop one
+of the two values without a word.
+
+```console
+$ lets find -i needle . -i
+── a.txt
+1:	«Needle»
+── 1 hit in 1 file · searched 1 file
+
+$ lets find -i needle .
+── a.txt
+1:	«Needle»
+── 1 hit in 1 file · searched 1 file
+
+$ lets find -C 1 -C 2 needle .
+? 64
+error: the argument '-C <CONTEXT>' cannot be used multiple times
+
+Usage: lets find [OPTIONS] <PATTERN> [PATHS]...
+
+For more information, try '--help'.
+ERROR_CODE=usage
+
+```

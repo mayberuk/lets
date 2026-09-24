@@ -1,0 +1,9 @@
+{
+  "name": "demo",
+  "version": "1.4.2",
+  "packages": [
+    { "name": "left-pad", "version": "1.3.0" },
+    { "name": "gitty", "version": "0.9" },
+    { "name": "rimraf", "version": "3.0.2" }
+  ]
+}

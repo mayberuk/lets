@@ -1,0 +1,5 @@
+── compose.yaml · yaml · set services[1].image · line 5
+3 	    image: postgres:16
+4 	  - name: web
+5~	    image: nginx:1.27
+── check: yaml ok · sha:[..]→[..] · services[name=web].image → services[1].image

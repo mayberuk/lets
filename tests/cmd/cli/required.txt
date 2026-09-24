@@ -1,0 +1,12 @@
+bogus-usage.trycmd
+help.trycmd
+home-is-sandboxed.toml
+find-v-refused.toml
+find-invert-match-refused.toml
+edit-short-if-usage.trycmd
+edit-short-if-usage.out
+transform-short-if-usage.trycmd
+transform-short-if-usage.out
+check-unknown-preset.toml
+stats-bad-since.toml
+repeated-switch.trycmd

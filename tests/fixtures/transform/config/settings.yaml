@@ -1,0 +1,4 @@
+allow:
+  - ls
+legacy:
+  token: abc123 # remove me

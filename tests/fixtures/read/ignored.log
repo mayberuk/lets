@@ -1,0 +1,2 @@
+this line matches nothing lets find looks for by default
+kept out of a default search by the fixture's own .gitignore

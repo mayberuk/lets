@@ -1,0 +1,4 @@
+# The control for set-quoted-literal-key: unquoted, the dot splits, so `formatOnSave` lands inside
+# `editor` and the top-level `editor.formatOnSave` is left as it was.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "editor.formatOnSave=true"]

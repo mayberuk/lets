@@ -1,0 +1,23 @@
+`file:3:5`, grep's `file:line:col` shape and the colon habit for a range, is refused on a file
+that exists with the dash range `lets` reads, which the third call shows runs. The second call is
+the control: no prefix of `nope.go` names a file, so the not-found text is the plain one.
+
+```console
+$ lets show a.go:3:5
+? 1
+a.go:3:5: no such file · did you mean a.go:3-5
+ERROR_CODE=not_found
+
+$ lets show nope.go:3:5
+? 1
+nope.go:3: No such file or directory (os error 2)
+ERROR_CODE=not_found
+
+$ lets show a.go:3-5
+── a.go:3-5  (3-5 of 6) · sha:[..]
+3 	three
+4 	four
+5 	five
+── showed 1 target · 3 lines
+
+```

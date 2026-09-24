@@ -1,0 +1,2 @@
+version-flag.trycmd
+version.trycmd

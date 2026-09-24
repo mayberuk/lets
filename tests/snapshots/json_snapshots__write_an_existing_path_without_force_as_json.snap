@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"path":"run.sh","outcome":"exists","lines":4,"bytes":54,"sha":"1a0659d2422d","omitted":[],"stats":{"lines":4,"bytes":54,"tokens_est":null}}

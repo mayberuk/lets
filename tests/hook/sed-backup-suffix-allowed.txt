@@ -1,0 +1,4 @@
+COMMAND
+sed -i.bak 's/n1$/N1/' src/n.txt
+===END===
+VERDICT allow

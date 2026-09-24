@@ -1,0 +1,5 @@
+# `--new` carries the CR, because a committed CRLF fixture would not survive `core.autocrlf`.
+# `<id>.out` is compared with newlines normalised, so the after-hash in `<id>.stdout` is what
+# tells these two cases apart: `c2b975bba63b` keeps the CR, the control's `2ba220f13fc2` does not.
+bin.name = "lets"
+args = ["edit", "lf.txt", "--old", "beta", "--new", "BETA\r\nGAMMA", "--literal-newlines"]

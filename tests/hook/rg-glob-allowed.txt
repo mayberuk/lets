@@ -1,0 +1,4 @@
+COMMAND
+rg -g '*.ts' foo
+===END===
+VERDICT allow

@@ -1,0 +1,1 @@
+{"targets":[{"target":"src/names.go","path":"src/names.go","lines":[{"number":3,"marker":"hit","text":"type «FooName» struct{}"},{"number":5,"marker":"hit","text":"func «BarName»() {}"}]}],"omitted":[{"grep_style":{"pattern":"FooName\\|BarName","read_as":"FooName|BarName"}}],"stats":{"lines":2,"bytes":48,"tokens_est":null}}

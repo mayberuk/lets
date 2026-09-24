@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+log="${LETS_TEST_LOG:?}"
+printf 'curl %s\n' "$*" >>"$log"
+out=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then
+    out="$arg"
+  fi
+  prev="$arg"
+done
+[ -n "$out" ] || exit 0
+cp "${LETS_TEST_INSTALLER:?}" "$out"
+chmod +x "$out"

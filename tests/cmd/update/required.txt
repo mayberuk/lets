@@ -1,0 +1,7 @@
+check-current.toml
+check-newer.toml
+check-json.toml
+check-offline.toml
+check-malformed-tag.toml
+update-current-no-download.toml
+update-force-downloads.toml

@@ -1,0 +1,5 @@
+  if (!id) return
+  const now = clock.now()
+  const cap = 20
+  if (now > cap) return
+  const total = usageCap + id.length

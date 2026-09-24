@@ -1,0 +1,2 @@
+an element with name="nope" (values seen: "alpha", "beta", "gitty") not found in plugins[name=nope].version
+ERROR_CODE=not_found

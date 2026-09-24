@@ -1,0 +1,11 @@
+# A misspelt preset is refused at parse time, naming the five, rather than run as a shell command
+# called `@nope` that would report "absent" and let the edit through unchecked.
+bin.name = "lets"
+args = ["edit", "small.md", "--old", "filler", "--new", "x", "--check", "@nope"]
+
+[status]
+code = 64
+
+[fs]
+base = "../../../target/cmd-fixtures/read"
+sandbox = true

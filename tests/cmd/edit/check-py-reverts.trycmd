@@ -1,0 +1,9 @@
+A module-level `return` parses clean under tree-sitter, so layer 1 passes it; `py_compile` rejects it ("'return' outside function"). The preset passed before the edit and failed after it, so the file is restored and the `.out` tree shows its original bytes. The checker's first line names an absolute path, so it is elided.
+
+```console
+$ lets edit m.py --old 'limit = 10' --new 'return 1' --check @py
+? 3
+command check failed for m.py: `python3 -m py_compile {}` passed before the batch and failed after it[..] · 1 file reverted
+ERROR_CODE=check_failed
+
+```

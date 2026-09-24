@@ -1,0 +1,24 @@
+alpha
+beta
+alpha|beta
+call(x)
+a+b
+ab
+aab
+a?b
+x{2}
+xx
+(alpha)
+# Title
+### Sub
+#### Deep
+export async function load
+export const limit
+export default value
+left | right
+| row |
+app.get(x)
+app.put(x)
+app.post(y)
+label={`x`}
+x*b

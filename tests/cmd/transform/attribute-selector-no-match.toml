@@ -1,0 +1,7 @@
+# spec.md § transform: a selector no element matches is exit 1 naming the values the field held,
+# and the `.out` tree shows the file unchanged. attribute-selector-one-match-toml is the control.
+bin.name = "lets"
+args = ["transform", "servers.toml", "--set", "servers[name=db].port=1"]
+
+[status]
+code = 1

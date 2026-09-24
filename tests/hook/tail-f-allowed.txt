@@ -1,0 +1,4 @@
+COMMAND
+tail -f server.log
+===END===
+VERDICT allow

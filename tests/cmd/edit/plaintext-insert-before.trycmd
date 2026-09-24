@@ -1,0 +1,15 @@
+A `.kt` file has no bundled grammar, so `#greet` resolves through the plaintext heuristic
+instead of raising `no_grammar`; `--insert-before` never checks `end_guessed`, so a brace-bodied
+match applies like any tree-sitter symbol.
+
+```console
+$ lets edit greet.kt --insert-before '#greet' --new '// prints a greeting'
+── greet.kt · inserted 1 line before #greet (line 3)
+1 	package demo
+2 	
+3+	// prints a greeting
+4 	fun greet(name: String): String {
+5 	    val prefix = "hi"
+── sha:[..]→[..] · check: skipped (no grammar for .kt)
+
+```

@@ -1,0 +1,8 @@
+bin.name = "lets"
+args = ["find", "zzz_never_appears_zzz", "small.md"]
+
+[status]
+code = 1
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

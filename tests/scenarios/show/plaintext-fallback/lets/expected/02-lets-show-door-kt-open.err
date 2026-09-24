@@ -1,0 +1,4 @@
+door.kt#open is ambiguous (2 candidates)
+  door.kt:1	fun open() {}
+  door.kt:4	    fun open() {
+ERROR_CODE=ambiguous

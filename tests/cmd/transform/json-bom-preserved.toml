@@ -1,0 +1,5 @@
+# spec.md § transform, BOM-safe JSON: a file that starts with a byte-order mark parses, and the
+# mark is still its first bytes after the write (the `.out` tree). json-no-bom-unaffected is the
+# control: the same op on the same text without a mark gains none.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "a=2"]

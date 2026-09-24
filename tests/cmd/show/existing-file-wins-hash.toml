@@ -1,0 +1,4 @@
+# spec.md § Targets: a target string naming an existing file, whole, is a path — checked
+# before the `#` is ever read as the symbol separator.
+bin.name = "lets"
+args = ["show", "C#.md"]

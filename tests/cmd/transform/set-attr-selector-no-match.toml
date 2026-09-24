@@ -1,0 +1,7 @@
+# spec.md § transform: a selector no element matches is exit 1, listing the values the field held;
+# the `.out` tree shows the file unchanged.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "plugins[name=nope].version=2.0"]
+
+[status]
+code = 1

@@ -1,0 +1,1 @@
+38:export function usage(id: string) {

@@ -1,0 +1,2 @@
+big.ts is unsupported: not JSON, YAML, TOML or Markdown with frontmatter
+ERROR_CODE=unsupported_file

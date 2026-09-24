@@ -1,0 +1,3 @@
+bin.name = "lets"
+args = ["guide", "--json"]
+binary = true

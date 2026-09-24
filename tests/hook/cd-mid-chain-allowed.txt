@@ -1,0 +1,4 @@
+COMMAND
+cat src/a.ts && cd src && cat b.ts
+===END===
+VERDICT allow

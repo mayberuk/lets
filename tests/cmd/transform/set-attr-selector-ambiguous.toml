@@ -1,0 +1,7 @@
+# spec.md § transform: a selector two elements match is exit 2, listing every matching index as a
+# candidate; the `.out` tree shows the file unchanged.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "plugins[name=gitty].version=2.0"]
+
+[status]
+code = 2

@@ -1,0 +1,9 @@
+COMMAND
+cd src && cat a.ts
+===END===
+VERDICT block
+REASON `cd src` kept; lets show reads several files and ranges in one call.
+REPLACEMENT
+run: cd src && lets show a.ts
+===END===
+COMPARE read

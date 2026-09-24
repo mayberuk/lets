@@ -1,0 +1,7 @@
+── docs/note.md · frontmatter · set last_updated · line 4
+2 	title: Notes
+3 	tags: [moc]
+4~	last_updated: 2026.09.16
+5 	---
+6 	# Notes
+── check: frontmatter ok · sha:5abff77ae5c2→60afc02190e6

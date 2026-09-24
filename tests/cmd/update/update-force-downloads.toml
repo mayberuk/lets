@@ -1,0 +1,6 @@
+# The download line holds a temp path, so the log is summarised rather than printed.
+bin.name = "sh"
+args = ["-c", "export PATH=\"$(pwd)/fake-bin:$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; export FAKE_CURL_LOG=\"$(pwd)/curl-calls\"; export FAKE_LATEST_TAG=\"v$(\"$CARGO_BIN_EXE_lets\" --version | cut -d' ' -f2)\"; \"$CARGO_BIN_EXE_lets\" update --force; echo lookups: $(grep -c -e -sSI curl-calls || true); echo downloads: $(grep -c -e ' -o ' curl-calls || true); tail -n 1 curl-calls"]
+
+[fs]
+sandbox = true

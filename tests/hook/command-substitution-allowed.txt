@@ -1,0 +1,4 @@
+COMMAND
+echo $(cat VERSION)
+===END===
+VERDICT allow

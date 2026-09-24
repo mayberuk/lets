@@ -1,0 +1,11 @@
+An `@` value names a preset, and `@nope` is not one: the call is refused as a usage error listing the five presets, and the `.out` tree shows the file unchanged.
+
+```console
+$ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check @nope
+? 64
+error: invalid value '@nope' for '--check <CHECK>': unknown preset @nope · the presets are @auto, @cargo, @go, @tsc, @py
+
+For more information, try '--help'.
+ERROR_CODE=usage
+
+```

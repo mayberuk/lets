@@ -1,0 +1,4 @@
+# spec.md § Targets: the tree holds both `a:1` and `a`, so this is the control that proves
+# the file-first stat picks `a:1` whole rather than reading `:1` as the line form on `a`.
+bin.name = "lets"
+args = ["show", "a:1"]

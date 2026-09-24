@@ -1,0 +1,4 @@
+COMMAND
+cat src/a.ts > out.txt
+===END===
+VERDICT allow

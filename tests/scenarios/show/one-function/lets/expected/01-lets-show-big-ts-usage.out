@@ -1,0 +1,26 @@
+── big.ts#usage  (38-61 of 212 · via tree-sitter) · sha:e37232c09d01
+38 	export function usage(id: string) {
+39 	  const store = new Map<string, number>();
+40 	  const cap = 10;
+41 	  const seen = store.get(id) ?? 0;
+42 	  if (seen >= cap) {
+43 	    throw new Error(`usage cap exceeded for ${id}`);
+44 	  }
+45 	  const total = seen + 1;
+46 	  store.set(id, total);
+47 	  const a = 1;
+48 	  const b = 2;
+49 	  const c = 3;
+50 	  const d = 4;
+51 	  const e = 5;
+52 	  const f = 6;
+53 	  const g = 7;
+54 	  const h = 8;
+55 	  const i = 9;
+56 	  const j = 10;
+57 	  const k = 11;
+58 	  const l = 12;
+59 	  const m = 13;
+60 	  return total;
+61 	}
+── showed 1 target · 24 lines

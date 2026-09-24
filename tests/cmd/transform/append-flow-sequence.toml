@@ -1,0 +1,9 @@
+# spec.md § transform: `--append path=value`, here onto the frontmatter's flow sequence
+# `tags: [moc]`, beside a `--set` in the same call. The item is inserted after the last one and
+# every other byte of that line stays.
+bin.name = "lets"
+args = ["transform", "docs/note.md", "--append", "tags=wiki", "--set", "last_updated=2026.09.22"]
+
+[fs]
+base = "../../fixtures/transform"
+sandbox = true

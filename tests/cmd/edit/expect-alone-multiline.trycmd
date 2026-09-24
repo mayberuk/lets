@@ -1,0 +1,9 @@
+`--expect` names one line, so on a two-line range it is refused with its own slug, not `ambiguous`, and the refusal names the two flags that can confirm the whole range. Nothing is written.
+
+```console
+$ lets edit usage.ts:6-7 --expect 'const cap = 10' --new '  const cap = 20'
+? 2
+usage.ts:6-7: --expect checks line 6 only, and the range runs to line 7 · pass --expect-all (the whole range on stdin) or --if sha:<12 hex>
+ERROR_CODE=expect_refused
+
+```

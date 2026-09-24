@@ -1,0 +1,19 @@
+A `sed`-style comma range on a file that exists is almost certainly a mistyped `:a-b`, so the miss names the spelling that would have worked.
+
+```console
+$ lets edit usage.ts:40,60 --old x --new y
+? 1
+usage.ts:40,60: no such file · did you mean usage.ts:40-60
+ERROR_CODE=not_found
+
+```
+
+The control: a path whose prefix names no file keeps the plain not-found message.
+
+```console
+$ lets edit nope.ts --old x --new y
+? 1
+nope.ts: No such file or directory (os error 2)
+ERROR_CODE=not_found
+
+```

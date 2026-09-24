@@ -1,0 +1,4 @@
+COMMAND
+head -n -3 src/n.txt
+===END===
+VERDICT allow

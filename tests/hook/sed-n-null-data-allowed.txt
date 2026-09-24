@@ -1,0 +1,4 @@
+COMMAND
+sed -n -z '5p' src/n.txt
+===END===
+VERDICT allow

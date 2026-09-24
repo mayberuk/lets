@@ -1,0 +1,4 @@
+── tags.yaml · yaml · append tags · line 2
+1 	x: &x q
+2~	tags: [*x, wiki]
+── check: yaml ok · sha:[..]→[..]

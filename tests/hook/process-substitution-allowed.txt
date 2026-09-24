@@ -1,0 +1,4 @@
+COMMAND
+diff <(cat src/a.ts) <(cat src/b.ts)
+===END===
+VERDICT allow

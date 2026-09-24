@@ -1,0 +1,5 @@
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install claude-code >/dev/null; \"$CARGO_BIN_EXE_lets\" hooks uninstall claude-code >/dev/null; \"$CARGO_BIN_EXE_lets\" hooks uninstall claude-code"]
+
+[fs]
+sandbox = true

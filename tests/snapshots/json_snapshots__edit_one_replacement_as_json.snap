@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"path":"usage.ts","replacements":1,"lines":[6],"match":"exact","region":{"start":4,"end":8,"lines":[{"number":4,"marker":"none","text":"  if (!id) return"},{"number":5,"marker":"none","text":"  const now = clock.now()"},{"number":6,"marker":"replaced","text":"  const cap = 20"},{"number":7,"marker":"none","text":"  if (now > cap) return"},{"number":8,"marker":"none","text":"  const total = usageCap + id.length"}]},"check":{"layer":"structure","status":"ok","errors_before":0,"errors_after":0},"sha":{"before":"c5525cc20b61","after":"419c5d6249b3"},"omitted":[],"stats":{"lines":5,"bytes":174,"tokens_est":null}}

@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+if [ -n "${LETS_TEST_LOG:-}" ]; then
+  printf 'foreign %s\n' "$*" >>"$LETS_TEST_LOG"
+fi
+printf 'not lets\n'
+exit 2

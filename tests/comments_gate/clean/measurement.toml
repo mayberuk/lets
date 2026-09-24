@@ -1,0 +1,4 @@
+# cargo-deny's advisory database refresh takes about ninety seconds on a cold cache, so CI pins
+# a warm cache directory instead of hitting the network on every run.
+[advisories]
+version = 2

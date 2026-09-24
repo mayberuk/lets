@@ -1,0 +1,11 @@
+COMMAND
+cd src && cat > new.ts <<'EOF'
+export const n = 1;
+EOF
+===END===
+VERDICT block
+REASON `cd src` kept; lets write takes the same heredoc on stdin.
+REPLACEMENT
+run: cd src && lets write --force new.ts
+===END===
+COMPARE write

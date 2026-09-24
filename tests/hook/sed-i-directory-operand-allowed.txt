@@ -1,0 +1,4 @@
+COMMAND
+sed -i 's/foo/baz/g' src/
+===END===
+VERDICT allow

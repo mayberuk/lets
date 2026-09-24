@@ -1,0 +1,15 @@
+sed's comma range on a file that exists is refused with the form `lets` reads. The second call is
+the control: no prefix of `nope.ts` names a file, so the not-found text is the plain one.
+
+```console
+$ lets show a.ts:40,60
+? 1
+a.ts:40,60: no such file · did you mean a.ts:40-60
+ERROR_CODE=not_found
+
+$ lets show nope.ts
+? 1
+nope.ts: No such file or directory (os error 2)
+ERROR_CODE=not_found
+
+```

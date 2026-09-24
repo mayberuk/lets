@@ -1,0 +1,6 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"target":"big.ts","path":"big.ts","lines":[{"number":38,"marker":"hit","text":"«export function usage»(id: string) {"}]}
+{"stats":{"lines":1,"bytes":40,"tokens_est":null},"omitted":[{"ignored":{"gitignore":1,"hidden":2,"other":0}},{"skipped":{"binary":1,"too_large":0,"unreadable":0}}]}

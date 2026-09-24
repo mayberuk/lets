@@ -1,0 +1,13 @@
+# The cases this directory may not lose silently. Each `<id>.out` is listed beside its case
+# because trycmd sandboxes a `.toml` case only when that directory exists: delete it and the
+# case would run against its committed `<id>.in` tree in place instead of a throwaway copy.
+create.toml
+create.out
+exists-without-force.toml
+exists-without-force.out
+force-overwrite.toml
+force-overwrite.out
+empty-without-flag.toml
+empty-without-flag.out
+empty-with-flag.toml
+empty-with-flag.out

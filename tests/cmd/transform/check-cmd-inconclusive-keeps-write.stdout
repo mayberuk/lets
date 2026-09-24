@@ -1,0 +1,7 @@
+── config/app.json · json · set review.threads · line 6
+4 	  },
+5 	  "review": {
+6~	    "threads": 3
+7 	  }
+8 	}
+── check: json ok · sha:5e9ec954d099→13adcd49eab3 · check: checker-fail inconclusive (failed before and after)

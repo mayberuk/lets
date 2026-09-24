@@ -1,0 +1,4 @@
+COMMAND
+cd .. && cat notes.md
+===END===
+VERDICT allow

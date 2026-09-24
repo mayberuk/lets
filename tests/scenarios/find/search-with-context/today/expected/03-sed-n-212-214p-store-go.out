@@ -1,0 +1,3 @@
+// filler
+func (s *Store) Open(ctx context.Context) error {
+	return nil

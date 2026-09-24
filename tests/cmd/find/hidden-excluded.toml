@@ -1,0 +1,8 @@
+bin.name = "lets"
+args = ["find", "excluded from a default find", "."]
+
+[status]
+code = 1
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

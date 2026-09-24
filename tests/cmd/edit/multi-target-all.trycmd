@@ -1,0 +1,14 @@
+```console
+$ lets edit app.js cap.py --old cap --new limit --all
+── app.js · 2 replacements · lines 2, 3 · exact
+1 	export function usage(id) {
+2~	  const limit = 10
+3~	  return limit + id.length
+4 	}
+── cap.py · 2 replacements · lines 2, 3 · exact
+1 	def usage(id):
+2~	    limit = 10
+3~	    return limit + len(id)
+── 2 files · 2 edits · all applied · checks: structure ok ×2
+
+```

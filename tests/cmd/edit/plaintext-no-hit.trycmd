@@ -1,0 +1,10 @@
+A file with no bundled grammar still fails the way a tree-sitter miss does when no plaintext
+heuristic matches, and the message hands back the `@'regex'` form the miss cannot rule out.
+
+```console
+$ lets edit greet.kt --insert-before '#nope' --new '// unreachable'
+? 1
+#nope (try @'nope') not found in greet.kt
+ERROR_CODE=not_found
+
+```

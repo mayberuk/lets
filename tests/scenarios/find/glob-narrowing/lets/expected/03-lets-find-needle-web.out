@@ -1,0 +1,7 @@
+── web/app.js
+1:	let «needle» = 2;
+── web/app.ts
+1:	const «needle» = 1;
+── web/config.yml
+1:	«needle»: 3
+── 3 hits in 3 files · searched 3 files

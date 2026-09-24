@@ -1,0 +1,2 @@
+a different `lets` comes first on PATH at [CWD]/fake-bin/lets — this one is [..]/lets · remove the other, or put this one's directory ahead of it on PATH
+ERROR_CODE=path_conflict

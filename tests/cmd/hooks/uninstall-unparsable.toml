@@ -1,0 +1,9 @@
+# Negative control: a file uninstall cannot parse is refused and left exactly as found.
+bin.name = "sh"
+args = ["-c", "export HOME=\"$(pwd)/home\"; cp \"$HOME/.claude/settings.json\" before; \"$CARGO_BIN_EXE_lets\" hooks uninstall claude-code; status=$?; if cmp -s before \"$HOME/.claude/settings.json\"; then echo settings.json-untouched; else echo settings.json-changed; fi; exit \"$status\""]
+
+[status]
+code = 7
+
+[fs]
+sandbox = true

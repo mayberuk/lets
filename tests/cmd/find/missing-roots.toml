@@ -1,0 +1,10 @@
+# The footer contract applied to search roots: a root that does not exist was searched by nobody,
+# so it is named beside the hits the existing root still produced, and the call exits 1.
+bin.name = "lets"
+args = ["find", "Next", "nope1", "small.md", "nope2"]
+
+[status]
+code = 1
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

@@ -1,0 +1,14 @@
+```console
+$ lets edit notes.md --old 'date: 2026-09-19' --new 'date: [2026'
+? 3
+── notes.md · 1 replacement · line 3 · REVERTED
+1 	---
+2 	title: notes
+3~	date: [2026          ← invalid frontmatter
+4 	---
+5 	# Notes
+── check: invalid → reverted · file unchanged · sha:a4f8537ddc9b
+structured check failed for notes.md: invalid
+ERROR_CODE=check_failed
+
+```

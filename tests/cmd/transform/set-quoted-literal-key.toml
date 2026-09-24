@@ -1,0 +1,5 @@
+# spec.md § transform, literal keys: a quoted key is one key, dots and all, so the top-level
+# `editor.formatOnSave` changes and the nested `editor` object is untouched. The header names the
+# key as typed. set-unquoted-dotted-key-still-nests is the control.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", '"editor.formatOnSave"=true']

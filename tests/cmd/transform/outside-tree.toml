@@ -1,0 +1,9 @@
+bin.name = "lets"
+args = ["transform", "/etc/hostname", "--set", "a=1"]
+
+[status]
+code = 6
+
+[fs]
+base = "../../fixtures/transform"
+sandbox = true

@@ -1,0 +1,6 @@
+# The shell never reaches a `lets` after the first, so one later on PATH is no conflict.
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$(pwd)/fake-bin:$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install claude-code"]
+
+[fs]
+sandbox = true

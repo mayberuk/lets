@@ -1,0 +1,218 @@
+── small.md  (1-15 of 15) · sha:bc4ff3a9b973
+  1 	# Targets
+  2 	
+  3 	One grammar every verb speaks.
+  4 	
+  5 	## Bottom line
+  6 	
+  7 	Lines locate, content confirms.
+  8 	
+  9 	```sh
+ 10 	# not a heading
+ 11 	```
+ 12 	
+ 13 	## Next
+ 14 	
+ 15 	Something else.
+── big.ts  (1-200 of 212 · window 200 · :201-212 not shown) · sha:e37232c09d01
+  1 	// big.ts — padded fixture for lets show's window-truncation and #usage cases.
+  2 	// Total file length and the usage() span are pinned to spec.md's own worked
+  3 	// example (38-61 of 212) so a golden's numbers come from the spec, not a run.
+  4 	// filler 4
+  5 	// filler 5
+  6 	// filler 6
+  7 	// filler 7
+  8 	// filler 8
+  9 	// filler 9
+ 10 	// filler 10
+ 11 	// filler 11
+ 12 	// filler 12
+ 13 	// filler 13
+ 14 	// filler 14
+ 15 	// filler 15
+ 16 	// filler 16
+ 17 	// filler 17
+ 18 	// filler 18
+ 19 	// filler 19
+ 20 	// filler 20
+ 21 	// filler 21
+ 22 	// filler 22
+ 23 	// filler 23
+ 24 	// filler 24
+ 25 	// filler 25
+ 26 	// filler 26
+ 27 	// filler 27
+ 28 	// filler 28
+ 29 	// filler 29
+ 30 	// filler 30
+ 31 	// filler 31
+ 32 	// filler 32
+ 33 	// filler 33
+ 34 	// filler 34
+ 35 	// filler 35
+ 36 	// filler 36
+ 37 	// filler 37
+ 38 	export function usage(id: string) {
+ 39 	  const store = new Map<string, number>();
+ 40 	  const cap = 10;
+ 41 	  const seen = store.get(id) ?? 0;
+ 42 	  if (seen >= cap) {
+ 43 	    throw new Error(`usage cap exceeded for ${id}`);
+ 44 	  }
+ 45 	  const total = seen + 1;
+ 46 	  store.set(id, total);
+ 47 	  const a = 1;
+ 48 	  const b = 2;
+ 49 	  const c = 3;
+ 50 	  const d = 4;
+ 51 	  const e = 5;
+ 52 	  const f = 6;
+ 53 	  const g = 7;
+ 54 	  const h = 8;
+ 55 	  const i = 9;
+ 56 	  const j = 10;
+ 57 	  const k = 11;
+ 58 	  const l = 12;
+ 59 	  const m = 13;
+ 60 	  return total;
+ 61 	}
+ 62 	// filler 62
+ 63 	// filler 63
+ 64 	// filler 64
+ 65 	// filler 65
+ 66 	// filler 66
+ 67 	// filler 67
+ 68 	// filler 68
+ 69 	// filler 69
+ 70 	// filler 70
+ 71 	// filler 71
+ 72 	// filler 72
+ 73 	// filler 73
+ 74 	// filler 74
+ 75 	// filler 75
+ 76 	// filler 76
+ 77 	// filler 77
+ 78 	// filler 78
+ 79 	// filler 79
+ 80 	// filler 80
+ 81 	// filler 81
+ 82 	// filler 82
+ 83 	// filler 83
+ 84 	// filler 84
+ 85 	// filler 85
+ 86 	// filler 86
+ 87 	// filler 87
+ 88 	// filler 88
+ 89 	// filler 89
+ 90 	// filler 90
+ 91 	// filler 91
+ 92 	// filler 92
+ 93 	// filler 93
+ 94 	// filler 94
+ 95 	// filler 95
+ 96 	// filler 96
+ 97 	// filler 97
+ 98 	// filler 98
+ 99 	// filler 99
+100 	// filler 100
+101 	// filler 101
+102 	// filler 102
+103 	// filler 103
+104 	// filler 104
+105 	// filler 105
+106 	// filler 106
+107 	// filler 107
+108 	// filler 108
+109 	// filler 109
+110 	// filler 110
+111 	// filler 111
+112 	// filler 112
+113 	// filler 113
+114 	// filler 114
+115 	// filler 115
+116 	// filler 116
+117 	// filler 117
+118 	// filler 118
+119 	// filler 119
+120 	// filler 120
+121 	// filler 121
+122 	// filler 122
+123 	// filler 123
+124 	// filler 124
+125 	// filler 125
+126 	// filler 126
+127 	// filler 127
+128 	// filler 128
+129 	// filler 129
+130 	// filler 130
+131 	// filler 131
+132 	// filler 132
+133 	// filler 133
+134 	// filler 134
+135 	// filler 135
+136 	// filler 136
+137 	// filler 137
+138 	// filler 138
+139 	// filler 139
+140 	// filler 140
+141 	// filler 141
+142 	// filler 142
+143 	// filler 143
+144 	// filler 144
+145 	// filler 145
+146 	// filler 146
+147 	// filler 147
+148 	// filler 148
+149 	// filler 149
+150 	// filler 150
+151 	// filler 151
+152 	// filler 152
+153 	// filler 153
+154 	// filler 154
+155 	// filler 155
+156 	// filler 156
+157 	// filler 157
+158 	// filler 158
+159 	// filler 159
+160 	// filler 160
+161 	// filler 161
+162 	// filler 162
+163 	// filler 163
+164 	// filler 164
+165 	// filler 165
+166 	// filler 166
+167 	// filler 167
+168 	// filler 168
+169 	// filler 169
+170 	// filler 170
+171 	// filler 171
+172 	// filler 172
+173 	// filler 173
+174 	// filler 174
+175 	// filler 175
+176 	// filler 176
+177 	// filler 177
+178 	// filler 178
+179 	// filler 179
+180 	// filler 180
+181 	// filler 181
+182 	// filler 182
+183 	// filler 183
+184 	// filler 184
+185 	// filler 185
+186 	// filler 186
+187 	// filler 187
+188 	// filler 188
+189 	// filler 189
+190 	// filler 190
+191 	// filler 191
+192 	// filler 192
+193 	// filler 193
+194 	// filler 194
+195 	// filler 195
+196 	// filler 196
+197 	// filler 197
+198 	// filler 198
+199 	// filler 199
+200 	// filler 200
+── showed 2 targets · 215 lines · :201-212 not shown

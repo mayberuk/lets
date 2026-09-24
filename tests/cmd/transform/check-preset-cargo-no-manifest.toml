@@ -1,0 +1,5 @@
+# A preset resolves through `check::run_command`'s table: `@cargo` finds no `Cargo.toml` between
+# the file and the tree root, so the checker is skipped by name and the change is kept.
+# check-cmd-reverts is the control where a literal command runs.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "a=2", "--check", "@cargo"]

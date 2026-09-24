@@ -1,0 +1,20 @@
+`transform` validates `--if` with the same rule as `edit`.
+
+```console
+$ lets transform app.json --set threads=3 --if sha:abc
+? 64
+error: invalid value 'sha:abc' for [..]: --if takes sha: and 12 or more lowercase hex digits, as a show header prints it
+...
+ERROR_CODE=usage
+
+```
+
+The control: a well-formed hash the file does not have is exit 5, and the file is unchanged.
+
+```console
+$ lets transform app.json --set threads=3 --if sha:000000000000
+? 5
+app.json changed since sha:[..] (now sha:[..])
+ERROR_CODE=changed
+
+```

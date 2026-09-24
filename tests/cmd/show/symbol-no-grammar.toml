@@ -1,0 +1,8 @@
+bin.name = "lets"
+args = ["show", "unsupported.vue#render"]
+
+[status]
+code = 1
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

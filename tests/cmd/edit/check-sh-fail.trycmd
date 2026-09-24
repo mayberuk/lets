@@ -1,0 +1,12 @@
+```console
+$ lets edit run.sh --old 'done' --new 'don'
+? 3
+── run.sh · 1 replacement · line 4 · REVERTED
+2 	for name in one two; do
+3 	  echo "$name"
+4~	don          ← parse error
+── check: failed → reverted · file unchanged · sha:1a0659d2422d
+structure check failed for run.sh: failed
+ERROR_CODE=check_failed
+
+```

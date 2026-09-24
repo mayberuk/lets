@@ -1,0 +1,4 @@
+# spec.md § show: a file that is not UTF-8 but holds no NUL renders with U+FFFD for each
+# invalid byte, and the header names the lines that held them. Lines 3 and 7 carry Latin-1 0xE9.
+bin.name = "lets"
+args = ["show", "latin1.txt"]

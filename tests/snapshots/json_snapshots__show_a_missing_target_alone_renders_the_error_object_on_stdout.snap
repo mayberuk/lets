@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"error":{"slug":"not_found","message":"nope.txt: No such file or directory (os error 2)"},"omitted":[],"stats":{"lines":0,"bytes":0,"tokens_est":null}}

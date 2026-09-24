@@ -1,0 +1,21 @@
+#!/bin/sh
+# Stands in for curl: the release lookup answers with $FAKE_LATEST_TAG, or fails as an offline
+# curl does when it is unset; a download saves an installer that only records it ran. Every call
+# is logged to $FAKE_CURL_LOG.
+printf '%s\n' "$*" >> "$FAKE_CURL_LOG"
+case "$*" in
+*-sSI*)
+    if [ -z "$FAKE_LATEST_TAG" ]; then
+        echo 'curl: (6) Could not resolve host: github.com' >&2
+        exit 6
+    fi
+    printf 'HTTP/2 302\r\nlocation: https://github.com/mayberuk/lets/releases/tag/%s\r\n\r\n' "$FAKE_LATEST_TAG"
+    ;;
+*)
+    while [ $# -gt 0 ]; do
+        if [ "$1" = -o ]; then out="$2"; fi
+        shift
+    done
+    printf 'echo installer ran >> "%s"\n' "$FAKE_CURL_LOG" > "$out"
+    ;;
+esac
