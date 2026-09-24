@@ -15,7 +15,7 @@ lets guide
 Prints one screen: every verb, the target grammar, and the exit-code shorthand, so an agent (or a
 person) reads it once and has the whole surface. This is the same text a `SessionStart` hook
 installed by `lets hooks install claude-code` shows at the start of every session — see
-`/docs/hooks/`.
+[the hooks reference](/docs/hooks/).
 
 ```console
 $ lets guide
@@ -37,4 +37,4 @@ lets — Locate · Edit · Transform · Show          one call, bounded output, 
 
 `lets guide --json` carries the same text under one key, with no `omitted`/`stats` — there is
 nothing to omit and no file-derived cost to report: `{"guide":"lets — Locate · Edit · Transform ·
-Show ..."}`. See `/docs/json/`.
+Show ..."}`. See [--json and --jsonl](/docs/json/).

@@ -89,5 +89,5 @@ $ lets stats --dir . --json
 These two env vars govern a different, unrelated field: the per-call `stats.tokens_est` estimate
 that `show`, `find`, `edit`, `transform` and `write` carry in their own output (bytes ÷ 4, or ÷
 `LETS_TOKEN_RATIO` if set; `null` under `LETS_NO_STATS=1`). They do not affect what `lets stats`
-itself counts — the name is a coincidence, not a shared mechanism. See `/docs/json/` for
-`stats.tokens_est`.
+itself counts — the name is a coincidence, not a shared mechanism. See [--json and --jsonl](/docs/json/)
+for `stats.tokens_est`.

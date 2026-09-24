@@ -10,14 +10,17 @@ import Hook from '../components/home/Hook.astro';
 import Trash from '../components/home/Trash.astro';
 import Files from '../components/home/Files.astro';
 import LlmsTxt from '../components/home/LlmsTxt.astro';
+import Faq from '../components/home/Faq.astro';
+import { faq } from '../data/faq';
 import '../styles/home.css';
 ---
 <Desktop
   title="lets · one call instead of three"
-  description="lets is a small command your coding agent runs instead of cat, grep and sed. It reads, edits and checks files in one call, and every answer names what it left out. Linux and macOS, MIT or Apache-2.0."
+  description="lets is a file-operations CLI for coding agents: one shell call reads, edits and checks several files, and every answer names what it left out."
   path="/"
   markdownTwin="/index.md"
   kind="home"
+  faq={faq}
 >
 <div class="desk" id="top">
 <div class="doc">
@@ -129,6 +132,16 @@ import '../styles/home.css';
       </div>
     </section>
 
+    <section class="row" id="faq" aria-labelledby="faq-h">
+      <div class="rd">
+        <h2 id="faq-h" class="ln">Questions, answered once.</h2>
+        <p class="ln">The same answers your agent gets when it reads this page as markdown.</p>
+      </div>
+      <div class="side">
+        <Faq faq={faq} />
+      </div>
+    </section>
+
     <section class="row" id="end" aria-labelledby="end-h">
       <div class="rd">
         <h2 id="end-h" class="ln">Two commands, and your agent has it.</h2>
@@ -148,7 +161,7 @@ import '../styles/home.css';
   </main>
 
   <footer class="foot">
-    <p class="o">── index.html · the promise, the anatomy of one edit, one task with and without lets, 5 before/after pairs, the trial, the hook, the five verbs
+    <p class="o">── index.html · the promise, the anatomy of one edit, one task with and without lets, 5 before/after pairs, the trial, the hook, the five verbs, 6 questions
 ── not shown here: 7 more pairs, every flag and exit code · they are in <a href="/docs/edit/">docs</a>, <a href="/docs/edit.md">/docs/*.md</a> and <a href="/llms-full.txt">/llms-full.txt</a></p>
     <div class="meta"><span>lets 0.0.1 · MIT or Apache-2.0</span><a href="https://github.com/mayberuk/lets">github.com/mayberuk/lets</a><a href="/">← all directions</a></div>
   </footer>

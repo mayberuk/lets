@@ -4,6 +4,7 @@ import '../styles/wall.css';
 import Sprite from '../components/shell/Sprite.astro';
 import Panel from '../components/shell/Panel.astro';
 import DesktopIcons from '../components/shell/DesktopIcons.astro';
+import Seo from '../components/Seo.astro';
 
 interface Props {
   title: string;
@@ -12,9 +13,11 @@ interface Props {
   markdownTwin?: string;
   kind?: 'home' | 'doc' | 'page';
   faq?: { q: string; a: string }[];
+  breadcrumbTitle?: string;
+  noindex?: boolean;
 }
 
-const { title, description, path, markdownTwin, kind = 'page' } = Astro.props;
+const { title, description, path, markdownTwin, kind = 'page', faq, breadcrumbTitle, noindex } = Astro.props;
 const home = kind === 'home';
 const skip = { home: 'Skip to the README', doc: 'Skip to the manual', page: 'Skip to the content' }[kind];
 ---
@@ -26,6 +29,7 @@ const skip = { home: 'Skip to the README', doc: 'Skip to the manual', page: 'Ski
 <title>{title}</title>
 <meta name="description" content={description}>
 {markdownTwin && <link rel="alternate" type="text/markdown" href={markdownTwin} title="This page as markdown">}
+<Seo title={title} description={description} path={path} kind={kind} faq={faq} breadcrumbTitle={breadcrumbTitle} noindex={noindex} />
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

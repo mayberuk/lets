@@ -1,0 +1,30 @@
+---
+import WindowControls from '../shell/WindowControls.astro';
+
+interface Props {
+  faq: { q: string; a: string }[];
+}
+
+const { faq } = Astro.props;
+---
+<section class="win faq-win drag-ok" data-win="faq" data-title="Questions — Help" data-icon="i-manual" aria-labelledby="faq-t">
+          <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-manual"/></svg></span><h3 class="t" id="faq-t">Questions <span>— Help</span></h3><WindowControls /></div>
+          <div class="wb pad">
+            <h4 class="vh">Questions a newcomer or an answer engine asks</h4>
+            {faq.map((f) => (
+              <details>
+                <summary>{f.q}</summary>
+                <p>{f.a}</p>
+              </details>
+            ))}
+          </div>
+        </section>
+        <p class="min-note" data-js><span>Questions is minimised.</span><button type="button" class="key" data-restore="faq">Restore</button></p>
+
+<style>
+  .faq-win .wb > details { border-top: 1px solid var(--hair); padding: 14px 0; }
+  .faq-win .wb > details:first-of-type { border-top: 0; padding-top: 0; }
+  .faq-win summary { cursor: pointer; font: 700 15px/1.4 var(--sans); color: var(--ink); }
+  .faq-win summary:hover { color: var(--link); }
+  .faq-win details p { margin: 8px 0 0; color: var(--ink-2); font-size: 14.5px; line-height: 1.55; max-width: 46em; }
+</style>

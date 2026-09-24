@@ -23,8 +23,8 @@ Installs into $LETS_BIN_DIR, default ~/.local/bin.
 
 - `--version vX.Y.Z` installs a specific release instead of the latest.
 - `--hooks=claude-code,codex` installs the named agent hooks non-interactively; `--no-hooks`
-  skips hook setup entirely. With neither given, the script asks interactively (see `/docs/hooks/`
-  for what each hook does).
+  skips hook setup entirely. With neither given, the script asks interactively (see
+  [the hooks reference](/docs/hooks/) for what each hook does).
 - `--check` reports whether a newer release exists (via `lets update --check`) without installing
   anything.
 - `--uninstall` removes any agent hooks this script installed, then deletes the binary.
@@ -86,13 +86,13 @@ $ lets version --json
 {"version":"0.0.1"}
 ```
 
-`--json`/`--jsonl` carry the version string alone, with no `omitted`/`stats` — see `/docs/json/`.
+`--json`/`--jsonl` carry the version string alone, with no `omitted`/`stats` — see [--json and --jsonl](/docs/json/).
 
 ## Agent hooks
 
 `install.sh` can wire up an agent's own settings during install (`--hooks=`/`--no-hooks`/`--yes`
 above), or it can be done separately at any time with `lets hooks install claude-code` or `lets
-hooks install codex`. See `/docs/hooks/` for what each hook does and how to uninstall it.
+hooks install codex`. See [the hooks reference](/docs/hooks/) for what each hook does and how to uninstall it.
 
 ## Uninstall
 

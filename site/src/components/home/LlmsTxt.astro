@@ -1,17 +1,14 @@
 ---
+import { getCollection } from 'astro:content';
 import WindowControls from '../shell/WindowControls.astro';
+import { llmsTxt } from '../../lib/llms';
+
+const lines = llmsTxt(await getCollection('docs')).trimEnd().split('\n');
 ---
 <section class="win txt-win drag-ok" id="agents" data-win="txt" data-title="llms.txt" data-icon="i-txt" aria-labelledby="txt-t">
           <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-txt"/></svg></span><h3 class="t" id="txt-t">llms.txt <span>— for agents</span></h3><WindowControls /></div>
           <div class="wb">
-            <div class="txt"><span class="g" aria-hidden="true">1
-2
-3
-4
-5
-6</span><pre># lets
-
-&gt; `lets` is a file-operations CLI for coding agents: Locate, Edit, Transform, Show. One Bash call reads, searches, edits or transforms several files and returns bounded, numbered output whose last line (the footer) names everything it left out.</pre></div>
+            <pre class="llms" tabindex="0" aria-label="The contents of /llms.txt">{lines.map((l) => <span>{l}{'\n'}</span>)}</pre>
             <ul class="agent-links">
               <li><a href="/llms.txt"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg><code>/llms.txt</code><small>an index of every page</small></a></li>
               <li><a href="/llms-full.txt"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg><code>/llms-full.txt</code><small>the whole reference in one file</small></a></li>
@@ -20,3 +17,17 @@ import WindowControls from '../shell/WindowControls.astro';
           </div>
         </section>
         <p class="min-note" data-js><span>llms.txt is minimised.</span><button type="button" class="key" data-restore="txt">Restore</button></p>
+
+<style>
+  /* One span per line, numbered by a counter, so a wrapped line keeps its number beside its first row. */
+  .llms {
+    counter-reset: ln; margin: 0; max-height: 22em; overflow: auto; padding: 12px 14px 12px 0;
+    font: 13px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+    background: linear-gradient(to right, var(--gutter) 36px, var(--hair) 36px 37px, var(--paper) 37px);
+  }
+  .llms span { display: block; padding-left: 51px; text-indent: -51px; counter-increment: ln; }
+  .llms span::before {
+    content: counter(ln); display: inline-block; box-sizing: border-box; width: 36px; margin-right: 15px; padding-right: 8px;
+    text-align: right; text-indent: 0; color: var(--ink-3); user-select: none;
+  }
+</style>

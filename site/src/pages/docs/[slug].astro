@@ -1,0 +1,53 @@
+---
+import { getCollection, render, type CollectionEntry } from 'astro:content';
+import Desktop from '../../layouts/Desktop.astro';
+import Manual from '../../components/manual/Manual.astro';
+import '../../styles/manual.css';
+
+export async function getStaticPaths() {
+  const docs = await getCollection('docs');
+  return docs.map((entry) => ({ params: { slug: entry.id }, props: { entry, docs } }));
+}
+
+interface Props {
+  entry: CollectionEntry<'docs'>;
+  docs: CollectionEntry<'docs'>[];
+}
+
+const { entry, docs } = Astro.props;
+const { Content, headings } = await render(entry);
+const toc = headings.filter((h) => h.depth === 2);
+const markdown = `/docs/${entry.id}.md`;
+const subtitle = /^lets (\S+)/.exec(entry.data.title)?.[1] ?? entry.data.title;
+---
+<Desktop
+  title={`${entry.data.title} · lets Manual`}
+  description={entry.data.description}
+  path={`/docs/${entry.id}/`}
+  markdownTwin={markdown}
+  kind="doc"
+  breadcrumbTitle={entry.data.title}
+>
+<div class="desk">
+  <Manual docs={docs} subtitle={subtitle} markdown={markdown} current={entry.id} toc={toc}>
+    <article class="prose">
+      <Content />
+      <a class="back-top" href="#main">Back to the top of {entry.data.title}</a>
+    </article>
+  </Manual>
+
+  <footer class="foot">
+    <p class="o">── /docs/{entry.id}/ · {entry.data.title}{toc.length > 0 && `: ${toc.map((h) => h.text).join(', ')}`}
+── this page as markdown: <a href={markdown}>{markdown}</a> · every page in one file: <a href="/llms-full.txt">/llms-full.txt</a> · the index for agents: <a href="/llms.txt">/llms.txt</a></p>
+    <div class="meta"><span>lets 0.0.1 · MIT or Apache-2.0</span><a href="/">Home</a><a href="/docs/">All manual pages</a><a href="https://github.com/mayberuk/lets">github.com/mayberuk/lets</a></div>
+  </footer>
+</div>
+</Desktop>
+
+<script>
+  import { initDesktop } from '../../scripts/desktop';
+  import { initManual } from '../../scripts/manual';
+
+  initDesktop();
+  initManual();
+</script>

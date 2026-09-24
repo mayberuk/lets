@@ -21,7 +21,7 @@ lets edit [OPTIONS] [TARGET] [MORE_TARGETS]...
 target's line range); `--new` replaces it. The file is parsed before and after the edit and a
 guardrail reverts the write if the edit introduced a new parse error. The output shows the
 changed region with 2 lines of context and the check result, so the agent does not need to
-re-read the file to confirm the edit landed. See `/docs/targets/` for target forms.
+re-read the file to confirm the edit landed. See [target forms](/docs/targets/).
 
 ## Flags
 
@@ -41,7 +41,7 @@ re-read the file to confirm the edit landed. See `/docs/targets/` for target for
 | `--check <cmd\|@preset>` | layer-2 checker: a real command, or one of `@auto`, `@cargo`, `@go`, `@tsc`, `@py` | — |
 | `--check-timeout <secs>` | how long the layer-2 checker may run before its result is `inconclusive (timed out)` | 60 |
 | `--no-check` | skip both the built-in structural/format check and any `--check` | off |
-| `--if`, `--json`, `--jsonl`, `--budget`, `--max-bytes`, `--max-file-bytes`, `--no-ignore`, `--allow-outside`, `-q/--quiet` | shared flags — see `/docs/json/` for `--json`/`--jsonl` | see `lets edit --help` |
+| `--if`, `--json`, `--jsonl`, `--budget`, `--max-bytes`, `--max-file-bytes`, `--no-ignore`, `--allow-outside`, `-q/--quiet` | shared flags — see [--json and --jsonl](/docs/json/) | see `lets edit --help` |
 
 Several file targets in one call (`lets edit f1.ts f2.ts --old a --new b`), and a `--from -`
 batch, are both **validation-atomic**: every file is matched and pre-checked before any file is

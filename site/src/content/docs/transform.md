@@ -67,7 +67,7 @@ parser for these four formats — runs before and after every change and reverts
 
 ## Exit codes
 
-Same table as `edit` (`/docs/exit-codes/`), plus this verb's own reason for `unsupported_file`:
+Same table as `edit` ([exit codes](/docs/exit-codes/)), plus this verb's own reason for `unsupported_file`:
 a file that is not JSON, YAML, TOML or markdown-with-frontmatter, or a key that exists but can't
 be changed in place (a tagged YAML node, or one reached through an alias).
 

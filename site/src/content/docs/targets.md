@@ -119,7 +119,7 @@ A directory given as a target is not a target: exit 7 `ERROR_CODE=unsupported_fi
 ## `@'regex'` with no match falls back to `find`'s reading
 
 A `@'regex'` that matches no line is retried with the same grep-style second reading `find` gives
-a pattern that matched nothing (see `/docs/find/`): `show f.go@'A\|B'` shows the first line
+a pattern that matched nothing (see [lets find](/docs/find/)): `show f.go@'A\|B'` shows the first line
 matching `A|B`, and the footer names the reading used.
 
 ## `find` output is made of targets

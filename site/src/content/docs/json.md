@@ -117,9 +117,9 @@ parsing stderr:
  "omitted":[],"stats":{"lines":0,"bytes":0,"tokens_est":null}}
 ```
 
-`error.slug` is the same slug `ERROR_CODE=` prints on stderr — see `/docs/exit-codes/` for the
-full table. A call that produces some real output alongside a partial failure keeps its normal
-shape instead of this one.
+`error.slug` is the same slug `ERROR_CODE=` prints on stderr — see [exit codes](/docs/exit-codes/)
+for the full table. A call that produces some real output alongside a partial failure keeps its
+normal shape instead of this one.
 
 ## `stats.tokens_est`
 

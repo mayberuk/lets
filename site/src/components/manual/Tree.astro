@@ -1,0 +1,39 @@
+---
+import type { CollectionEntry } from 'astro:content';
+import type { MarkdownHeading } from 'astro';
+
+interface Props {
+  docs: CollectionEntry<'docs'>[];
+  current?: string;
+  toc: MarkdownHeading[];
+}
+
+const { docs, current, toc } = Astro.props;
+const groups = new Map<string, CollectionEntry<'docs'>[]>();
+for (const e of [...docs].sort((a, b) => a.data.order - b.data.order)) {
+  groups.set(e.data.group, [...(groups.get(e.data.group) ?? []), e]);
+}
+const verb = (title: string) => /^lets (\S+)/.exec(title)?.[1];
+---
+<ul class="tree">
+  <li class:list={{ cur: !current }}><a href="/docs/" aria-current={current ? undefined : 'page'}><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-book-s"/></svg>Overview</a></li>
+  {[...groups].map(([group, entries]) => (
+    <>
+      <li class="grp"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-book-s"/></svg>{group}</li>
+      {entries.map((e) => {
+        const here = e.id === current;
+        const name = verb(e.data.title);
+        return (
+          <li class:list={{ cur: here }}>
+            <a href={`/docs/${e.id}/`} aria-current={here ? 'page' : undefined}><svg viewBox="0 0 16 16" aria-hidden="true"><use href={here ? '#i-book-s' : '#i-doc-s'}/></svg>{name ? <code>{name}</code> : e.data.title}</a>
+            {here && toc.length > 0 && (
+              <ul class="sub">
+                {toc.map((h) => <li><a href={`#${h.slug}`}>{h.text}</a></li>)}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </>
+  ))}
+</ul>

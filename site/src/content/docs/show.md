@@ -19,7 +19,7 @@ lets show [OPTIONS] <TARGETS>...
 
 Renders each target as a numbered block with a header naming the range shown out of the file's
 total, and a footer summarizing the whole call. Replaces `cat`, `head`, `sed -n` and the Read
-tool. See `/docs/targets/` for the target grammar (`path`, `path:40`, `path:40-80`,
+tool. See [target grammar](/docs/targets/) (`path`, `path:40`, `path:40-80`,
 `path@'regex'`, `path#name`).
 
 ## Flags
@@ -61,7 +61,7 @@ tool. See `/docs/targets/` for the target grammar (`path`, `path:40`, `path:40-8
 - A line over 1,000 bytes is cut at a UTF-8 boundary and marked with `…`; the footer names how
   many lines this touched (`N long lines cut`).
 - `--json`/`--jsonl` bodies carry `omitted` (the machine-readable footer) and `stats` (`lines`,
-  `bytes`, `tokens_est`) alongside the target-specific fields. See `/docs/json/`.
+  `bytes`, `tokens_est`) alongside the target-specific fields. See [--json and --jsonl](/docs/json/).
 
 ## Exit codes
 

@@ -1,0 +1,119 @@
+.desk { padding: calc(var(--panel-h) + 18px) 16px 40px 120px; }
+.manual { max-width: 1260px; }
+.manual > .hb { position: sticky; top: var(--panel-h); z-index: 6; }
+.manual > .hb .lead .key { padding: 5px 11px; font-size: 13.5px; }
+.manual > .hb .lead .key svg { width: 15px; height: 15px; }
+.split { display: grid; grid-template-columns: 300px minmax(0, 1fr); }
+.navp { border-right: 1px solid var(--hair); background: var(--gutter); border-radius: 0 0 0 9px; }
+.navp-in { position: sticky; top: calc(var(--panel-h) + 43px); max-height: calc(100vh - var(--panel-h) - 43px); overflow-y: auto; padding: 16px 14px 20px; }
+.navp .toc > summary { display: none; }
+
+.mini { margin-bottom: 18px; padding: 12px; border-radius: 10px; background: var(--paper); border: 1px solid var(--edge); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.mini h2 { margin: 0 0 8px; font: 700 14px/1.3 var(--sans); }
+.mini ol { list-style: none; margin: 0 0 10px; padding: 6px 8px; display: grid; gap: 6px; background: var(--well); border: 1px solid var(--well-line); border-radius: 8px; box-shadow: inset 0 1px 3px rgba(0,0,0,.06); }
+.mini li { display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 6px; }
+.mini li > span { font: 700 11.5px/1.7 var(--sans); color: var(--ink-3); }
+.mini pre { margin: 0; font: 500 12px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: normal; }
+.mini .key { width: 100%; font-size: 14.5px; font-weight: 700; }
+.mini p { margin: 8px 0 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+.mini p code { font-size: 12px; color: var(--ink); white-space: nowrap; }
+
+.tree { list-style: none; margin: 0; padding: 0; font-size: 14.5px; }
+.tree .grp { display: flex; align-items: center; gap: 7px; margin: 14px 0 4px; padding: 0 8px; font: 700 12.5px/1.2 var(--sans); color: var(--ink-2); }
+.tree .grp svg { width: 16px; height: 16px; }
+.tree a { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; color: var(--ink); text-decoration: none; }
+.tree a:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.tree a svg { width: 16px; height: 16px; flex: none; }
+.tree a code { font-size: 14px; }
+.tree .cur > a { background: var(--blue); color: #fff; font-weight: 700; }
+.tree .cur > a code { color: #fff; }
+.tree .sub { list-style: none; margin: 4px 0 6px 20px; padding: 0 0 0 10px; border-left: 1px solid var(--hair); }
+.tree .sub a { padding: 3px 8px; font-size: 13.5px; color: var(--ink-2); }
+.tree .sub a.here { color: var(--ink); font-weight: 700; background: color-mix(in srgb, var(--blue-top) 12%, transparent); }
+
+/* The article is rendered markdown, so every rule targets plain elements under .prose. */
+.prose { padding: 34px 56px 56px; max-width: 880px; font-size: 17px; line-height: 1.7; }
+.prose h1 { margin: 0; font: 700 44px/1.1 var(--sans); letter-spacing: -.02em; }
+.prose > h1 + p { margin: 12px 0 0; font-size: 19.5px; line-height: 1.55; color: var(--ink-2); max-width: 36em; }
+.prose h2 { margin: 56px 0 0; padding-top: 18px; border-top: 1px solid var(--hair); font: 700 27px/1.2 var(--sans); letter-spacing: -.01em; scroll-margin-top: calc(var(--panel-h) + 56px); }
+.prose h3 { margin: 30px 0 0; font: 700 19px/1.3 var(--sans); scroll-margin-top: calc(var(--panel-h) + 56px); }
+.prose p, .prose ul, .prose ol, .prose dl, .prose blockquote { max-width: 38em; }
+.prose p { margin: 14px 0 0; }
+.prose ul, .prose ol { margin: 14px 0 0; padding-left: 22px; }
+.prose li + li { margin-top: 6px; }
+.prose li > p { margin-top: 6px; }
+.prose :not(pre) > code { font-size: .88em; padding: 1px 5px; border-radius: 4px; background: var(--well); border: 1px solid var(--well-line); white-space: nowrap; }
+.prose h1 code, .prose h2 code, .prose h3 code { background: none; border: 0; padding: 0; font-size: .95em; }
+.prose blockquote { margin: 16px 0 0; padding: 12px 14px; border-radius: 8px; background: color-mix(in srgb, var(--hl-strong) 16%, var(--paper)); border: 1px solid color-mix(in srgb, #E5A50A 45%, transparent); }
+.prose blockquote > :first-child { margin-top: 0; }
+.prose hr { margin: 40px 0 0; border: 0; border-top: 1px solid var(--hair); }
+.anchor { margin-left: 8px; color: var(--ink-3); text-decoration: none; font-weight: 400; opacity: 0; transition: opacity .12s; }
+.prose h2:hover .anchor, .anchor:focus-visible { opacity: 1; }
+
+/* Astro highlights fenced code with inline Shiki colours; the design renders code and output in ink on the well. */
+.prose pre:not(.cmd), .prose pre.astro-code { margin: 16px 0 0; padding: 12px 16px; border-radius: 10px; background: var(--well) !important; color: var(--ink) !important; border: 1px solid var(--well-line); box-shadow: inset 0 1px 3px rgba(0,0,0,.06); font: 13.5px/1.6 var(--mono); tab-size: 4; overflow-x: auto; }
+.prose pre.astro-code span { color: inherit !important; }
+.prose pre .cmdl { font-weight: 700; }
+.prose .code { position: relative; margin-top: 16px; }
+.prose .code > pre { margin-top: 0; padding-top: 14px; }
+.code-copy { position: absolute; top: 8px; right: 8px; z-index: 1; padding: 4px 10px; font-size: 13px; opacity: 0; transition: opacity .12s; }
+.code:hover .code-copy, .code-copy:focus-visible, .code-copy.is-done { opacity: 1; }
+.code-copy .tick { width: 16px; height: 16px; }
+
+.tbl-wrap { margin-top: 16px; overflow-x: auto; border: 1px solid var(--hair); border-radius: 10px; }
+.prose table { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 15px; line-height: 1.55; }
+.tbl-wrap > table { margin-top: 0; }
+.prose th { text-align: left; font: 700 13px/1.3 var(--sans); color: var(--ink-2); background: var(--gutter); padding: 9px 14px; border-bottom: 1px solid var(--hair); }
+.prose td { padding: 10px 14px; border-top: 1px solid var(--hair); vertical-align: top; }
+.prose tbody tr:first-child td { border-top: 0; }
+.prose td:first-child code { font-weight: 600; }
+.prose tbody tr:hover td { background: color-mix(in srgb, var(--blue-top) 5%, var(--paper)); }
+
+.prose .install { margin-top: 16px; max-width: 38em; }
+.pages { margin: 10px 0 0; }
+.pages dt { margin-top: 16px; font-weight: 700; }
+.pages dt .md { margin-left: 6px; font: 400 13px/1 var(--mono); color: var(--ink-3); }
+.pages dd { margin: 2px 0 0; color: var(--ink-2); font-size: 16px; }
+.back-top { display: inline-block; margin-top: 36px; font-size: 14.5px; }
+
+.foot { max-width: 1260px; margin-top: 14px; padding: 14px 18px; border-radius: 10px; background: var(--paper); border: 1px solid var(--edge); box-shadow: var(--shadow); }
+.foot .o { margin: 0; white-space: pre-wrap; font-size: 12.5px; color: var(--ink-2); }
+.foot .meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13.5px; color: var(--ink-2); }
+
+@media (max-width: 1099px) {
+  :root { --panel-h: 44px; }
+  .panel { padding: 0 6px; font-size: 14px; }
+  .pnav a.hide-s, .pright .hide-s { display: none; }
+  .panel a, .panel .pbtn { padding: 8px 9px; }
+  .pbtn .pl-t { display: none; }
+  .icons { position: static; width: auto; flex-direction: row; gap: 2px; overflow-x: auto; margin: calc(var(--panel-h) + 6px) 0 0; padding: 6px 10px 8px; }
+  .icon { flex: none; width: 76px; padding: 4px 2px 5px; }
+  .icon svg { width: 40px; height: 40px; }
+  .icon span { font-size: 12px; }
+  .icon.trash { display: none; }
+  .desk { padding: 4px 10px 30px; }
+  .manual > .hb { position: static; }
+  .split { grid-template-columns: minmax(0, 1fr); }
+  /* .navp/.navp-in drop their boxes so Contents and Install become direct grid items of .split,
+     ordered around #main instead of both sitting ahead of the article. */
+  .navp, .navp-in { display: contents; }
+  #main { order: 2; }
+  .mini { order: 3; margin: 14px 12px 0; }
+  .navp .toc { order: 1; padding: 14px 12px; border-bottom: 1px solid var(--hair); }
+  .navp .toc > summary { display: list-item; cursor: pointer; font-weight: 700; color: var(--link); }
+  .navp .toc[open] > summary { margin-bottom: 8px; }
+  .prose { padding: 22px 16px 36px; font-size: 16.5px; }
+  .prose h1 { font-size: 34px; }
+  .prose > h1 + p { font-size: 17.5px; }
+  .prose h2 { font-size: 23px; margin-top: 42px; }
+  .prose :not(pre) > code { white-space: normal; overflow-wrap: anywhere; }
+  .prose pre:not(.cmd), .prose pre.astro-code { font-size: 12.5px; }
+  .code-copy { position: static; display: flex; width: max-content; margin: 0 0 6px auto; opacity: 1; }
+  .tbl-wrap { overflow: visible; border: 0; }
+  .prose thead { display: none; }
+  .prose table, .prose tbody, .prose tr, .prose td { display: block; width: 100%; }
+  .prose tr { border: 1px solid var(--hair); border-radius: 8px; margin-top: 8px; padding: 8px 12px; }
+  .prose td { border: 0; padding: 3px 0; }
+  .prose td + td[data-label]::before { content: attr(data-label) ': '; color: var(--ink-3); font-size: 13.5px; }
+  .prose tbody tr:hover td { background: none; }
+}
