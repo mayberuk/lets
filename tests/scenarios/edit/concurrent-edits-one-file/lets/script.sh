@@ -26,6 +26,6 @@ for n in $(seq -w 1 20); do
   ( lets edit c.py --old "v$n = 0" --new "v$n = 1" >/dev/null 2>/dev/null; echo $? >> codes ) &
 done
 wait
-sort codes | uniq -c
+sort codes | uniq -c | awk '{print $1, $2}'
 
 lets show c.py
