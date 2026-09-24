@@ -53,6 +53,17 @@ jobs:
         with:
           tool: just@1.58.0,cargo-nextest@0.9.145
 
+      # The hook corpus runs rg as the oracle for its rg cases; neither runner image ships it, and
+      # install-action has no ripgrep manifest.
+      - name: Install ripgrep
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install ripgrep
+          else
+            sudo apt-get update
+            sudo apt-get install -y ripgrep
+          fi
+
       # v2.9.2
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
 

@@ -531,13 +531,6 @@ fn corpus_failures(root: &Path) -> Vec<String> {
         .filter(|required| !present.contains(required))
         .map(|required| format!("{required}: named in required.txt but absent from disk"))
         .collect();
-    if !rg_on_path() {
-        failures.push(
-            "rg is not on PATH: the rg cases run it as their oracle, so this tier cannot pass \
-             without it"
-                .to_owned(),
-        );
-    }
 
     for case_name in &present {
         let path = root.join(format!("{case_name}.txt"));
@@ -575,6 +568,10 @@ fn every_case_in_the_tree_classifies_as_declared() {
     assert!(
         !names(&root.join("required.txt")).is_empty(),
         "an emptied required.txt lets any case vanish"
+    );
+    assert!(
+        rg_on_path(),
+        "rg is not on PATH: the rg cases run it as their oracle, so this tier cannot pass without it"
     );
 
     let failures = corpus_failures(&root);

@@ -36,6 +36,19 @@ read bytes       0
 
 ```
 
+```console
+$ lets stats --dir .
+sessions         0
+bash calls       0
+lets calls       0
+hook blocks      0
+blocks followed  0
+calls saved      0
+read calls       0
+read bytes       0
+
+```
+
 The Latin-1 byte in the first line's command makes it not UTF-8, so that line is skipped and
 named; its Bash call is not counted, and the second line's `lets show` still is.
 
@@ -54,19 +67,6 @@ read bytes       0
 
 $ lets stats --dir . --json
 {"sessions":1,"bash_calls":1,"lets_calls":{"show":1},"hook_blocks":0,"blocks_followed":0,"calls_saved":0,"read_calls":0,"read_bytes":0,"skipped":{"non_utf8_lines":1}}
-
-```
-
-```console
-$ lets stats --dir .
-sessions         0
-bash calls       0
-lets calls       0
-hook blocks      0
-blocks followed  0
-calls saved      0
-read calls       0
-read bytes       0
 
 ```
 

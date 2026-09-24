@@ -166,6 +166,17 @@ ERROR_CODE=check_failed
 ```
 
 ```console
+$ lets edit app.js --old 'const cap = 10' --new 'const cap = 20'
+── app.js · 1 replacement · line 2 · exact
+1 	export function usage(id) {
+2~	  const cap = 20
+3 	  return cap + id.length
+4 	}
+── check: structure ok · sha:0edfd9883665→4ab3906a3bfd
+
+```
+
+```console
 $ lets edit config.json --old '"window": 200,' --new '"window": 200'
 ? 3
 ── config.json · 1 replacement · line 2 · REVERTED
@@ -187,17 +198,6 @@ $ lets edit config.json --old '"window": 200' --new '"window": 100'
 3 	  "threads": 4
 4 	}
 ── check: json ok · sha:e44762446524→21a40c895946
-
-```
-
-```console
-$ lets edit app.js --old 'const cap = 10' --new 'const cap = 20'
-── app.js · 1 replacement · line 2 · exact
-1 	export function usage(id) {
-2~	  const cap = 20
-3 	  return cap + id.length
-4 	}
-── check: structure ok · sha:0edfd9883665→4ab3906a3bfd
 
 ```
 
@@ -665,6 +665,14 @@ ERROR_CODE=not_found
 ```
 
 ```console
+$ lets edit usage.ts app.js --old 'const cap = 10' --new 'const cap = 20' --if sha:0123456789ab
+? 64
+--if takes one target · 2 were given
+ERROR_CODE=usage
+
+```
+
+```console
 $ lets edit usage.ts app.js --old 'const cap = 10' --new 'const cap = 20'
 ── usage.ts · 1 replacement · line 6 · exact
 4 	  if (!id) return
@@ -678,14 +686,6 @@ $ lets edit usage.ts app.js --old 'const cap = 10' --new 'const cap = 20'
 3 	  return cap + id.length
 4 	}
 ── 2 files · 2 edits · all applied · checks: structure ok ×2
-
-```
-
-```console
-$ lets edit usage.ts app.js --old 'const cap = 10' --new 'const cap = 20' --if sha:0123456789ab
-? 64
---if takes one target · 2 were given
-ERROR_CODE=usage
 
 ```
 

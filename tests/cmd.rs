@@ -563,18 +563,21 @@ fn new_dash_with_empty_stdin_deletes_the_match() {
 }
 
 #[test]
-fn generating_examples_twice_produces_byte_identical_output() {
+fn generating_examples_under_two_collations_produces_byte_identical_output() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let first = TempDir::new().expect("a temp output directory");
     let second = TempDir::new().expect("a temp output directory");
 
-    for out in [first.path(), second.path()] {
+    // Two collations that order `a.toml` and `a-b.toml` oppositely; a box without en_US falls back
+    // to C, and the check degrades to a plain rerun.
+    for (out, locale) in [(first.path(), "C"), (second.path(), "en_US.UTF-8")] {
         let status = std::process::Command::new("sh")
             .arg(manifest.join("scripts/gen-examples.sh"))
             .arg(out)
             // Run from inside the `cmd` test binary itself: re-running `cargo nextest run --test
             // cmd` here would recurse into this very test.
             .env("LETS_GEN_EXAMPLES_SKIP_TEST", "1")
+            .env("LC_ALL", locale)
             .current_dir(manifest)
             .status()
             .expect("gen-examples.sh runs");

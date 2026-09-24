@@ -190,18 +190,18 @@ ERROR_CODE=outside_tree
 ```
 
 ```console
-$ lets show big.ts --max-bytes 100
-? 4
-content is [..] bytes, over the 100-byte budget
-ERROR_CODE=over_budget
-
-```
-
-```console
 $ lets show big.ts --max-bytes 100 --budget 1000
 ── big.ts  (1-200 of 212 · window 200 · :201-212 not shown) · sha:e37232c09d01
 ...
 ── showed 1 target · 200 lines · :201-212 not shown
+
+```
+
+```console
+$ lets show big.ts --max-bytes 100
+? 4
+content is [..] bytes, over the 100-byte budget
+ERROR_CODE=over_budget
 
 ```
 

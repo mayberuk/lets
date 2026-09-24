@@ -201,6 +201,8 @@ fn cargo_lock_resolves_exactly_one_tree_sitter_package() {
 #[cfg(unix)]
 #[test]
 fn lint_without_cargo_deny_exits_1_and_names_the_install_command() {
+    use std::os::unix::fs::PermissionsExt as _;
+
     let scratch = tempfile::tempdir().expect("a scratch PATH dir");
     let real_path = std::env::var("PATH").expect("PATH is set for the test process");
 
@@ -211,7 +213,7 @@ fn lint_without_cargo_deny_exits_1_and_names_the_install_command() {
         };
         for entry in entries.flatten() {
             let name = entry.file_name();
-            if name == "cargo-deny" || scratch.path().join(&name).exists() {
+            if name == "cargo-deny" || name == "cargo" || scratch.path().join(&name).exists() {
                 continue;
             }
             let Ok(metadata) = entry.metadata() else {
@@ -227,6 +229,12 @@ fn lint_without_cargo_deny_exits_1_and_names_the_install_command() {
         }
     }
     let just_bin = just_bin.expect("`just` is on the test runner's PATH");
+    // lint runs `cargo +nightly fmt` and clippy before the guard, and the test job installs no
+    // nightly; a `cargo` that succeeds leaves the guard as the first step that can fail.
+    let cargo = scratch.path().join("cargo");
+    std::fs::write(&cargo, "#!/bin/sh\nexit 0\n").expect("the scratch PATH is writable");
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755))
+        .expect("the cargo stand-in is made executable");
 
     let output = Command::new(just_bin)
         .arg("lint")
