@@ -250,6 +250,7 @@ fn agents_md_quotes_its_own_discovery_paragraph_verbatim() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn help_redirected_to_a_full_device_exits_nonzero_with_io_error() {
     let home = TempDir::new().expect("a temp HOME");
     let dev_full = std::fs::OpenOptions::new()

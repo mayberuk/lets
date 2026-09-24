@@ -15,6 +15,9 @@ $ rustup toolchain install "$(just --evaluate nightly)" --component rustfmt
 cargo-deny cargo-machete cargo-nextest`), and `dist` if you're touching the release pipeline
 (`cargo install --locked cargo-dist`).
 
+The test suite also runs `rg`, and it expects GNU `sed -i`. On macOS, run
+`brew install ripgrep gnu-sed` and put `$(brew --prefix gnu-sed)/libexec/gnubin` first on `PATH`.
+
 ## Recipes
 
 | Command | Does |

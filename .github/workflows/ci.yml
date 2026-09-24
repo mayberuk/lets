@@ -54,11 +54,13 @@ jobs:
           tool: just@1.58.0,cargo-nextest@0.9.145
 
       # The hook corpus runs rg as the oracle for its rg cases; neither runner image ships it, and
-      # install-action has no ripgrep manifest.
-      - name: Install ripgrep
+      # install-action has no ripgrep manifest. The corpus and scenarios model GNU `sed -i`; BSD sed
+      # reads the script as a backup suffix, so macOS gets GNU sed first on PATH.
+      - name: Install ripgrep and GNU sed
         run: |
           if [ "$RUNNER_OS" = macOS ]; then
-            brew install ripgrep
+            brew install ripgrep gnu-sed
+            echo "$(brew --prefix gnu-sed)/libexec/gnubin" >> "$GITHUB_PATH"
           else
             sudo apt-get update
             sudo apt-get install -y ripgrep
