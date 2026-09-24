@@ -1,6 +1,9 @@
+mod support;
+
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+
+use support::sandbox::scrubbed;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -11,10 +14,9 @@ fn run_gate(paths: &[&str]) -> (i32, String) {
 }
 
 fn run_gate_in(dir: &std::path::Path, paths: &[&str]) -> (i32, String) {
-    let output = Command::new("sh")
+    let output = scrubbed("sh", dir)
         .arg(repo_root().join("scripts/comments-gate.sh"))
         .args(paths)
-        .current_dir(dir)
         .output()
         .expect("scripts/comments-gate.sh runs under sh");
     let code = output.status.code().expect("the gate exits, never signals");
@@ -252,11 +254,7 @@ fn no_argument_mode_checks_tracked_files_and_still_excludes_fixture_paths() {
     let root = dir.path();
 
     let git = |args: &[&str]| {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .status()
-            .expect("git runs");
+        let status = scrubbed("git", root).args(args).status().expect("git runs");
         assert!(status.success(), "git {args:?} failed");
     };
     git(&["init", "-q"]);
