@@ -1,5 +1,14 @@
 #!/usr/bin/env bun
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
@@ -131,41 +140,168 @@ function checkDist(dist: string): string[] {
   return errors;
 }
 
+function copyDist(dist: string, tmp: string): void {
+  Bun.spawnSync(['cp', '-r', `${dist}/.`, tmp]);
+}
+
+function mustReplace(path: string, pattern: RegExp | string, replacement: string, label: string): void;
+function mustReplace(
+  path: string,
+  pattern: RegExp,
+  replacement: (substring: string, ...args: string[]) => string,
+  label: string,
+): void;
+function mustReplace(
+  path: string,
+  pattern: RegExp | string,
+  replacement: string | ((substring: string, ...args: string[]) => string),
+  label: string,
+): void {
+  const original = readFileSync(path, 'utf8');
+  const mutated = (original.replace as (p: RegExp | string, r: typeof replacement) => string)(pattern, replacement);
+  if (mutated === original) throw new Error(`self-test setup: ${label} not found in ${path}`);
+  writeFileSync(path, mutated);
+}
+
+type Expected = { pathFragment: string; messageFragment: string; label: string };
+
+function assertCaught(errors: string[], expected: Expected[]): void {
+  const missing = expected.filter((x) => !errors.some((e) => e.includes(x.pathFragment) && e.includes(x.messageFragment)));
+  if (missing.length > 0) {
+    console.error(`self-test FAILED: ${missing.length} expected error(s) not caught:`);
+    for (const m of missing) console.error(`  - ${m.label}`);
+    console.error('full error list:');
+    for (const e of errors) console.error(`  ${e}`);
+    process.exit(1);
+  }
+  console.log(`self-test: ${expected.length} injected failure(s) caught`);
+  for (const x of expected) {
+    console.log(`  - ${errors.find((e) => e.includes(x.pathFragment) && e.includes(x.messageFragment))}`);
+  }
+}
+
 function selfTest(): void {
   const dist = process.argv[3] && process.argv[3] !== '--self-test' ? process.argv[3] : DEFAULT_DIST;
   if (!existsSync(dist)) {
     console.error(`${dist} does not exist; run "bun run build" first`);
     process.exit(1);
   }
-  const tmp = mkdtempSync(join(tmpdir(), 'check-dist-self-test-'));
+
+  const clean = mkdtempSync(join(tmpdir(), 'check-dist-self-test-clean-'));
   try {
-    Bun.spawnSync(['cp', '-r', `${dist}/.`, tmp]);
-
-    const indexPath = join(tmp, 'index.html');
-    const original = readFileSync(indexPath, 'utf8');
-    const mutated = original.replace(/<link rel="canonical" href="[^"]*">\n?/, '');
-    if (mutated === original) throw new Error('self-test setup: canonical link not found in index.html to remove');
-    writeFileSync(indexPath, mutated);
-
-    const llmsPath = join(tmp, 'llms.txt');
-    const llmsOriginal = readFileSync(llmsPath, 'utf8');
-    const llmsMutated = llmsOriginal.replace(`${SITE}/docs/show.md`, `${SITE}/docs/does-not-exist.md`);
-    if (llmsMutated === llmsOriginal) throw new Error('self-test setup: llms.txt link to mutate not found');
-    writeFileSync(llmsPath, llmsMutated);
-
-    const errors = checkDist(tmp);
-    const sawMissingCanonical = errors.some((e) => e.includes('index.html') && e.includes('missing canonical'));
-    const sawBrokenLlmsLink = errors.some((e) => e.includes('does-not-exist.md'));
-    if (!sawMissingCanonical || !sawBrokenLlmsLink) {
-      console.error('self-test FAILED: expected both a missing-canonical and a broken-llms-link error, got:');
-      for (const e of errors) console.error(`  ${e}`);
+    copyDist(dist, clean);
+    const cleanErrors = checkDist(clean);
+    if (cleanErrors.length > 0) {
+      console.error('self-test FAILED: unmutated dist is not clean, got:');
+      for (const e of cleanErrors) console.error(`  ${e}`);
       process.exit(1);
     }
-    console.log('self-test passed: both injected failures were caught');
-    console.log(`  - ${errors.find((e) => e.includes('index.html') && e.includes('missing canonical'))}`);
-    console.log(`  - ${errors.find((e) => e.includes('does-not-exist.md'))}`);
+    console.log('self-test: unmutated dist has zero errors (positive control)');
+  } finally {
+    rmSync(clean, { recursive: true, force: true });
+  }
+
+  const tmp = mkdtempSync(join(tmpdir(), 'check-dist-self-test-'));
+  try {
+    copyDist(dist, tmp);
+
+    mustReplace(join(tmp, 'index.html'), /<link rel="canonical" href="[^"]*">\n?/, '', 'canonical link');
+    mustReplace(join(tmp, 'docs', 'index.html'), /<title>[^<]+<\/title>/, '', 'title tag');
+    mustReplace(
+      join(tmp, 'docs', 'show', 'index.html'),
+      /<meta name="description" content="[^"]*">/,
+      `<meta name="description" content="${'x'.repeat(MAX_DESCRIPTION + 20)}">`,
+      'meta description',
+    );
+    mustReplace(join(tmp, 'docs', 'find', 'index.html'), /<meta name="description" content="[^"]*">/, '', 'meta description');
+    mustReplace(
+      join(tmp, 'docs', 'edit', 'index.html'),
+      /<link rel="canonical" href="[^"]*">/,
+      '<link rel="canonical" href="https://example.com/docs/edit/">',
+      'canonical link',
+    );
+    mustReplace(
+      join(tmp, 'docs', 'json', 'index.html'),
+      /<link rel="canonical" href="[^"]*">/,
+      `<link rel="canonical" href="${SITE}/not-in-sitemap/">`,
+      'canonical link',
+    );
+    mustReplace(join(tmp, 'docs', 'stats', 'index.html'), /<meta property="og:title" content="[^"]*">/, '', 'og:title meta');
+    mustReplace(
+      join(tmp, 'docs', 'hooks', 'index.html'),
+      /<script type="application\/ld\+json">[^<]*<\/script>/,
+      '',
+      'ld+json block',
+    );
+    mustReplace(
+      join(tmp, 'docs', 'exit-codes', 'index.html'),
+      /(<script type="application\/ld\+json">)([^<]*)(<\/script>)/,
+      (m, open: string, body: string, close: string) => `${open}${body.slice(0, -5)}${close}`,
+      'ld+json block',
+    );
+    mustReplace(
+      join(tmp, 'docs', 'transform', 'index.html'),
+      /<link rel="alternate" type="text\/markdown"[^>]*>\n?/,
+      '',
+      'markdown alternate link',
+    );
+    mustReplace(
+      join(tmp, 'docs', 'install', 'index.html'),
+      /(<link rel="alternate" type="text\/markdown" href=")([^"]*)(")/,
+      '$1/docs/does-not-exist.md$3',
+      'markdown alternate link',
+    );
+    mustReplace(join(tmp, 'docs', 'write', 'index.html'), /href="\/favicon\.svg"/, 'href="/favicon-missing.svg"', 'favicon href');
+
+    const llmsPath = join(tmp, 'llms.txt');
+    mustReplace(llmsPath, `${SITE}/docs/show.md`, `${SITE}/docs/does-not-exist.md`, 'llms.txt link');
+
+    writeFileSync(join(tmp, 'CNAME'), 'wrong.example.com');
+    writeFileSync(join(tmp, 'stray.png'), '');
+    mkdirSync(join(tmp, 'gallery', '_shots'), { recursive: true });
+    writeFileSync(join(tmp, 'gallery', '_shots', 'shot.txt'), '');
+
+    const errors = checkDist(tmp);
+    assertCaught(errors, [
+      { pathFragment: 'index.html', messageFragment: 'missing canonical', label: 'missing canonical (index.html)' },
+      { pathFragment: 'does-not-exist.md', messageFragment: 'llms.txt', label: 'broken llms.txt link' },
+      { pathFragment: join('docs', 'index.html'), messageFragment: 'missing <title>', label: 'missing title' },
+      { pathFragment: join('docs', 'show', 'index.html'), messageFragment: 'over 160', label: 'description over 160 chars' },
+      { pathFragment: join('docs', 'find', 'index.html'), messageFragment: 'missing meta description', label: 'missing meta description' },
+      { pathFragment: join('docs', 'edit', 'index.html'), messageFragment: 'does not start with', label: 'canonical not https' },
+      { pathFragment: join('docs', 'json', 'index.html'), messageFragment: 'not listed in the sitemap', label: 'canonical not in sitemap' },
+      { pathFragment: join('docs', 'stats', 'index.html'), messageFragment: 'missing og:title', label: 'missing og:title' },
+      { pathFragment: join('docs', 'hooks', 'index.html'), messageFragment: 'no ld+json block found', label: 'no ld+json block' },
+      { pathFragment: join('docs', 'exit-codes', 'index.html'), messageFragment: 'does not parse', label: 'ld+json does not parse' },
+      { pathFragment: join('docs', 'transform', 'index.html'), messageFragment: 'missing text/markdown alternate', label: 'missing markdown alternate' },
+      { pathFragment: join('docs', 'install', 'index.html'), messageFragment: 'does not exist in dist', label: 'markdown alternate points nowhere' },
+      { pathFragment: join('docs', 'write', 'index.html'), messageFragment: 'does not resolve to a dist file', label: 'internal href unresolved' },
+      { pathFragment: 'CNAME', messageFragment: 'expected exactly', label: 'wrong CNAME content' },
+      { pathFragment: 'stray.png', messageFragment: 'PNG other than og.png', label: 'stray PNG' },
+      { pathFragment: '_shots', messageFragment: 'matches _shots', label: 'path containing _shots' },
+    ]);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
+  }
+
+  const noSitemap = mkdtempSync(join(tmpdir(), 'check-dist-self-test-no-sitemap-'));
+  try {
+    copyDist(dist, noSitemap);
+    rmSync(join(noSitemap, 'sitemap-index.xml'));
+    assertCaught(checkDist(noSitemap), [
+      { pathFragment: 'sitemap-index.xml', messageFragment: 'is missing', label: 'missing sitemap-index.xml' },
+    ]);
+  } finally {
+    rmSync(noSitemap, { recursive: true, force: true });
+  }
+
+  const noLlms = mkdtempSync(join(tmpdir(), 'check-dist-self-test-no-llms-'));
+  try {
+    copyDist(dist, noLlms);
+    rmSync(join(noLlms, 'llms.txt'));
+    assertCaught(checkDist(noLlms), [{ pathFragment: 'llms.txt', messageFragment: 'is missing', label: 'missing llms.txt' }]);
+  } finally {
+    rmSync(noLlms, { recursive: true, force: true });
   }
 }
 
