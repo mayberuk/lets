@@ -131,6 +131,7 @@ code, pre, kbd, samp { font-family: var(--mono); font-variant-ligatures: none; }
 .drag-ok > .hb { cursor: grab; }
 body.dragging, body.dragging * { cursor: grabbing !important; user-select: none; }
 .win.is-min { visibility: hidden; }
+.win.is-shut { display: none; }
 .win.is-max {
   position: fixed !important; z-index: 80; inset: calc(var(--panel-h) + 12px) 24px 58px 124px;
   translate: none !important; display: flex; flex-direction: column; margin: 0 !important; width: auto !important;

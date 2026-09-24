@@ -238,7 +238,7 @@ html:not(.js) .cmp-panel + .cmp-panel { border-top: 1px solid var(--hair); }
 .status { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 7px 14px; border-top: 1px solid var(--hair); font-size: 12.5px; color: var(--ink-2); background: var(--gutter); border-radius: 0 0 9px 9px; }
 .min-note { display: none; }
 .win.is-min + .min-note, .win.is-shut + .min-note { display: flex; }
-.win.is-shut { display: none; }
+
 .min-note { align-items: center; gap: 10px; margin-top: 12px; padding: 10px 14px; border-radius: 10px; border: 1px dashed color-mix(in srgb, var(--ink) 35%, transparent); background: var(--label-bg); color: var(--label); font-size: 14px; position: relative; z-index: 3; }
 .win.is-min + .min-note { position: absolute; top: 0; left: 0; margin: 0; }
 

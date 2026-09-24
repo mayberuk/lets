@@ -110,7 +110,7 @@
   .prose pre:not(.cmd), .prose pre.astro-code { font-size: 12.5px; }
   .code-copy { position: static; display: flex; width: max-content; margin: 0 0 6px auto; opacity: 1; }
   .tbl-wrap { overflow: visible; border: 0; }
-  .prose thead { display: none; }
+  .prose thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .prose table, .prose tbody, .prose tr, .prose td { display: block; width: 100%; }
   .prose tr { border: 1px solid var(--hair); border-radius: 8px; margin-top: 8px; padding: 8px 12px; }
   .prose td { border: 0; padding: 3px 0; }

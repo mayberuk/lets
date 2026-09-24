@@ -45,7 +45,7 @@ export function iconFor(id: string) {
   return i ? $('svg', i).getBoundingClientRect() : null;
 }
 
-function note(w: HTMLElement) { const n = sideOf(w) && w.nextElementSibling; return n && n.classList.contains('min-note') ? n : null; }
+function note(w: HTMLElement) { const n = w.nextElementSibling; return n && n.classList.contains('min-note') ? n : null; }
 function setNote(w: HTMLElement, verb: string) {
   const n = note(w);
   if (!n) return;
@@ -75,6 +75,7 @@ export function minimise(w: HTMLElement) {
   toward(w, iconFor(w.dataset.win!), true, () => {
     w.classList.add('is-min'); setNote(w, 'minimised'); syncTasks();
     say(w.dataset.title + ' minimised.');
+    const n = note(w); if (n) $('button', n).focus();
   });
 }
 

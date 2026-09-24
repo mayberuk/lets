@@ -124,7 +124,7 @@ ERROR_CODE=ambiguous
 Append a TOML array-of-tables entry, formatting preserved:
 
 ```console
-$ lets transform Cargo.toml --append name b path src/b.rs
+$ lets transform Cargo.toml --append 'bin[]={"name":"b","path":"src/b.rs"}'
 ── Cargo.toml · toml · append bin · line 8
  5 	name = "a"
  6 	path = "src/a.rs"
