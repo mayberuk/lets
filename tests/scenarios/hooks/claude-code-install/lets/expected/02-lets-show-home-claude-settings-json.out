@@ -1,4 +1,4 @@
-── [HOME]/.claude/settings.json  (1-36 of 36) · sha:37123e444cc6
+── [HOME]/.claude/settings.json  (1-36 of 36) · sha:58dceaa8da90
  1 	{
  2 	  "hooks": {
  3 	    "PreToolUse": [
@@ -7,7 +7,7 @@
  6 	        "hooks": [
  7 	          {
  8 	            "type": "command",
- 9 	            "command": "lets hook classify"
+ 9 	            "command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"
 10 	          }
 11 	        ]
 12 	      }

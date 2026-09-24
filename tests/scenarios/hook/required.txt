@@ -1,2 +1,3 @@
-backstop-blocks-bare-read
+backstop-rewrites-bare-read
+backstop-blocks-bare-read-on-codex
 backstop-allows-piped-read

@@ -1,0 +1,7 @@
+── c.json · json · set a.b.c · line 3
+1 	{
+2 	  "a.b": {
+3 	    "c": 2
+4 	  }
+5 	}
+── check: json ok · sha:834a82dc4722→834a82dc4722

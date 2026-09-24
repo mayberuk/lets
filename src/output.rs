@@ -814,11 +814,32 @@ fn push_lines(out: &mut String, lines: &[Line], width: usize, opts: RenderOption
         } else if line.marker == Marker::Gap {
             write!(out, "{:>width$}{marker}\t{text}", "").unwrap();
         } else {
-            let number = line.number;
-            write!(out, "{number:>width$}{marker}\t{text}").unwrap();
+            push_padded(out, line.number, width);
+            out.push(marker);
+            out.push('\t');
+            out.push_str(text);
         }
         out.push('\n');
     }
+}
+
+fn push_padded(out: &mut String, n: usize, width: usize) {
+    let mut digits = [0u8; 20];
+    let mut at = digits.len();
+    let mut rest = n;
+    loop {
+        at -= 1;
+        digits[at] = b'0' + u8::try_from(rest % 10).expect("a decimal digit");
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    let len = digits.len() - at;
+    for _ in len..width {
+        out.push(' ');
+    }
+    out.push_str(std::str::from_utf8(&digits[at..]).expect("ASCII digits"));
 }
 
 fn push_count_rows(out: &mut String, rows: &[CountRow], opts: RenderOptions) {

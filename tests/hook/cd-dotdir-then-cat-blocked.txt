@@ -1,0 +1,9 @@
+COMMAND
+cd .git && cat HEAD
+===END===
+VERDICT block
+REASON `cd .git` kept; lets show reads several files and ranges in one call.
+REPLACEMENT
+run: cd .git && lets show HEAD
+===END===
+COMPARE read

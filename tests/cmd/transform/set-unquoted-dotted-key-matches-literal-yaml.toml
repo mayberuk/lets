@@ -1,0 +1,4 @@
+# The YAML counterpart of set-unquoted-dotted-key-matches-literal-json: no nested `editor` mapping
+# exists, so the unquoted `editor.formatOnSave` resolves to the literal scalar key of that name.
+bin.name = "lets"
+args = ["transform", "c.yaml", "--set", "editor.formatOnSave=true"]

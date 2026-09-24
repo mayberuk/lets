@@ -1,0 +1,9 @@
+COMMAND
+cat v:2
+===END===
+VERDICT rewrite
+REASON lets show reads several files and ranges in one call.
+REPLACEMENT
+run: lets show v:2 --all
+===END===
+COMPARE read

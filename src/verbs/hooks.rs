@@ -63,8 +63,70 @@ Exit codes:
 
 Keep using Read for images and PDFs, and plain Bash for work that is not reading, searching or editing files: git, builds, tests, `ls`."#;
 
-/// Shared by both installers, so `is_classify` has one command to recognise.
+/// Codex's entry stays bare: whether Codex runs a hook command through a shell is unverified.
 pub(crate) const CLASSIFY_COMMAND: &str = "lets hook classify";
+
+/// Claude Code reports a hook command that cannot run as an error on every Bash call, so like the
+/// `SessionStart` command this exits 0 and prints nothing while `lets` is missing.
+const GUARDED_CLASSIFY_COMMAND: &str =
+    "if command -v lets >/dev/null 2>&1; then lets hook classify; fi";
+
+/// The same guard for an install that named `lets` by absolute path, which keeps that path.
+fn classify_guarded_at(program: &str) -> String {
+    let program = quote_path(program);
+    format!("if [ -x {program} ]; then {program} hook classify; fi")
+}
+
+fn quote_path(path: &str) -> String {
+    if path
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"/._+-".contains(&byte))
+    {
+        path.to_owned()
+    } else {
+        format!("'{}'", path.replace('\'', r"'\''"))
+    }
+}
+
+/// The program any installed classify command runs, guarded or not.
+fn classify_program(command: &str) -> Option<String> {
+    if command == GUARDED_CLASSIFY_COMMAND {
+        return Some("lets".to_owned());
+    }
+    if runs_lets_with(command, &["hook", "classify"]) {
+        return command.split_whitespace().next().map(str::to_owned);
+    }
+    let (quoted, rest) = command.strip_prefix("if [ -x ")?.split_once(" ]; then ")?;
+    if rest != format!("{quoted} hook classify; fi") {
+        return None;
+    }
+    let program = match quoted
+        .strip_prefix('\'')
+        .and_then(|inner| inner.strip_suffix('\''))
+    {
+        Some(inner) => inner.replace(r"'\''", "'"),
+        None => quoted.to_owned(),
+    };
+    let path = Path::new(&program);
+    let named = quote_path(&program) == quoted
+        && path.is_absolute()
+        && path.file_name() == Some("lets".as_ref());
+    named.then_some(program)
+}
+
+/// A path that is not an executable file keeps the guard false and the hook silently off, so
+/// only an executable one is kept; any other falls back to the `PATH` lookup.
+fn keep_absolute_path(existing: &str) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    classify_program(existing)
+        .filter(|program| {
+            Path::new(program).is_absolute()
+                && std::fs::metadata(program).is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                })
+        })
+        .map(|program| classify_guarded_at(&program))
+}
 
 /// An earlier install's form, kept only so `is_guide` can upgrade it.
 const GUIDE_ONLY_COMMAND: &str = "if command -v lets >/dev/null 2>&1; then lets guide; fi";
@@ -134,7 +196,7 @@ fn subagent_start_command() -> String {
 }
 
 pub(crate) fn is_classify(command: &str) -> bool {
-    runs_lets_with(command, &["hook", "classify"])
+    classify_program(command).is_some()
 }
 
 /// Every earlier `SessionStart` form counts as ours, so an upgrade replaces it instead of adding a
@@ -221,20 +283,23 @@ fn claude_code_entries<'a>(
         HookEntry {
             event: "PreToolUse",
             matcher: Some("Bash"),
-            command: CLASSIFY_COMMAND,
+            command: GUARDED_CLASSIFY_COMMAND,
             is_ours: is_classify,
+            carry_over: keep_absolute_path,
         },
         HookEntry {
             event: "SubagentStart",
             matcher: None,
             command: subagent_command,
             is_ours: is_subagent_start,
+            carry_over: settings::nothing_to_carry_over,
         },
         HookEntry {
             event: "SessionStart",
             matcher: Some(SESSION_START_MATCHER),
             command: session_command,
             is_ours: is_guide,
+            carry_over: settings::nothing_to_carry_over,
         },
     ]
 }
@@ -418,7 +483,10 @@ mod tests {
         assert_eq!(
             settings["hooks"]["PreToolUse"],
             serde_json::json!([
-                {"matcher": "Bash", "hooks": [{"type": "command", "command": "lets hook classify"}]}
+                {"matcher": "Bash", "hooks": [{
+                    "type": "command",
+                    "command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"
+                }]}
             ])
         );
         assert_eq!(
@@ -603,6 +671,210 @@ mod tests {
         assert!(!is_classify("echo lets hook classify disabled"));
         assert!(!is_classify("lets hook classify --verbose"));
         assert!(!is_classify("notlets hook classify"));
+    }
+
+    const GUARDED: &str = "if command -v lets >/dev/null 2>&1; then lets hook classify; fi";
+    const GUARDED_AT_PATH: &str =
+        "if [ -x /usr/local/bin/lets ]; then /usr/local/bin/lets hook classify; fi";
+
+    #[test]
+    fn both_guarded_classify_forms_are_recognised_as_ours_and_near_misses_are_not() {
+        assert!(is_classify(GUARDED));
+        assert!(is_classify(GUARDED_AT_PATH));
+        assert!(is_classify(
+            "if [ -x '/opt/my $dir/lets' ]; then '/opt/my $dir/lets' hook classify; fi"
+        ));
+        assert!(!is_classify(
+            "if [ -x /usr/local/bin/lets ]; then /opt/bin/lets hook classify; fi"
+        ));
+        assert!(!is_classify(
+            "if [ -x /usr/bin/notlets ]; then /usr/bin/notlets hook classify; fi"
+        ));
+        assert!(!is_classify(
+            "if [ -x bin/lets ]; then bin/lets hook classify; fi"
+        ));
+        assert!(!is_classify(
+            "if command -v lets >/dev/null 2>&1; then lets hook classify --verbose; fi"
+        ));
+        assert!(!is_guide(GUARDED));
+    }
+
+    fn settings_with_pre_tool_use(sandbox: &Sandbox, command: &str) {
+        std::fs::create_dir_all(sandbox.claude("")).unwrap();
+        let entry = serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": command}]
+        });
+        std::fs::write(
+            sandbox.claude("settings.json"),
+            serde_json::json!({"hooks": {"PreToolUse": [entry]}}).to_string(),
+        )
+        .unwrap();
+    }
+
+    fn pre_tool_use_commands(sandbox: &Sandbox) -> Vec<String> {
+        sandbox.settings_json()["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|entry| entry["hooks"].as_array().unwrap().clone())
+            .map(|hook| hook["command"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn installing_twice_over_the_unguarded_entry_leaves_one_guarded_entry() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        settings_with_pre_tool_use(&sandbox, "lets hook classify");
+
+        let first = sandbox.install(Format::Text);
+        let second = sandbox.install(Format::Text);
+
+        assert!(body_text(&first).starts_with("updated the PreToolUse hook\n"));
+        assert!(body_text(&second).starts_with("the PreToolUse hook was already installed\n"));
+        assert_eq!(pre_tool_use_commands(&sandbox), [GUARDED]);
+    }
+
+    /// A `lets` outside `PATH` with `mode`, named by absolute path.
+    fn lets_at(dir: &TempDir, mode: u32) -> String {
+        use std::os::unix::fs::PermissionsExt as _;
+        let lets = dir.path().join("lets");
+        std::fs::write(&lets, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&lets, std::fs::Permissions::from_mode(mode)).unwrap();
+        lets.to_str().unwrap().to_owned()
+    }
+
+    #[test]
+    fn an_install_that_named_an_executable_absolute_path_keeps_it_inside_the_guard() {
+        let dir = TempDir::new().unwrap();
+        let program = lets_at(&dir, 0o755);
+        let guarded_at = format!("if [ -x {program} ]; then {program} hook classify; fi");
+        for existing in [format!("{program} hook classify"), guarded_at.clone()] {
+            let sandbox = Sandbox::new().with_lets_on_path(true);
+            settings_with_pre_tool_use(&sandbox, &existing);
+
+            sandbox.install(Format::Text);
+            let again = sandbox.install(Format::Text);
+
+            assert_eq!(pre_tool_use_commands(&sandbox), [guarded_at.as_str()]);
+            assert!(
+                body_text(&again).starts_with("the PreToolUse hook was already installed\n"),
+                "{existing}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_absolute_path_that_no_longer_runs_lets_is_replaced_by_the_path_lookup() {
+        let dir = TempDir::new().unwrap();
+        let gone = dir.path().join("gone/lets").to_str().unwrap().to_owned();
+        let not_executable = lets_at(&dir, 0o644);
+        for program in [gone, not_executable] {
+            let unguarded = format!("{program} hook classify");
+            let guarded_at = format!("if [ -x {program} ]; then {program} hook classify; fi");
+            for existing in [unguarded, guarded_at] {
+                let sandbox = Sandbox::new().with_lets_on_path(true);
+                settings_with_pre_tool_use(&sandbox, &existing);
+
+                let first = sandbox.install(Format::Text);
+
+                assert_eq!(pre_tool_use_commands(&sandbox), [GUARDED], "{existing}");
+                assert!(
+                    body_text(&first).starts_with("updated the PreToolUse hook\n"),
+                    "{existing}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_install_that_named_lets_by_a_relative_path_gets_the_path_lookup_guard() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        settings_with_pre_tool_use(&sandbox, "bin/lets hook classify");
+
+        sandbox.install(Format::Text);
+
+        assert_eq!(pre_tool_use_commands(&sandbox), [GUARDED]);
+    }
+
+    #[test]
+    fn uninstall_removes_the_unguarded_and_both_guarded_forms() {
+        for existing in [
+            "lets hook classify",
+            "/usr/local/bin/lets hook classify",
+            GUARDED,
+            GUARDED_AT_PATH,
+        ] {
+            let sandbox = Sandbox::new();
+            settings_with_pre_tool_use(&sandbox, existing);
+
+            let outcome = sandbox.uninstall(Format::Text);
+
+            assert_eq!(
+                body_text(&outcome),
+                "removed the PreToolUse hook\n",
+                "{existing}"
+            );
+            assert_eq!(sandbox.settings_json(), serde_json::json!({}), "{existing}");
+        }
+    }
+
+    fn run_guarded(command: &str, path: &std::path::Path) -> std::process::Output {
+        use std::io::Write as _;
+        let mut child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(command)
+            .env("PATH", path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // A shell that never starts `lets` exits without reading, so the write may meet EPIPE.
+        let _ = child.stdin.take().unwrap().write_all(b"{\"event\":1}");
+        child.wait_with_output().unwrap()
+    }
+
+    #[test]
+    fn a_guarded_classify_command_is_silent_and_exits_zero_when_lets_is_missing() {
+        let empty = TempDir::new().unwrap();
+        let missing_path = format!(
+            "if [ -x {0}/lets ]; then {0}/lets hook classify; fi",
+            empty.path().display()
+        );
+
+        for command in [GUARDED, missing_path.as_str()] {
+            let output = run_guarded(command, empty.path());
+
+            assert_eq!(output.status.code(), Some(0), "{command}");
+            assert!(output.stdout.is_empty(), "{command}: {:?}", output.stdout);
+            assert!(output.stderr.is_empty(), "{command}: {:?}", output.stderr);
+        }
+    }
+
+    #[test]
+    fn a_guarded_classify_command_hands_its_stdin_to_lets_hook_classify() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = TempDir::new().unwrap();
+        let lets = dir.path().join("lets");
+        // Builtins only: `PATH` holds nothing but this directory.
+        std::fs::write(
+            &lets,
+            b"#!/bin/sh\necho \"$@\"\nIFS= read -r line\nprintf '%s' \"$line\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&lets, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let at_path = classify_guarded_at(lets.to_str().unwrap());
+
+        for command in [GUARDED, at_path.as_str()] {
+            let output = run_guarded(command, dir.path());
+
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "hook classify\n{\"event\":1}",
+                "{command}"
+            );
+        }
     }
 
     #[test]

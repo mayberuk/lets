@@ -1,0 +1,7 @@
+# spec.md § transform, literal keys: the same literal-vs-nested resolution one level under the
+# root, not just at the top: with no nested a.editor object to compete, a.editor.formatOnSave
+# resolves to a's existing literal key of that name.
+# set-dotted-key-below-root-nested-only-json, -both-ambiguous-json and
+# -neither-creates-nested-json are the other three readings of the same document shape.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "a.editor.formatOnSave=true"]

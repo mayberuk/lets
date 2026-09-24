@@ -22,6 +22,7 @@ const CLASSIFY_ENTRY: HookEntry<'static> = HookEntry {
     matcher: Some("Bash"),
     command: CLASSIFY_COMMAND,
     is_ours: is_classify,
+    carry_over: settings::nothing_to_carry_over,
 };
 
 fn report(format: Format, status: &InstallStatus) -> String {

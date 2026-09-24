@@ -1,8 +1,8 @@
-── c.json · json · set editor.formatOnSave · line 5
-2 	  "editor.formatOnSave": false,
-3 	  "editor": {
-4~	    "tabSize": 2,
-5+	    "formatOnSave": true
-6 	  }
-7 	}
+── c.json · json · set editor.formatOnSave · line 4
+1 	{
+2 	  "editor": {
+3~	    "tabSize": 2,
+4+	    "formatOnSave": true
+5 	  }
+6 	}
 ── check: json ok · sha:[..]→[..]

@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use clap::error::ErrorKind;
 use lets::cli::{Cli, Global, Verb};
 use lets::error::Error;

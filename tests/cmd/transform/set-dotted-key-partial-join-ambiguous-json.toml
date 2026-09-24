@@ -1,0 +1,8 @@
+# spec.md § transform, literal keys: a.b.c has two competing readings that split at different
+# dots — nested a -> "b.c" and literal "a.b" -> c — and both exist, so it is ambiguous rather than
+# silently picking one. set-dotted-key-partial-join-resolves-json is the case where only one exists.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "a.b.c=3"]
+
+[status]
+code = 2

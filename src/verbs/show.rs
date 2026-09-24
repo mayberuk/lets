@@ -109,7 +109,8 @@ fn resolve(
     fs::guard_scope(&parsed.path, global.allow_outside)?;
     let file =
         read_text(&parsed.path, global.max_file_bytes).map_err(|error| mistyped(raw, error))?;
-    let total = file.content.lines().count();
+    let newlines = count_byte(file.content.as_bytes(), b'\n');
+    let total = newlines + usize::from(!file.content.is_empty() && !file.content.ends_with('\n'));
 
     // `window::Bounds` has no zero-line range, so an empty file gets a bare header and no span.
     if total == 0 && matches!(parsed.kind, target::Kind::Whole) {
@@ -185,7 +186,7 @@ fn resolve(
         window: truncation,
         not_shown: truncation.map(|_| (bounds.end + 1, total)),
         resolver,
-        crlf: mostly_crlf(&file.content),
+        crlf: mostly_crlf(&file.content, newlines),
         lossy_lines: file
             .lossy_lines
             .into_iter()
@@ -209,10 +210,25 @@ fn mistyped(raw: &str, error: Error) -> Error {
 }
 
 /// `str::lines` drops the `\r` of a CRLF ending, so the header is the only place it shows.
-fn mostly_crlf(content: &str) -> bool {
+fn mostly_crlf(content: &str, lf: usize) -> bool {
+    if count_byte(content.as_bytes(), b'\r') == 0 {
+        return false;
+    }
     let crlf = content.matches("\r\n").count();
-    let lf = content.bytes().filter(|byte| *byte == b'\n').count();
     crlf > lf - crlf
+}
+
+/// A `u8` lane per byte, summed per 255-byte chunk so no lane overflows: LLVM vectorises it.
+fn count_byte(hay: &[u8], needle: u8) -> usize {
+    hay.chunks(255)
+        .map(|chunk| {
+            usize::from(
+                chunk
+                    .iter()
+                    .fold(0u8, |sum, byte| sum + u8::from(*byte == needle)),
+            )
+        })
+        .sum()
 }
 
 struct Text {

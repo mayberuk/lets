@@ -1,6 +1,6 @@
 # Stack
 
-One language, one toolchain, sixteen crates plus the grammar set. Each row was checked against
+One language, one toolchain, seventeen crates plus the grammar set. Each row was checked against
 crates.io; a version here is a target to verify with ctx7, not a fact.
 
 | Job | Use | Not |
@@ -20,6 +20,7 @@ crates.io; a version here is a target to verify with ctx7, not a fact.
 | Tests | `trycmd`, `proptest`, `insta`, `cargo-nextest` | — |
 | Bench | `divan` with `AllocProfiler` | `criterion` |
 | Release | `dist` on native runners per OS and arch; musl on Linux | cross-compilation |
+| Allocator, musl builds only | `mimalloc`, `default-features = false`, under `cfg(target_env = "musl")` | musl's own allocator (measured 1.3–1.8× slower on `find` and `show`), `jemalloc` |
 
 Not taken, and why: `anyhow` (closed error set), any colour crate (the contract has no colour),
 `similar` (edits render as marked lines, not diffs), `rayon` (the corpus median file is 87 lines;
@@ -28,7 +29,7 @@ parallel search is a v2 measurement), `unicode-normalization` (the normalise tab
 ## Always
 - Ground library code with `npx ctx7@latest library` then `docs` before writing it.
 - Commit `Cargo.lock`. Bump a version in its own commit.
-- Keep `scripts/deps-gate.sh` green: 17 direct dependencies, each crate one entry, every
+- Keep `scripts/deps-gate.sh` green: 18 direct dependencies, each crate one entry, every
   `tree-sitter-*` grammar collapsed to one. The markdown grammar's `parser` feature stays off.
 - Keep `cargo-deny` green: MIT/Apache/BSD licences only, advisories, `multiple-versions = "deny"`.
 
@@ -46,5 +47,5 @@ toml_edit = "0.25"
 toml = "0.9"
 ```
 
-Why: sixteen crates is a number one person can hold in their head, and the gate makes drift
+Why: seventeen crates is a number one person can hold in their head, and the gate makes drift
 impossible rather than discouraged.

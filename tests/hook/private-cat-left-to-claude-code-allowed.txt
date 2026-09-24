@@ -1,0 +1,4 @@
+COMMAND
+cat private/notes.txt
+===END===
+VERDICT allow

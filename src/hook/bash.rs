@@ -7,28 +7,54 @@ use std::sync::LazyLock;
 use regex::Regex;
 use tree_sitter::{Node, Parser};
 
+use super::permissions::{Access, Rules, Sources};
 use super::{Verdict, bre};
 use crate::grammars::{self, Language};
 
-#[derive(Debug, PartialEq, Eq)]
+/// Each variant keeps the words it names as paths, which Claude Code's own rules are checked
+/// against before any `lets` command is offered for them.
+#[derive(Debug)]
 enum Finding {
-    Show(String),
+    /// `extent` is `None` when a rewrite may not stand in for the read; `source` is `None` when the
+    /// file comes from another command's output.
+    Show {
+        target: String,
+        extent: Option<Extent>,
+        source: Option<Word>,
+    },
     Find {
         flags: Vec<String>,
         pattern: String,
         paths: Vec<String>,
+        operands: Vec<Word>,
         translated: bool,
     },
     /// Always rendered with `--all`: its only source is `sed -i 's/…/…/g'`.
     Edit {
         paths: Vec<String>,
+        operands: Vec<Word>,
         old: String,
         new: String,
     },
     Write {
         path: String,
+        operand: Word,
     },
 }
+
+/// A rewrite runs unseen, so its `lets show` prints every line the read would have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Extent {
+    /// Needs `--all`: a bare `lets show` of a file stops at its window.
+    Whole,
+    /// A line or range target prints exactly those lines, and exits 1 when `first` is past the end.
+    Lines { first: usize, last: usize },
+}
+
+/// `lets show`'s `--max-bytes` and `--max-file-bytes` defaults, which a rewrite runs under; a test
+/// pins both to the parsed CLI.
+const SHOW_MAX_BYTES: usize = 65_536;
+const SHOW_MAX_FILE_BYTES: u64 = 8_388_608;
 
 /// Flags that consume the next argument, so their value is never read as a path.
 const COUNT_FLAGS: &[&str] = &["-n", "-c", "--lines", "--bytes"];
@@ -54,7 +80,9 @@ const XARGS_FLAGS: &[&str] = &[
     "--delimiter",
 ];
 
-pub fn classify_command(command: &str, cwd: &str) -> Verdict {
+/// `claude_code` is set for Claude Code, whose `updatedInput` a rewrite is written for and whose
+/// settings hold the rules a rewrite or a suggested command must not get around.
+pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>) -> Verdict {
     let cwd = normalize(Path::new(cwd));
     // A relative cwd would make every path look in-tree.
     if !cwd.is_absolute() {
@@ -95,13 +123,16 @@ pub fn classify_command(command: &str, cwd: &str) -> Verdict {
     };
 
     let mut findings = Vec::new();
-    for Statement { node, redirected } in statements {
-        match redirected {
+    let mut whole = true;
+    for Statement { node, redirected } in &statements {
+        let before = findings.len();
+        let replaced = match redirected {
             Some(owner) => {
-                classify_redirected(owner, Some(node), command, dirs, None, &mut findings);
+                classify_redirected(*owner, Some(*node), command, dirs, None, &mut findings)
             },
-            None => classify_displayed(node, command, dirs, None, &mut findings),
-        }
+            None => classify_displayed(*node, command, dirs, None, &mut findings),
+        };
+        whole &= replaced && findings.len() > before;
     }
     let (mut notes, prefix) = match cd {
         Some(operand) => (
@@ -117,6 +148,26 @@ pub fn classify_command(command: &str, cwd: &str) -> Verdict {
         })
     }) {
         notes.push("grep pattern translated to lets regex".to_owned());
+    }
+    if findings.is_empty() {
+        return Verdict::Allow;
+    }
+    if let Some(sources) = claude_code
+        && left_to_claude_code(&findings, dirs, sources)
+    {
+        return Verdict::Allow;
+    }
+    if claude_code.is_some()
+        && whole
+        && sequential_chain(&statements, command)
+        && let Some(replacement) = rewrite(&findings, &prefix, dirs)
+    {
+        let mut summary: Vec<&str> = notes.iter().map(String::as_str).collect();
+        summary.push(SHOW_CLAUSE);
+        return Verdict::Rewrite {
+            reason: format!("{}.\nran instead: {replacement}", summary.join("; ")),
+            command: replacement,
+        };
     }
     match reason(&findings, &notes, &prefix) {
         Some(reason) => Verdict::Block { reason },
@@ -179,8 +230,7 @@ fn leading_cd<'t>(
 
     if let Some(next) = statements.first() {
         let gap = src.get(cd.end_byte()..next.node.start_byte())?;
-        let operator = gap.trim();
-        if !(operator == "&&" || operator == ";" || operator.is_empty() && gap.contains('\n')) {
+        if !runs_next(gap) {
             return None;
         }
     }
@@ -200,7 +250,169 @@ fn leading_cd<'t>(
     if !base.starts_with(cwd) {
         return None;
     }
+    // `cd` follows a symlink, so where the reads then happen is decided on the real directory.
+    if let Ok(real) = std::fs::canonicalize(&base)
+        && !std::fs::canonicalize(cwd).is_ok_and(|root| real.starts_with(root))
+    {
+        return None;
+    }
     Some((base, Some(shell_quote(&operand.text)), statements))
+}
+
+/// `&&`, `;` or a newline: the next statement runs after this one, as a rewrite's one call would.
+fn runs_next(gap: &str) -> bool {
+    let operator = gap.trim();
+    operator == "&&" || operator == ";" || operator.is_empty() && gap.contains('\n')
+}
+
+/// `||` or a trailing `&` changes what runs or when, which one `lets show` cannot say.
+fn sequential_chain(statements: &[Statement], src: &str) -> bool {
+    let end = |statement: &Statement| statement.redirected.unwrap_or(statement.node).end_byte();
+    let joined = statements.windows(2).all(|pair| {
+        src.get(end(&pair[0])..pair[1].node.start_byte())
+            .is_some_and(runs_next)
+    });
+    let tail = statements
+        .last()
+        .and_then(|last| src.get(end(last)..))
+        .is_some_and(|tail| matches!(tail.trim(), "" | ";"));
+    joined && tail
+}
+
+/// One `lets show` for every read, or `None` when any finding needs a deny instead.
+fn rewrite(findings: &[Finding], prefix: &str, dirs: Dirs) -> Option<String> {
+    let mut targets: Vec<&str> = Vec::new();
+    let mut reads: Vec<(PathBuf, Extent)> = Vec::new();
+    let mut all = false;
+    for finding in findings {
+        let Finding::Show {
+            target,
+            extent: Some(extent),
+            source: Some(source),
+        } = finding
+        else {
+            return None;
+        };
+        all |= *extent == Extent::Whole;
+        if !targets.contains(&target.as_str()) {
+            targets.push(target);
+            reads.push((dirs.base.join(&source.text), *extent));
+        }
+    }
+    if targets.is_empty() || !shows_every_line(&reads, dirs.root) {
+        return None;
+    }
+    let flag = if all { " --all" } else { "" };
+    Some(format!("{prefix}lets show {}{flag}", targets.join(" ")))
+}
+
+/// Reads each file as `lets show` will, so a rewrite stands only when its output holds every line
+/// the read prints: under the byte cap, no line cut, no range starting past the end, and each file
+/// really inside the tree and not a dotfile, key or credential once symlinks resolve.
+fn shows_every_line(reads: &[(PathBuf, Extent)], root: &Path) -> bool {
+    let Ok(real_root) = std::fs::canonicalize(root) else {
+        return false;
+    };
+    let mut shown = 0;
+    for (path, extent) in reads {
+        let Ok(real) = std::fs::canonicalize(path) else {
+            return false;
+        };
+        match real.strip_prefix(&real_root) {
+            Ok(inside) if !is_sensitive(inside) => {},
+            _ => return false,
+        }
+        // Every line costs its bytes plus one and drops at most a `\r`, so a whole file costs at
+        // least half its size: past that, the read is skipped.
+        let may_fit = std::fs::metadata(&real).is_ok_and(|metadata| {
+            usize::try_from(metadata.len()).is_ok_and(|bytes| bytes / 2 <= SHOW_MAX_BYTES)
+        });
+        if *extent == Extent::Whole && !may_fit {
+            return false;
+        }
+        let Ok(file) = crate::fs::read(&real, SHOW_MAX_FILE_BYTES) else {
+            return false;
+        };
+        let total = file.content.lines().count();
+        let (first, last) = match *extent {
+            Extent::Whole => (1, total),
+            Extent::Lines { first, last } if first <= total => (first, last.min(total)),
+            Extent::Lines { .. } => return false,
+        };
+        for line in file.content.lines().skip(first - 1).take(last + 1 - first) {
+            shown += line.len() + 1;
+            if line.len() > crate::window::LINE_DISPLAY_CAP || shown > SHOW_MAX_BYTES {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// True when a path a finding names is one Claude Code's own deny or ask rules cover, or when those
+/// rules cannot be read: the original command then goes to Claude Code as it was typed.
+fn left_to_claude_code(findings: &[Finding], dirs: Dirs, sources: &Sources) -> bool {
+    let Some(rules) = Rules::load(sources, dirs.root) else {
+        return true;
+    };
+    if rules.is_empty() {
+        return false;
+    }
+    let covered = |word: &Word, access| {
+        if word.glob {
+            return glob_covered(word, dirs.base, &rules, access);
+        }
+        // `~` needs a home this classifier never resolves.
+        word.text.starts_with('~') || rules.cover(&normalize(&dirs.base.join(&word.text)), access)
+    };
+    // `xargs cat` names no file, so Claude Code's rules never bound it either.
+    findings.iter().any(|finding| match finding {
+        Finding::Show { source, .. } => source
+            .as_ref()
+            .is_some_and(|word| covered(word, Access::Read)),
+        Finding::Find { operands, .. } => operands.iter().any(|word| covered(word, Access::Read)),
+        Finding::Edit { operands, .. } => operands.iter().any(|word| covered(word, Access::Edit)),
+        Finding::Write { operand, .. } => covered(operand, Access::Edit),
+    })
+}
+
+/// Expands a glob in its last component as bash does, and is true when any match is covered or
+/// the glob is one this expansion cannot follow.
+fn glob_covered(word: &Word, base: &Path, rules: &Rules, access: Access) -> bool {
+    let path = Path::new(&word.text);
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
+    else {
+        return true;
+    };
+    // `[`, `{`, `(` and `**` need bash's full matcher; a `.`-led glob can reach `..`.
+    if name.contains(['[', '{', '(']) || name.contains("**") || name.starts_with('.') {
+        return true;
+    }
+    if parent
+        .to_str()
+        .is_none_or(|parent| parent.contains(GLOB_BYTES))
+    {
+        return true;
+    }
+    let directory = base.join(parent);
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return true;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        let Some(entry_name) = entry.file_name().to_str().map(str::to_owned) else {
+            return true;
+        };
+        if !entry_name.starts_with('.')
+            && wildcard_matches(name, &entry_name)
+            && rules.cover(&normalize(&directory.join(&entry_name)), access)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Searches substitutions and compound bodies too: a `cd` there still moves later statements.
@@ -255,23 +467,24 @@ fn top_level_statements(node: Node) -> Vec<Node> {
     }
 }
 
+/// True when the findings it adds stand in for all of `node`: nothing it runs is left out.
 fn classify_displayed(
     node: Node,
     src: &str,
     dirs: Dirs,
     producer: Option<&str>,
     findings: &mut Vec<Finding>,
-) {
+) -> bool {
     match node.kind() {
         "pipeline" => {
             let mut cursor = node.walk();
             let stages: Vec<Node> = node.children(&mut cursor).filter(Node::is_named).collect();
             if let Some(finding) = cat_head_pipeline(&stages, src, dirs) {
                 findings.push(finding);
-                return;
+                return true;
             }
             let Some((displayed, upstream)) = stages.split_last() else {
-                return;
+                return false;
             };
             let upstream = upstream
                 .iter()
@@ -279,6 +492,7 @@ fn classify_displayed(
                 .collect::<Vec<_>>()
                 .join(" | ");
             classify_displayed(*displayed, src, dirs, Some(&upstream), findings);
+            false
         },
         "redirected_statement" => classify_redirected(
             node,
@@ -288,12 +502,47 @@ fn classify_displayed(
             producer,
             findings,
         ),
-        "command" => classify_simple(node, src, dirs, producer, findings),
-        _ => {},
+        "command" => {
+            classify_simple(node, src, dirs, producer, findings);
+            is_plain(node)
+        },
+        _ => false,
     }
 }
 
-/// `body` differs from `node`'s own body only in the list shape `Statement` describes.
+/// A prefix assignment or redirect changes what the command does, and a rewrite would drop it.
+fn is_plain(command: Node) -> bool {
+    let mut cursor = command.walk();
+    let arguments = command
+        .children_by_field_name("argument", &mut cursor)
+        .count();
+    command.named_child_count() == arguments + 1
+}
+
+/// Dropping `2>/dev/null` or `2>&1` only lets stderr reach the tool result.
+fn only_moves_stderr(redirect: Node, src: &str) -> bool {
+    if redirect.kind() != "file_redirect" {
+        return false;
+    }
+    let field = |name| {
+        redirect
+            .child_by_field_name(name)
+            .and_then(|child| text(child, src))
+    };
+    let mut cursor = redirect.walk();
+    let operator = redirect
+        .children(&mut cursor)
+        .find(|child| !child.is_named())
+        .and_then(|child| text(child, src));
+    field("descriptor") == Some("2")
+        && matches!(
+            (operator, field("destination")),
+            (Some(">"), Some("/dev/null")) | (Some(">&"), Some("1"))
+        )
+}
+
+/// `body` differs from `node`'s own body only in the list shape `Statement` describes. True as
+/// `classify_displayed`'s is.
 fn classify_redirected(
     node: Node,
     body: Option<Node>,
@@ -301,7 +550,7 @@ fn classify_redirected(
     dirs: Dirs,
     producer: Option<&str>,
     findings: &mut Vec<Finding>,
-) {
+) -> bool {
     let redirects = collect_redirects(node);
     let heredoc = redirects
         .iter()
@@ -319,25 +568,30 @@ fn classify_redirected(
             if replaceable {
                 findings.push(Finding::Write {
                     path: shell_quote(&destination.text),
+                    operand: destination,
                 });
             }
         }
-        return;
+        return false;
     }
 
     // Heredoc-to-stdin is exempt outright, before any command name is looked at.
     if heredoc {
-        return;
+        return false;
     }
     if redirects
         .iter()
         .any(|redirect| hides_stdout(*redirect, src))
     {
-        return;
+        return false;
     }
-    if let Some(body) = body {
-        classify_displayed(body, src, dirs, producer, findings);
-    }
+    let Some(body) = body else {
+        return false;
+    };
+    classify_displayed(body, src, dirs, producer, findings)
+        && redirects
+            .iter()
+            .all(|redirect| only_moves_stderr(*redirect, src))
 }
 
 /// `cat <<'EOF' > f` nests the file redirect inside the heredoc node, unlike `cat > f <<'EOF'`.
@@ -438,11 +692,13 @@ fn classify_simple(
     match head {
         "cat" => classify_cat(&words, &arguments, dirs, findings),
         "head" | "tail" => {
-            // `show` has no byte or follow mode.
-            if arguments
-                .iter()
-                .any(|a| a.starts_with("-c") || a.starts_with("--bytes"))
-            {
+            // `show` has no byte, follow or NUL-record mode.
+            if arguments.iter().any(|a| {
+                a.starts_with("-c")
+                    || a.starts_with("--bytes")
+                    || a.starts_with("--zero")
+                    || a.starts_with('-') && !a.starts_with("--") && a.contains('z')
+            }) {
                 return;
             }
             if head == "tail"
@@ -457,20 +713,27 @@ fn classify_simple(
             if head == "tail" && count.is_some() {
                 return;
             }
-            let suffix = match count {
-                None => String::new(),
+            // Without a count, the whole-file replacement is not the ten lines they print.
+            let (suffix, extent) = match count {
+                None => (String::new(), None),
                 // `head -n -5` (all but the last 5) has no range form.
                 Some(value) => {
                     let Some(lines) = number(value).filter(|lines| *lines > 0) else {
                         return;
                     };
-                    format!(":1-{lines}")
+                    (
+                        format!(":1-{lines}"),
+                        Some(Extent::Lines {
+                            first: 1,
+                            last: lines,
+                        }),
+                    )
                 },
             };
             let Some(operands) = operands(&words, COUNT_FLAGS) else {
                 return;
             };
-            show(&operands, &suffix, dirs, findings);
+            show(&operands, &suffix, extent, dirs, findings);
         },
         "sed" => classify_sed(&words, &arguments, dirs, findings),
         "grep" | "rg" => classify_find(head, &words, &arguments, dirs, producer, findings),
@@ -484,7 +747,11 @@ fn classify_simple(
             let Some(producer) = producer else {
                 return;
             };
-            findings.push(Finding::Show(format!("$({producer})")));
+            findings.push(Finding::Show {
+                target: format!("$({producer})"),
+                extent: None,
+                source: None,
+            });
         },
         _ => {},
     }
@@ -554,6 +821,7 @@ fn classify_find(
         translated: pattern != *written,
         pattern,
         paths,
+        operands: candidates.iter().map(|word| (*word).clone()).collect(),
     });
 }
 
@@ -564,7 +832,7 @@ fn classify_cat(words: &[Word], arguments: &[&str], dirs: Dirs, findings: &mut V
     let Some(operands) = operands(words, &[]) else {
         return;
     };
-    show(&operands, "", dirs, findings);
+    show(&operands, "", Some(Extent::Whole), dirs, findings);
 }
 
 fn cat_flags_are_display_neutral(arguments: &[&str]) -> bool {
@@ -629,10 +897,18 @@ fn cat_head_pipeline(stages: &[Node], src: &str, dirs: Dirs) -> Option<Finding> 
         .collect::<Option<Vec<Word>>>()?;
     let lines = head_sole_count(&texts(&head_words))?;
 
-    path_argument(path, &format!(":1-{lines}"), Some(dirs.base)).map(Finding::Show)
+    let target = path_argument(path, &format!(":1-{lines}"), Some(dirs.base))?;
+    Some(Finding::Show {
+        target,
+        extent: rewritable(path, dirs).then_some(Extent::Lines {
+            first: 1,
+            last: lines,
+        }),
+        source: Some((*path).clone()),
+    })
 }
 
-fn head_sole_count(arguments: &[&str]) -> Option<u64> {
+fn head_sole_count(arguments: &[&str]) -> Option<usize> {
     let lines = match arguments {
         [flag, value] if *flag == "-n" || *flag == "--lines" => number(value)?,
         [only] => match only
@@ -701,6 +977,7 @@ fn classify_sed_i(words: &[Word], dirs: Dirs, findings: &mut Vec<Finding>) {
     let Some((old, new)) = literal_substitution(&script.text, "g") else {
         return;
     };
+    let operands = paths.iter().map(|word| (*word).clone()).collect();
     let Some(paths) = paths
         .iter()
         .map(|path| path_argument(path, "", Some(dirs.base)))
@@ -708,7 +985,12 @@ fn classify_sed_i(words: &[Word], dirs: Dirs, findings: &mut Vec<Finding>) {
     else {
         return;
     };
-    findings.push(Finding::Edit { paths, old, new });
+    findings.push(Finding::Edit {
+        paths,
+        operands,
+        old,
+        new,
+    });
 }
 
 /// One file only: sed numbers lines across the concatenated stream of every file.
@@ -751,15 +1033,32 @@ fn classify_sed_n(words: &[Word], arguments: &[&str], dirs: Dirs, findings: &mut
     } else {
         sed_symbol_target(&script.text, &path.text)
     };
-    let suffix = match symbol {
-        Some(name) => format!("#{name}"),
-        None => match print_line(&script.text).or_else(|| print_range(&script.text)) {
-            Some(range) => format!(":{range}"),
-            None => return,
+    // A symbol's extent comes from the grammar, not sed's first `^}`, so only a range is exact.
+    let (suffix, extent) = match symbol {
+        Some(name) => (format!("#{name}"), None),
+        None => match print_line(&script.text) {
+            Some(line) => (
+                format!(":{line}"),
+                Some(Extent::Lines {
+                    first: line,
+                    last: line,
+                }),
+            ),
+            None => match print_range(&script.text) {
+                Some((first, last)) => (
+                    format!(":{first}-{last}"),
+                    Some(Extent::Lines { first, last }),
+                ),
+                None => return,
+            },
         },
     };
     if let Some(target) = path_argument(path, &suffix, Some(dirs.base)) {
-        findings.push(Finding::Show(target));
+        findings.push(Finding::Show {
+            target,
+            extent: extent.filter(|_| rewritable(path, dirs)),
+            source: Some((*path).clone()),
+        });
     }
 }
 
@@ -793,7 +1092,13 @@ fn operands<'w>(words: &'w [Word], value_flags: &[&str]) -> Option<Vec<&'w Word>
 }
 
 /// Names out-of-tree operands too: a replacement reading fewer files would hide an omission.
-fn show(operands: &[&Word], suffix: &str, dirs: Dirs, findings: &mut Vec<Finding>) {
+fn show(
+    operands: &[&Word],
+    suffix: &str,
+    extent: Option<Extent>,
+    dirs: Dirs,
+    findings: &mut Vec<Finding>,
+) {
     if !operands
         .iter()
         .any(|operand| in_tree(dirs, &operand.text).is_some())
@@ -807,7 +1112,48 @@ fn show(operands: &[&Word], suffix: &str, dirs: Dirs, findings: &mut Vec<Finding
     else {
         return;
     };
-    findings.extend(targets.into_iter().map(Finding::Show));
+    findings.extend(
+        operands
+            .iter()
+            .zip(targets)
+            .map(|(operand, target)| Finding::Show {
+                target,
+                extent: extent.filter(|_| rewritable(operand, dirs)),
+                source: Some((*operand).clone()),
+            }),
+    );
+}
+
+/// A named file inside the tree that is not a dotfile, key or credential. `shows_every_line`
+/// judges the path again after any kept `cd` and once symlinks resolve.
+fn rewritable(operand: &Word, dirs: Dirs) -> bool {
+    !operand.glob
+        && !operand.text.starts_with('-')
+        && in_tree(dirs, &operand.text).is_some()
+        && !is_sensitive(Path::new(&operand.text))
+}
+
+/// A dotfile, or a key, secret or credential by name: a backstop for reads no user rule names,
+/// kept a deny the agent sees.
+fn is_sensitive(path: &Path) -> bool {
+    let lowercase = |part: &std::ffi::OsStr| part.to_string_lossy().to_ascii_lowercase();
+    let secret = path.components().any(|component| match component {
+        Component::Normal(name) => {
+            let name = lowercase(name);
+            name.starts_with('.') || matches!(name.as_str(), "secret" | "secrets")
+        },
+        _ => false,
+    });
+    let name = path.file_name().map(lowercase).unwrap_or_default();
+    let extension = path.extension().map(lowercase).unwrap_or_default();
+    secret
+        || name.starts_with("id_")
+        || name.contains("credentials")
+        || name.contains(".tfstate")
+        || matches!(
+            extension.as_str(),
+            "env" | "pem" | "key" | "p12" | "pfx" | "jks" | "keystore"
+        )
 }
 
 /// A glob stays unquoted to expand as the original did, but only a portable one with no suffix:
@@ -846,7 +1192,9 @@ fn texts(words: &[Word]) -> Vec<&str> {
     words.iter().map(|word| word.text.as_str()).collect()
 }
 
+/// The last count given, as `head` itself takes it.
 fn line_count<'a>(arguments: &[&'a str]) -> Option<&'a str> {
+    let mut count = None;
     let mut arguments = arguments.iter();
     while let Some(&argument) = arguments.next() {
         let value = if argument == "-n" || argument == "--lines" {
@@ -864,29 +1212,28 @@ fn line_count<'a>(arguments: &[&'a str]) -> Option<&'a str> {
         } else {
             continue;
         };
-        return Some(value);
+        count = Some(value);
     }
-    None
+    count
 }
 
 /// Digits only: `str::parse` alone would accept `+5`.
-fn number(value: &str) -> Option<u64> {
+fn number(value: &str) -> Option<usize> {
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
     value.parse().ok()
 }
 
-fn print_line(script: &str) -> Option<String> {
-    let line = number(script.strip_suffix('p')?)?;
-    (line >= 1).then(|| line.to_string())
+fn print_line(script: &str) -> Option<usize> {
+    number(script.strip_suffix('p')?).filter(|line| *line >= 1)
 }
 
-fn print_range(script: &str) -> Option<String> {
+fn print_range(script: &str) -> Option<(usize, usize)> {
     let (start, end) = script.strip_suffix('p')?.split_once(',')?;
     let start = number(start)?;
     let end = number(end)?;
-    (start >= 1 && end >= start).then(|| format!("{start}-{end}"))
+    (start >= 1 && end >= start).then_some((start, end))
 }
 
 static SYMBOL_IDIOM: LazyLock<Regex> = LazyLock::new(|| {
@@ -1146,9 +1493,9 @@ fn reason(findings: &[Finding], notes: &[String], prefix: &str) -> Option<String
 
     for finding in findings {
         match finding {
-            Finding::Show(argument) => {
-                if !show.contains(&argument.as_str()) {
-                    show.push(argument);
+            Finding::Show { target, .. } => {
+                if !show.contains(&target.as_str()) {
+                    show.push(target);
                 }
                 if show_line.is_none() {
                     show_line = Some(lines.len());
@@ -1176,7 +1523,9 @@ fn reason(findings: &[Finding], notes: &[String], prefix: &str) -> Option<String
                 lines.push(line);
                 add_clause(&mut clauses, FIND_CLAUSE);
             },
-            Finding::Edit { paths, old, new } => {
+            Finding::Edit {
+                paths, old, new, ..
+            } => {
                 lines.push(format!(
                     "lets edit {} --old {} --new {} --all",
                     paths.join(" "),
@@ -1185,7 +1534,7 @@ fn reason(findings: &[Finding], notes: &[String], prefix: &str) -> Option<String
                 ));
                 add_clause(&mut clauses, EDIT_CLAUSE);
             },
-            Finding::Write { path } => {
+            Finding::Write { path, .. } => {
                 lines.push(format!("lets write --force {path}"));
                 add_clause(&mut clauses, WRITE_CLAUSE);
             },
@@ -1377,8 +1726,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        Dirs, Verdict, Word, classify_command, in_tree, normalize, operands, shell_quote,
-        wildcard_matches,
+        Dirs, SHOW_MAX_BYTES, SHOW_MAX_FILE_BYTES, Sources, Verdict, Word, classify_command,
+        in_tree, normalize, operands, shell_quote, wildcard_matches,
     };
 
     const CWD: &str = "/repo";
@@ -1398,35 +1747,839 @@ mod tests {
         "my dir/a.ts",
     ];
 
+    /// `src/n.txt` holds `n1` to `n10`; `.git` stops the search for a repository's local settings
+    /// at the tree.
     fn tree() -> TempDir {
         let tree = TempDir::new().expect("a temp tree");
         for file in FILES {
-            let path = tree.path().join(file);
-            std::fs::create_dir_all(path.parent().expect("a file has a parent"))
-                .expect("a temp directory");
-            std::fs::write(path, "x\n").expect("a temp file");
+            write(&tree, file, "x\n");
         }
+        let numbered = numbered(1..=10, "n");
+        write(&tree, "src/n.txt", &numbered);
+        std::fs::create_dir(tree.path().join(".git")).expect("a temp .git");
         tree
+    }
+
+    /// One line per number, each `prefix` then the number.
+    fn numbered(lines: std::ops::RangeInclusive<usize>, prefix: &str) -> String {
+        use std::fmt::Write as _;
+        lines.fold(String::new(), |mut text, n| {
+            writeln!(text, "{prefix}{n}").expect("a String accepts a write");
+            text
+        })
+    }
+
+    fn write(tree: &TempDir, file: &str, content: &str) {
+        let path = tree.path().join(file);
+        std::fs::create_dir_all(path.parent().expect("a file has a parent"))
+            .expect("a temp directory");
+        std::fs::write(path, content).expect("a temp file");
     }
 
     fn cwd(tree: &TempDir) -> &str {
         tree.path().to_str().expect("a utf-8 temp path")
     }
 
+    /// Every settings tier inside the tree: user settings under `.home/.claude`, project and local
+    /// under `.claude`, managed under `.managed`.
+    fn sources(tree: &TempDir) -> Sources {
+        Sources {
+            home: Some(tree.path().join(".home")),
+            config: None,
+            project: Some(tree.path().to_path_buf()),
+            managed: tree.path().join(".managed"),
+        }
+    }
+
+    /// Codex's view: every finding blocks, so these tests pin the replacement text itself.
     fn verdict(command: &str) -> Verdict {
         let tree = tree();
-        classify_command(command, cwd(&tree))
+        classify_command(command, cwd(&tree), None)
     }
 
     fn blocked(command: &str) -> String {
         match verdict(command) {
             Verdict::Block { reason } => reason,
-            Verdict::Allow => panic!("{command:?} was allowed"),
+            other => panic!("{command:?} was not blocked: {other:?}"),
         }
+    }
+
+    fn claude_code(command: &str) -> Verdict {
+        let tree = tree();
+        classify_command(command, cwd(&tree), Some(&sources(&tree)))
+    }
+
+    fn rewritten(command: &str) -> String {
+        match claude_code(command) {
+            Verdict::Rewrite { command, .. } => command,
+            other => panic!("{command:?} was not rewritten: {other:?}"),
+        }
+    }
+
+    fn assert_still_blocked(command: &str) {
+        assert!(
+            matches!(claude_code(command), Verdict::Block { .. }),
+            "{command:?} must stay a deny on Claude Code: {:?}",
+            claude_code(command)
+        );
     }
 
     fn assert_allowed(command: &str) {
         assert_eq!(verdict(command), Verdict::Allow, "{command:?}");
+    }
+
+    #[test]
+    fn a_whole_file_read_rewrites_to_a_show_with_no_window() {
+        assert_eq!(rewritten("cat src/a.ts"), "lets show src/a.ts --all");
+        assert_eq!(rewritten("cat -n src/a.ts"), "lets show src/a.ts --all");
+        assert_eq!(
+            rewritten("cat src/a.ts && cat src/b.ts"),
+            "lets show src/a.ts src/b.ts --all"
+        );
+        assert_eq!(
+            rewritten("cat src/a.ts; cat src/b.ts\ncat src/c.ts"),
+            "lets show src/a.ts src/b.ts src/c.ts --all"
+        );
+    }
+
+    #[test]
+    fn an_exact_line_range_rewrites_to_that_range_alone() {
+        assert_eq!(rewritten("head -n 5 src/a.ts"), "lets show src/a.ts:1-5");
+        assert_eq!(rewritten("head -5 src/a.ts"), "lets show src/a.ts:1-5");
+        assert_eq!(
+            rewritten("sed -n '3,8p' src/n.txt"),
+            "lets show src/n.txt:3-8"
+        );
+        assert_eq!(rewritten("sed -n '5p' src/n.txt"), "lets show src/n.txt:5");
+        assert_eq!(
+            rewritten("cat src/n.txt | head -3"),
+            "lets show src/n.txt:1-3"
+        );
+        assert_eq!(
+            rewritten("head -n 2 src/a.ts && cat src/b.ts"),
+            "lets show src/a.ts:1-2 src/b.ts --all"
+        );
+    }
+
+    #[test]
+    fn a_kept_leading_cd_and_a_dropped_stderr_redirect_still_rewrite() {
+        assert_eq!(
+            rewritten("cd src && cat a.ts"),
+            "cd src && lets show a.ts --all"
+        );
+        assert_eq!(
+            rewritten("cat src/a.ts 2>/dev/null"),
+            "lets show src/a.ts --all"
+        );
+        assert_eq!(rewritten("cat src/a.ts 2>&1"), "lets show src/a.ts --all");
+        let Verdict::Rewrite { reason, .. } = claude_code("cd src && cat a.ts") else {
+            panic!("a read after a kept cd is a rewrite");
+        };
+        assert_eq!(
+            reason,
+            "`cd src` kept; lets show reads several files and ranges in one call.\nran instead: \
+             cd src && lets show a.ts --all"
+        );
+    }
+
+    #[test]
+    fn a_search_an_edit_or_a_write_stays_a_deny() {
+        assert_still_blocked("grep -rn cap src");
+        assert_still_blocked("rg cap src/a.ts");
+        assert_still_blocked("sed -i 's/a/b/g' src/a.ts");
+        assert_still_blocked("cat > out.txt <<'EOF'\nx\nEOF");
+    }
+
+    #[test]
+    fn a_read_one_lets_show_cannot_reproduce_stays_a_deny() {
+        assert_still_blocked("cat src/a.ts && rg cap src/b.ts");
+        assert_still_blocked("head src/a.ts");
+        assert_still_blocked("tail src/a.ts");
+        assert_still_blocked("sed -n '/^func Target(/,/^}/p' src/sym.go");
+        assert_still_blocked("find . | xargs cat");
+        assert_still_blocked("git diff && cat src/a.ts");
+        assert_still_blocked("lets show src/b.ts && cat src/a.ts");
+        assert_still_blocked("cat src/a.ts || cat src/b.ts");
+        assert_still_blocked("cat src/a.ts &");
+        assert_still_blocked("LC_ALL=C cat src/a.ts");
+        assert_still_blocked("cat src/a.ts 2>err.txt");
+        assert_still_blocked("cat src/a.ts < in.txt");
+        assert_still_blocked("cat src/*.ts");
+        assert_still_blocked("cat src/a.ts /etc/hosts");
+        assert_still_blocked("head -n 3 -- -x");
+    }
+
+    #[test]
+    fn a_dotfile_key_or_credential_read_stays_a_deny() {
+        for command in [
+            "cat .env",
+            "cat config/.env.local",
+            "cat .ssh/config",
+            "cat certs/server.pem",
+            "cat keys/id_ed25519",
+            "cat aws/Credentials",
+            "cat tls.key",
+            "head -n 3 .env",
+            "cat src/a.ts .env",
+        ] {
+            assert_still_blocked(command);
+        }
+    }
+
+    #[test]
+    fn a_read_outside_the_tree_is_left_to_claude_codes_own_rules() {
+        assert_eq!(claude_code("cat ~/.ssh/id_rsa"), Verdict::Allow);
+        assert_eq!(claude_code("cd /etc && cat passwd"), Verdict::Allow);
+        assert_eq!(claude_code("cat ../other/src/a.ts"), Verdict::Allow);
+    }
+
+    fn rewrite_in(tree: &TempDir, command: &str) -> Verdict {
+        classify_command(command, cwd(tree), Some(&sources(tree)))
+    }
+
+    fn command_of(verdict: Verdict) -> String {
+        match verdict {
+            Verdict::Rewrite { command, .. } => command,
+            other => panic!("not a rewrite: {other:?}"),
+        }
+    }
+
+    fn reason_of(verdict: Verdict) -> String {
+        match verdict {
+            Verdict::Block { reason } => reason,
+            other => panic!("not a deny: {other:?}"),
+        }
+    }
+
+    fn deny(rules: &[&str]) -> String {
+        serde_json::json!({ "permissions": { "deny": rules } }).to_string()
+    }
+
+    const PROJECT: &str = ".claude/settings.json";
+
+    /// A tree holding `private/notes.txt` and settings at `at`.
+    fn with_rules(at: &str, settings: &str) -> TempDir {
+        let tree = tree();
+        write(&tree, "private/notes.txt", "HELLO\n");
+        write(&tree, at, settings);
+        tree
+    }
+
+    #[test]
+    fn a_read_a_project_deny_rule_covers_is_left_to_claude_code() {
+        let tree = with_rules(PROJECT, &deny(&["Read(./private/**)"]));
+
+        for command in [
+            "head -n 1 private/notes.txt",
+            "cat private/notes.txt",
+            "cat src/a.ts && cat private/notes.txt",
+            "cd private && cat notes.txt",
+        ] {
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+        }
+        assert_eq!(
+            command_of(rewrite_in(&tree, "head -n 1 src/a.ts")),
+            "lets show src/a.ts:1-1"
+        );
+    }
+
+    #[test]
+    fn a_deny_that_would_suggest_a_covered_path_is_left_to_claude_code() {
+        let tree = with_rules(PROJECT, &deny(&["Read(./private/**)"]));
+
+        assert_eq!(
+            rewrite_in(&tree, "rg HELLO private/notes.txt"),
+            Verdict::Allow
+        );
+        assert_eq!(rewrite_in(&tree, "grep -rn HELLO private"), Verdict::Allow);
+        assert_eq!(rewrite_in(&tree, "cat private/*.txt"), Verdict::Allow);
+        assert_eq!(rewrite_in(&tree, "cat */notes.txt"), Verdict::Allow);
+        assert!(reason_of(rewrite_in(&tree, "cat src/*.ts")).ends_with("run: lets show src/*.ts"));
+        assert!(matches!(
+            rewrite_in(&tree, "find private | xargs cat"),
+            Verdict::Block { .. }
+        ));
+        assert!(
+            reason_of(rewrite_in(&tree, "rg HELLO src/a.ts"))
+                .ends_with("run: lets find 'HELLO' src/a.ts")
+        );
+    }
+
+    #[test]
+    fn an_ask_rule_leaves_a_read_to_claude_code_as_a_deny_rule_does() {
+        let ask = serde_json::json!({ "permissions": { "ask": ["Read(./private/**)"] } });
+        let tree = with_rules(PROJECT, &ask.to_string());
+
+        assert_eq!(rewrite_in(&tree, "cat private/notes.txt"), Verdict::Allow);
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cat src/a.ts")),
+            "lets show src/a.ts --all"
+        );
+    }
+
+    #[test]
+    fn an_edit_rule_binds_edits_and_writes_and_a_read_rule_binds_all_three() {
+        let edit = with_rules(PROJECT, &deny(&["Edit(./private/**)"]));
+        assert_eq!(
+            rewrite_in(&edit, "sed -i 's/HELLO/BYE/g' private/notes.txt"),
+            Verdict::Allow
+        );
+        assert_eq!(
+            rewrite_in(&edit, "cat > private/new.txt <<'EOF'\nx\nEOF"),
+            Verdict::Allow
+        );
+        assert_eq!(
+            command_of(rewrite_in(&edit, "cat private/notes.txt")),
+            "lets show private/notes.txt --all"
+        );
+
+        let read = with_rules(PROJECT, &deny(&["Read(./private/**)"]));
+        assert_eq!(
+            rewrite_in(&read, "sed -i 's/HELLO/BYE/g' private/notes.txt"),
+            Verdict::Allow
+        );
+        assert!(
+            reason_of(rewrite_in(&read, "sed -i 's/cap/limit/g' src/a.ts"))
+                .contains("run: lets edit src/a.ts")
+        );
+    }
+
+    #[test]
+    fn a_settings_file_or_rule_that_cannot_be_read_leaves_every_read_to_claude_code() {
+        for settings in [
+            "{not json".to_owned(),
+            r#"{"permissions":{"deny":"Read(./private/**)"}}"#.to_owned(),
+            r#"{"permissions":{"deny":[7]}}"#.to_owned(),
+            r#"{"permissions":[]}"#.to_owned(),
+            deny(&["Read(./private/**"]),
+            deny(&["Read(../elsewhere/**)"]),
+            deny(&["Read(~bob/notes.txt)"]),
+        ] {
+            let tree = with_rules(PROJECT, &settings);
+            assert_eq!(
+                rewrite_in(&tree, "cat src/a.ts"),
+                Verdict::Allow,
+                "{settings}"
+            );
+            assert_eq!(
+                rewrite_in(&tree, "rg cap src/a.ts"),
+                Verdict::Allow,
+                "{settings}"
+            );
+        }
+        for settings in [
+            "{}",
+            r#"{"permissions":{"deny":["Bash(rm *)","WebFetch"]}}"#,
+        ] {
+            let tree = with_rules(PROJECT, settings);
+            assert_eq!(
+                command_of(rewrite_in(&tree, "cat src/a.ts")),
+                "lets show src/a.ts --all",
+                "{settings}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_settings_path_that_is_a_directory_cannot_be_read() {
+        let tree = tree();
+        std::fs::create_dir_all(tree.path().join(PROJECT)).expect("a directory in its place");
+
+        assert_eq!(rewrite_in(&tree, "cat src/a.ts"), Verdict::Allow);
+    }
+
+    #[test]
+    fn a_slash_rule_anchors_at_the_project_in_project_settings_and_at_the_config_dir_in_user_settings()
+     {
+        let project = with_rules(PROJECT, &deny(&["Read(/private/**)"]));
+        assert_eq!(
+            rewrite_in(&project, "cat private/notes.txt"),
+            Verdict::Allow
+        );
+
+        let user = with_rules(".home/.claude/settings.json", &deny(&["Read(/private/**)"]));
+        assert_eq!(
+            command_of(rewrite_in(&user, "cat private/notes.txt")),
+            "lets show private/notes.txt --all"
+        );
+        write(&user, ".home/.claude/private/notes.txt", "x\n");
+        assert!(matches!(
+            classify_command("cat .home/.claude/private/notes.txt", cwd(&user), None),
+            Verdict::Block { .. }
+        ));
+        assert_eq!(
+            rewrite_in(&user, "cat .home/.claude/private/notes.txt"),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn user_settings_reach_the_project_through_an_absolute_or_relative_rule() {
+        let tree = tree();
+        write(&tree, "private/notes.txt", "HELLO\n");
+        let absolute = format!("Read(/{}/private/**)", cwd(&tree));
+        for rule in [
+            absolute.as_str(),
+            "Read(private/**)",
+            "Read(./private/notes.txt)",
+        ] {
+            write(&tree, ".home/.claude/settings.json", &deny(&[rule]));
+            assert_eq!(
+                rewrite_in(&tree, "cat private/notes.txt"),
+                Verdict::Allow,
+                "{rule}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_home_rule_resolves_against_home() {
+        let tree = tree();
+        write(&tree, ".home/project/private/notes.txt", "HELLO\n");
+        write(
+            &tree,
+            ".home/.claude/settings.json",
+            &deny(&["Read(~/project/private/**)"]),
+        );
+        let project = tree.path().join(".home/project");
+        let sources = Sources {
+            project: Some(project.clone()),
+            ..sources(&tree)
+        };
+        let project = project.to_str().expect("a utf-8 path");
+
+        assert_eq!(
+            classify_command("cat private/notes.txt", project, Some(&sources)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn local_managed_and_config_dir_settings_are_read() {
+        for at in [
+            ".claude/settings.local.json",
+            ".managed/managed-settings.json",
+            ".managed/managed-settings.d/10-private.json",
+        ] {
+            let tree = with_rules(at, &deny(&["Read(./private/**)"]));
+            assert_eq!(
+                rewrite_in(&tree, "cat private/notes.txt"),
+                Verdict::Allow,
+                "{at}"
+            );
+            assert_eq!(
+                command_of(rewrite_in(&tree, "cat src/a.ts")),
+                "lets show src/a.ts --all",
+                "{at}"
+            );
+        }
+
+        let tree = with_rules("config/settings.json", &deny(&["Read(./private/**)"]));
+        let sources = Sources {
+            config: Some(tree.path().join("config")),
+            ..sources(&tree)
+        };
+        assert_eq!(
+            classify_command("cat private/notes.txt", cwd(&tree), Some(&sources)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn a_managed_slash_rule_has_no_documented_anchor_so_nothing_is_promised() {
+        let tree = with_rules(
+            ".managed/managed-settings.json",
+            &deny(&["Read(/private/**)"]),
+        );
+
+        assert_eq!(rewrite_in(&tree, "cat src/a.ts"), Verdict::Allow);
+    }
+
+    #[test]
+    fn a_subdirectory_session_reads_local_settings_at_the_repository_root_only() {
+        let local = tree();
+        write(&local, "app/private/notes.txt", "HELLO\n");
+        write(
+            &local,
+            ".claude/settings.local.json",
+            &deny(&["Read(./private/**)"]),
+        );
+        let app = local.path().join("app");
+        let at_app = Sources {
+            project: None,
+            ..sources(&local)
+        };
+        let app = app.to_str().expect("a utf-8 path");
+        assert_eq!(
+            classify_command("cat private/notes.txt", app, Some(&at_app)),
+            Verdict::Allow
+        );
+
+        let shared = tree();
+        write(&shared, "app/private/notes.txt", "HELLO\n");
+        write(&shared, PROJECT, &deny(&["Read(./private/**)"]));
+        let app = shared.path().join("app");
+        let at_app = Sources {
+            project: None,
+            ..sources(&shared)
+        };
+        let app = app.to_str().expect("a utf-8 path");
+        assert!(matches!(
+            classify_command("cat private/notes.txt", app, Some(&at_app)),
+            Verdict::Rewrite { .. }
+        ));
+    }
+
+    #[test]
+    fn a_worktree_reads_the_main_checkouts_local_settings() {
+        let main = tree();
+        write(
+            &main,
+            ".claude/settings.local.json",
+            &deny(&["Read(./private/**)"]),
+        );
+        let worktree = TempDir::new().expect("a temp worktree");
+        std::fs::write(
+            worktree.path().join(".git"),
+            format!("gitdir: {}/.git/worktrees/wt\n", cwd(&main)),
+        )
+        .expect("a worktree .git file");
+        std::fs::create_dir_all(worktree.path().join("private")).expect("a temp directory");
+        std::fs::write(worktree.path().join("private/notes.txt"), "HELLO\n").expect("a file");
+        let sources = Sources {
+            project: Some(worktree.path().to_path_buf()),
+            ..sources(&main)
+        };
+
+        assert_eq!(
+            classify_command(
+                "cat private/notes.txt",
+                worktree.path().to_str().expect("a utf-8 path"),
+                Some(&sources)
+            ),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn a_symlink_is_covered_when_either_its_path_or_its_target_is() {
+        let tree = with_rules(PROJECT, &deny(&["Read(./private/**)"]));
+        std::os::unix::fs::symlink("private", tree.path().join("link")).expect("a dir symlink");
+        std::os::unix::fs::symlink("../private/notes.txt", tree.path().join("src/alias.txt"))
+            .expect("a file symlink");
+
+        assert_eq!(rewrite_in(&tree, "cat link/notes.txt"), Verdict::Allow);
+        assert_eq!(rewrite_in(&tree, "cat src/alias.txt"), Verdict::Allow);
+
+        write(&tree, PROJECT, &deny(&["Read(./other/**)"]));
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cat link/notes.txt")),
+            "lets show link/notes.txt --all"
+        );
+    }
+
+    #[test]
+    fn rule_shapes_match_as_claude_codes_permissions_page_describes() {
+        write_and_expect_allow(&["Read(notes.txt)"], "cat private/notes.txt");
+        write_and_expect_allow(&["Read(vendor/**)"], "cat lib/vendor/x.txt");
+        write_and_expect_allow(&["Read(*.txt)"], "cat src/n.txt");
+        write_and_expect_allow(&["Read(**)"], "cat src/a.ts");
+        write_and_expect_allow(&["Read"], "cat src/a.ts");
+        write_and_expect_allow(&["Read()"], "cat src/a.ts");
+        write_and_expect_allow(&["Edit"], "sed -i 's/x/y/g' src/a.ts");
+        write_and_expect_allow(
+            &["Read(*.txt)", "Read(!notes.txt)"],
+            "cat private/notes.txt",
+        );
+
+        for (rules, command, expected) in [
+            (
+                &["Read(docs/**)"][..],
+                "cat src/a.ts",
+                "lets show src/a.ts --all",
+            ),
+            (&["Edit"][..], "cat src/a.ts", "lets show src/a.ts --all"),
+            (
+                &["Read(!src/a.ts)"][..],
+                "cat src/a.ts",
+                "lets show src/a.ts --all",
+            ),
+        ] {
+            let tree = with_rules(PROJECT, &deny(rules));
+            assert_eq!(
+                command_of(rewrite_in(&tree, command)),
+                expected,
+                "{rules:?}"
+            );
+        }
+    }
+
+    fn write_and_expect_allow(rules: &[&str], command: &str) {
+        let tree = with_rules(PROJECT, &deny(rules));
+        write(&tree, "lib/vendor/x.txt", "x\n");
+        assert_eq!(
+            rewrite_in(&tree, command),
+            Verdict::Allow,
+            "{rules:?} {command}"
+        );
+    }
+
+    #[test]
+    fn without_home_or_a_config_dir_the_user_tier_cannot_be_found() {
+        let tree = tree();
+        let sources = Sources {
+            home: None,
+            ..sources(&tree)
+        };
+
+        assert_eq!(
+            classify_command("cat src/a.ts", cwd(&tree), Some(&sources)),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn codex_keeps_its_deny_whatever_claude_codes_settings_say() {
+        let tree = with_rules(PROJECT, &deny(&["Read(./private/**)"]));
+
+        let reason = reason_of(classify_command("cat private/notes.txt", cwd(&tree), None));
+
+        assert!(
+            reason.ends_with("run: lets show private/notes.txt"),
+            "{reason}"
+        );
+    }
+
+    /// `lines` lines of `width` bytes each, newline included.
+    fn lines_of(lines: usize, width: usize) -> String {
+        format!("{}\n", "x".repeat(width - 1)).repeat(lines)
+    }
+
+    #[test]
+    fn a_rewrite_needs_its_output_under_lets_shows_byte_cap() {
+        let tree = tree();
+        write(
+            &tree,
+            "at-cap.txt",
+            &(lines_of(655, 100) + &lines_of(1, 36)),
+        );
+        write(
+            &tree,
+            "over-cap.txt",
+            &(lines_of(655, 100) + &lines_of(1, 37)),
+        );
+        write(&tree, "many.txt", &numbered(1..=20_000, ""));
+
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cat at-cap.txt")),
+            "lets show at-cap.txt --all"
+        );
+        assert!(
+            reason_of(rewrite_in(&tree, "cat over-cap.txt"))
+                .ends_with("run: lets show over-cap.txt")
+        );
+        assert!(reason_of(rewrite_in(&tree, "cat many.txt")).ends_with("run: lets show many.txt"));
+        assert!(
+            reason_of(rewrite_in(&tree, "head -n 20000 many.txt"))
+                .ends_with("run: lets show many.txt:1-20000")
+        );
+        assert_eq!(
+            command_of(rewrite_in(&tree, "head -n 5 many.txt")),
+            "lets show many.txt:1-5"
+        );
+    }
+
+    #[test]
+    fn the_byte_cap_counts_every_file_of_one_rewrite() {
+        let tree = tree();
+        write(&tree, "a.txt", &lines_of(400, 100));
+        write(&tree, "b.txt", &lines_of(400, 100));
+
+        assert!(matches!(
+            rewrite_in(&tree, "cat a.txt"),
+            Verdict::Rewrite { .. }
+        ));
+        assert!(matches!(
+            rewrite_in(&tree, "cat b.txt"),
+            Verdict::Rewrite { .. }
+        ));
+        assert!(matches!(
+            rewrite_in(&tree, "cat a.txt b.txt"),
+            Verdict::Block { .. }
+        ));
+    }
+
+    #[test]
+    fn a_line_lets_show_would_cut_keeps_the_deny() {
+        let tree = tree();
+        write(&tree, "at-cap.ts", &format!("{}\n", "x".repeat(1000)));
+        write(&tree, "long.ts", &format!("{}\n", "x".repeat(1001)));
+
+        assert!(matches!(
+            rewrite_in(&tree, "cat at-cap.ts"),
+            Verdict::Rewrite { .. }
+        ));
+        assert!(matches!(
+            rewrite_in(&tree, "cat long.ts"),
+            Verdict::Block { .. }
+        ));
+        assert!(matches!(
+            rewrite_in(&tree, "head -n 1 long.ts"),
+            Verdict::Block { .. }
+        ));
+    }
+
+    #[test]
+    fn a_range_that_starts_past_the_end_keeps_the_deny_and_one_that_ends_past_it_rewrites() {
+        let tree = tree();
+        write(&tree, "empty.txt", "");
+
+        assert!(matches!(
+            rewrite_in(&tree, "head -n 5 empty.txt"),
+            Verdict::Block { .. }
+        ));
+        assert!(matches!(
+            rewrite_in(&tree, "sed -n '11p' src/n.txt"),
+            Verdict::Block { .. }
+        ));
+        assert!(matches!(
+            rewrite_in(&tree, "sed -n '11,12p' src/n.txt"),
+            Verdict::Block { .. }
+        ));
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cat empty.txt")),
+            "lets show empty.txt --all"
+        );
+        assert_eq!(
+            command_of(rewrite_in(&tree, "sed -n '10p' src/n.txt")),
+            "lets show src/n.txt:10"
+        );
+        assert_eq!(
+            command_of(rewrite_in(&tree, "sed -n '9,20p' src/n.txt")),
+            "lets show src/n.txt:9-20"
+        );
+        assert_eq!(
+            command_of(rewrite_in(&tree, "head -n 50 src/n.txt")),
+            "lets show src/n.txt:1-50"
+        );
+    }
+
+    #[test]
+    fn a_file_lets_show_reads_differently_keeps_the_deny() {
+        let tree = tree();
+        write(&tree, "nul.txt", "a\0b\n");
+        std::fs::write(tree.path().join("latin.txt"), b"caf\xe9\n").expect("a latin-1 file");
+
+        for command in [
+            "cat nul.txt",
+            "cat latin.txt",
+            "cat src/missing.ts",
+            "cat src",
+        ] {
+            assert!(
+                matches!(rewrite_in(&tree, command), Verdict::Block { .. }),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn head_z_counts_nul_records_so_it_is_not_a_line_read() {
+        for command in [
+            "head -z -n 1 src/a.ts",
+            "head -zn 1 src/a.ts",
+            "head --zero-terminated -n 1 src/a.ts",
+        ] {
+            assert_eq!(claude_code(command), Verdict::Allow, "{command}");
+            assert_allowed(command);
+        }
+    }
+
+    #[test]
+    fn a_repeated_head_count_takes_the_last_as_head_does() {
+        assert_eq!(
+            rewritten("head -n 3 -n 5 src/n.txt"),
+            "lets show src/n.txt:1-5"
+        );
+        assert_eq!(
+            rewritten("head --lines=3 --lines=5 src/n.txt"),
+            "lets show src/n.txt:1-5"
+        );
+        assert!(blocked("head -n 5 -n 3 src/n.txt").contains("run: lets show src/n.txt:1-3"));
+    }
+
+    #[test]
+    fn a_dotfile_or_secret_named_through_a_kept_cd_stays_a_deny() {
+        let tree = tree();
+        write(&tree, ".ssh/config", "Host x\n");
+        write(&tree, ".git/config", "[core]\n");
+        write(&tree, "secrets/prod.txt", "x\n");
+        write(&tree, "deploy/prod.env", "x\n");
+
+        for command in [
+            "cd .ssh && cat config",
+            "cd .git && cat config",
+            "cd secrets && cat prod.txt",
+            "cat secrets/prod.txt",
+            "cd deploy && cat prod.env",
+            "cat deploy/prod.env",
+            "cat certs/a.p12",
+            "cat infra/terraform.tfstate",
+            "cat keys/release.jks",
+        ] {
+            assert!(
+                matches!(rewrite_in(&tree, command), Verdict::Block { .. }),
+                "{command}"
+            );
+        }
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cd src && cat a.ts")),
+            "cd src && lets show a.ts --all"
+        );
+    }
+
+    #[test]
+    fn a_symlink_out_of_the_tree_or_onto_a_dotfile_is_never_rewritten() {
+        let tree = tree();
+        let outside = TempDir::new().expect("a directory outside the tree");
+        std::fs::write(outside.path().join("hostname"), "host\n").expect("an outside file");
+        std::os::unix::fs::symlink(outside.path(), tree.path().join("etclink"))
+            .expect("a dir symlink");
+        write(&tree, ".ssh/config", "Host x\n");
+        std::os::unix::fs::symlink("../.ssh/config", tree.path().join("src/cfg"))
+            .expect("a file symlink");
+        std::os::unix::fs::symlink("a.ts", tree.path().join("src/alias.ts"))
+            .expect("an in-tree symlink");
+
+        assert_eq!(
+            rewrite_in(&tree, "cd etclink && cat hostname"),
+            Verdict::Allow
+        );
+        assert_eq!(
+            classify_command("cd etclink && cat hostname", cwd(&tree), None),
+            Verdict::Allow
+        );
+        assert!(matches!(
+            rewrite_in(&tree, "cat etclink/hostname"),
+            Verdict::Block { .. }
+        ));
+        assert!(matches!(
+            rewrite_in(&tree, "cat src/cfg"),
+            Verdict::Block { .. }
+        ));
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cat src/alias.ts")),
+            "lets show src/alias.ts --all"
+        );
+    }
+
+    #[test]
+    fn the_caps_a_rewrite_is_checked_against_are_lets_shows_defaults() {
+        use clap::Parser as _;
+        let cli = crate::cli::Cli::try_parse_from(["lets", "show", "x"]).expect("a show parses");
+
+        assert_eq!(cli.global.max_bytes, SHOW_MAX_BYTES);
+        assert_eq!(cli.global.max_file_bytes, SHOW_MAX_FILE_BYTES);
     }
 
     #[test]
@@ -1865,7 +3018,8 @@ mod tests {
     fn a_path_inside_the_working_tree_blocks() {
         let tree = tree();
         let absolute = format!("{}/src/a.ts", cwd(&tree));
-        let Verdict::Block { reason } = classify_command(&format!("cat {absolute}"), cwd(&tree))
+        let Verdict::Block { reason } =
+            classify_command(&format!("cat {absolute}"), cwd(&tree), None)
         else {
             panic!("an absolute in-tree read was allowed");
         };
@@ -1938,13 +3092,15 @@ mod tests {
 
     #[test]
     fn a_cwd_that_is_not_absolute_is_allowed() {
+        let tree = tree();
+        let sources = sources(&tree);
         assert_eq!(
-            classify_command("cat src/a.ts", "repo"),
+            classify_command("cat src/a.ts", "repo", Some(&sources)),
             Verdict::Allow,
             "relative cwd"
         );
         assert_eq!(
-            classify_command("cat src/a.ts", ""),
+            classify_command("cat src/a.ts", "", Some(&sources)),
             Verdict::Allow,
             "no cwd"
         );

@@ -1,0 +1,5 @@
+bin.name = "lets"
+args = ["find", "needle", "--max-file-bytes", "50", "big.bin"]
+
+[status]
+code = 1

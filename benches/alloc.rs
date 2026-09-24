@@ -292,18 +292,21 @@ fn hook_payload() -> Vec<u8> {
     .expect("serialize hook payload")
 }
 
-/// Built as `benches/wall_clock.rs`'s `blocked_command` is, so both targets measure one command.
+/// `sed -i`, not `cat`: chained whole-file reads now rewrite instead of blocking, and `sed -i`
+/// with a `g` flag still denies without needing the named files to exist (unlike a search, whose
+/// deny only fires for a path this workload's synthetic corpus doesn't have). Built as
+/// `benches/wall_clock.rs`'s `blocked_command` is, so both targets measure one command.
 fn hook_command() -> String {
-    const LINK: &str = " && cat src/module_00.ts";
-    const TAIL: &str = " && cat src/.ts";
-    let mut command = String::from("cat src/a.ts");
+    const LINK: &str = " && sed -i 's/x/x/g' src/module_00.ts";
+    const TAIL: &str = " && sed -i 's/x/x/g' src/.ts";
+    let mut command = String::from("sed -i 's/x/x/g' src/a.ts");
     let mut index = 0;
     while command.len() + LINK.len() + TAIL.len() < HOOK_COMMAND_BYTES {
-        write!(command, " && cat src/module_{index:02}.ts").expect("String write");
+        write!(command, " && sed -i 's/x/x/g' src/module_{index:02}.ts").expect("String write");
         index += 1;
     }
     let pad = HOOK_COMMAND_BYTES - command.len() - TAIL.len();
-    write!(command, " && cat src/{}.ts", "x".repeat(pad)).expect("String write");
+    write!(command, " && sed -i 's/x/x/g' src/{}.ts", "x".repeat(pad)).expect("String write");
     assert_eq!(command.len(), HOOK_COMMAND_BYTES);
     command
 }

@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -596,7 +596,7 @@ fn plural(n: usize) -> &'static str {
 /// charged to a filter.
 #[derive(Default)]
 struct Walk {
-    reached: BTreeSet<PathBuf>,
+    reached: usize,
     searched: usize,
     binary: usize,
     too_large: usize,
@@ -607,7 +607,7 @@ struct Walk {
 
 impl Walk {
     /// Rows are the only order-dependent state, so callers hand files over in render order.
-    fn record(&mut self, found: &mut Found, args: &FindArgs, path: PathBuf, outcome: FileOutcome) {
+    fn record(&mut self, found: &mut Found, args: &FindArgs, path: &Path, outcome: FileOutcome) {
         let (lossy_lines, hits, mut lines, first_match) = match outcome {
             FileOutcome::Skipped(skip) => {
                 match skip {
@@ -615,7 +615,7 @@ impl Walk {
                     Skip::TooLarge => self.too_large += 1,
                     Skip::Unreadable => self.unreadable += 1,
                 }
-                self.reached.insert(path);
+                self.reached += 1;
                 return;
             },
             FileOutcome::Searched {
@@ -626,12 +626,11 @@ impl Walk {
             } => (lossy_lines, hits, lines, first_match),
         };
         self.searched += 1;
+        self.reached += 1;
         if hits == 0 {
-            self.reached.insert(path);
             return;
         }
-        let display = display_path(&path);
-        self.reached.insert(path);
+        let display = display_path(path);
         found.total_hits += hits;
         if !lossy_lines.is_empty() {
             self.lossy.insert(display.clone(), lossy_lines);
@@ -724,7 +723,7 @@ impl Search<'_> {
                 Err(err) => walk.unreadable_dirs.push(display_path(&error_path(&err))),
                 Ok(entry) if is_candidate(&entry) => {
                     let outcome = self.file(entry.path(), &mut engine);
-                    walk.record(found, self.args, entry.into_path(), outcome);
+                    walk.record(found, self.args, entry.path(), outcome);
                 },
                 Ok(_) => {},
             }
@@ -769,12 +768,14 @@ impl Search<'_> {
                 Visit::Unlistable(dir) => dirs.push((root_index(&dir, roots), dir)),
             }
         }
-        files.sort_unstable_by(|(root_a, a, _), (root_b, b, _)| (root_a, a).cmp(&(root_b, b)));
+        files.sort_unstable_by(|(root_a, a, _), (root_b, b, _)| {
+            root_a.cmp(root_b).then_with(|| path_order(a, b))
+        });
         dirs.sort_unstable();
         walk.unreadable_dirs
             .extend(dirs.iter().map(|(_, dir)| display_path(dir)));
         for (_, path, outcome) in files {
-            walk.record(found, self.args, path, outcome);
+            walk.record(found, self.args, &path, outcome);
         }
     }
 
@@ -811,6 +812,17 @@ impl Search<'_> {
             first_match: sink.first_match,
         }
     }
+}
+
+/// `Path::cmp`'s order without splitting components: `/` sorts below every other byte.
+fn path_order(a: &Path, b: &Path) -> std::cmp::Ordering {
+    let key = |byte: &u8| if *byte == b'/' { 0 } else { *byte };
+    let (a, b) = (
+        a.as_os_str().as_encoded_bytes(),
+        b.as_os_str().as_encoded_bytes(),
+    );
+    let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    a[common..].iter().map(key).cmp(b[common..].iter().map(key))
 }
 
 /// Longest match wins: one typed root can prefix another's spelling (`src` and `src/../lib`).
@@ -874,7 +886,7 @@ fn walk_omissions(
     args: &FindArgs,
     global: &Global,
     walk: &Walk,
-    pools: Option<&Pools<BTreeSet<PathBuf>>>,
+    pools: Option<&Pools<usize>>,
 ) -> Vec<Omission> {
     let mut walked = Vec::new();
     if !args.globs.is_empty() {
@@ -908,7 +920,7 @@ struct Pools<T> {
     gitignore_only: Option<T>,
 }
 
-type Walking<'scope> = std::thread::ScopedJoinHandle<'scope, BTreeSet<PathBuf>>;
+type Walking<'scope> = std::thread::ScopedJoinHandle<'scope, usize>;
 
 impl<'scope> Pools<Walking<'scope>> {
     fn spawn<'env>(
@@ -922,16 +934,16 @@ impl<'scope> Pools<Walking<'scope>> {
             return None;
         }
         // The glob narrows the pool too: a file it excluded was not left out by a filter.
-        let pool = scope.spawn(|| walk_files(&walker(paths, false, false, globs)));
+        let pool = scope.spawn(|| count_files(&walker(paths, false, false, globs)));
         let gitignore_only = (!args.hidden && !global.no_ignore)
-            .then(|| scope.spawn(|| walk_files(&walker(paths, false, true, globs))));
+            .then(|| scope.spawn(|| count_files(&walker(paths, false, true, globs))));
         Some(Pools {
             pool,
             gitignore_only,
         })
     }
 
-    fn join(self) -> Pools<BTreeSet<PathBuf>> {
+    fn join(self) -> Pools<usize> {
         let join = |handle: Walking<'scope>| {
             handle
                 .join()
@@ -950,28 +962,35 @@ fn ignored_omission(
     args: &FindArgs,
     global: &Global,
     walk: &Walk,
-    pools: &Pools<BTreeSet<PathBuf>>,
+    pools: &Pools<usize>,
 ) -> Option<Omission> {
-    let excluded: Vec<&Path> = pools
-        .pool
-        .difference(&walk.reached)
-        .map(PathBuf::as_path)
-        .collect();
+    // Every filtered walk yields a subset of the unfiltered one, so set differences are counts.
+    // `saturating_sub` only masks a violation of that invariant instead of underflowing, so the
+    // debug build still catches one.
+    debug_assert!(
+        walk.reached <= pools.pool,
+        "the unfiltered pool ({}) undercounted the filtered walk ({})",
+        pools.pool,
+        walk.reached
+    );
+    let excluded = pools.pool.saturating_sub(walk.reached);
 
     let (gitignore, hidden) = if args.hidden {
-        (excluded.len(), 0)
+        (excluded, 0)
     } else if global.no_ignore {
-        (0, excluded.len())
+        (0, excluded)
     } else {
         let gitignore_only = pools
             .gitignore_only
-            .as_ref()
             .expect("spawned whenever neither --hidden nor --no-ignore is set");
-        let hidden = excluded
-            .iter()
-            .filter(|path| gitignore_only.contains(**path))
-            .count();
-        (excluded.len() - hidden, hidden)
+        debug_assert!(
+            walk.reached <= gitignore_only,
+            "the gitignore-only pool ({}) undercounted the filtered walk ({})",
+            gitignore_only,
+            walk.reached
+        );
+        let hidden = gitignore_only.saturating_sub(walk.reached);
+        (excluded - hidden.min(excluded), hidden.min(excluded))
     };
     // A reached file that could not be searched is named in `Skipped`, so `other` stays zero.
     (gitignore + hidden > 0).then_some(Omission::Ignored {
@@ -981,14 +1000,19 @@ fn ignored_omission(
     })
 }
 
-fn walk_files(builder: &WalkBuilder) -> BTreeSet<PathBuf> {
-    builder
-        .build()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
-        .map(|entry| entry.path().to_path_buf())
-        .filter(|path| !in_git_dir(path))
-        .collect()
+fn count_files(builder: &WalkBuilder) -> usize {
+    let files = std::sync::atomic::AtomicUsize::new(0);
+    builder.clone().threads(0).build_parallel().run(|| {
+        Box::new(|entry| {
+            if let Ok(entry) = entry
+                && is_candidate(&entry)
+            {
+                files.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            WalkState::Continue
+        })
+    });
+    files.into_inner()
 }
 
 #[cfg(test)]

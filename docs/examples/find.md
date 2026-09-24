@@ -8,6 +8,15 @@ ERROR_CODE=invalid_pattern
 
 ```
 
+```console
+$ lets find needle --max-file-bytes 50 big.bin
+? 1
+── 0 hits in 0 files · searched 0 files · skipped 1 (too large 1)
+no hits for «needle»
+ERROR_CODE=not_found
+
+```
+
 A file holding a NUL is not text to search, and the footer and `omitted` name the skip rather
 than letting the search read as covering it. The last call is the control: with only the text
 file as the root nothing is skipped, so nothing is named.
@@ -25,6 +34,15 @@ $ lets find needle text.txt
 ── text.txt
 1:	«needle»
 ── 1 hit in 1 file · searched 1 file
+
+```
+
+```console
+$ lets find needle --max-file-bytes 50 small.bin
+? 1
+── 0 hits in 0 files · searched 0 files · skipped 1 (binary 1)
+no hits for «needle»
+ERROR_CODE=not_found
 
 ```
 

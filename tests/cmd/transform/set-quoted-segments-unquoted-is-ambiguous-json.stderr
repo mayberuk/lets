@@ -1,0 +1,4 @@
+a.b is ambiguous (2 candidates)
+  c.json:2	the literal key "a.b" — quote the whole argument: --set '"a.b"=…'
+  c.json:4	the nested path a.b — quote the whole argument: --set '"a"."b"=…'
+ERROR_CODE=ambiguous

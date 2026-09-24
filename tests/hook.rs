@@ -29,6 +29,9 @@ fn run_hook(event: &[u8]) -> Run {
         .env("HOME", home.path())
         .env("XDG_RUNTIME_DIR", home.path())
         .env("LETS_NO_STATS", "1")
+        // Either would point the classifier at the runner's own Claude Code settings.
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .env_remove("CLAUDE_CONFIG_DIR")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -48,13 +51,31 @@ fn run_hook(event: &[u8]) -> Run {
     }
 }
 
+/// The extra `tool_input` fields are ones Claude Code sends, which a rewrite must hand back.
 fn event(cwd: &Path, command: &str) -> Vec<u8> {
     serde_json::json!({
         "session_id": "corpus",
         "cwd": display(cwd),
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
+        "tool_input": { "command": command, "description": "corpus case", "timeout": 60000 },
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// `turn_id` is the field that marks Codex CLI, which gets no rewrite.
+fn codex_event(cwd: &Path, command: &str) -> Vec<u8> {
+    serde_json::json!({
+        "session_id": "corpus",
+        "turn_id": "corpus-turn",
+        "cwd": display(cwd),
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "bypassPermissions",
+        "tool_name": "Bash",
         "tool_input": { "command": command },
+        "tool_use_id": "call_corpus",
     })
     .to_string()
     .into_bytes()
@@ -73,14 +94,18 @@ enum Compare {
     Write,
 }
 
+struct Replacement {
+    reason: String,
+    runs: Vec<String>,
+    compare: Compare,
+    oracle: Option<String>,
+}
+
 enum Expected {
     Allow,
-    Block {
-        reason: String,
-        replacement: Vec<String>,
-        compare: Compare,
-        oracle: Option<String>,
-    },
+    Block(Replacement),
+    /// Its one `run: ` line is the command `updatedInput` carries.
+    Rewrite(Replacement),
 }
 
 struct Case {
@@ -127,41 +152,13 @@ fn parse_case(text: &str) -> Result<Case, String> {
     let command = read_block(&mut lines, "COMMAND")?.join("\n");
     let expected = match lines.next() {
         Some("VERDICT allow") => Expected::Allow,
-        Some("VERDICT block") => {
-            let Some(reason_line) = lines.next_if(|line| line.starts_with("REASON ")) else {
-                return Err("a block case names its REASON".to_owned());
-            };
-            let reason = reason_line["REASON ".len()..].to_owned();
-            if lines.next() != Some("REPLACEMENT") {
-                return Err("a block case names its REPLACEMENT".to_owned());
+        Some("VERDICT block") => Expected::Block(parse_replacement(&mut lines, "block")?),
+        Some("VERDICT rewrite") => {
+            let replacement = parse_replacement(&mut lines, "rewrite")?;
+            if replacement.runs.len() != 1 {
+                return Err("a rewrite case's REPLACEMENT is exactly one `run: ` line".to_owned());
             }
-            let replacement: Vec<String> = read_block(&mut lines, "REPLACEMENT")?
-                .into_iter()
-                .map(str::to_owned)
-                .collect();
-            if replacement.is_empty() || !replacement.iter().all(|line| line.starts_with("run: ")) {
-                return Err(
-                    "REPLACEMENT holds one or more `run: ` lines and nothing else".to_owned(),
-                );
-            }
-            let compare = match lines.next().and_then(|line| line.strip_prefix("COMPARE ")) {
-                Some("read") => Compare::Read,
-                Some("search") => Compare::Search,
-                Some("search-files") => Compare::SearchFiles,
-                Some("search-count") => Compare::SearchCount,
-                Some("write") => Compare::Write,
-                other => return Err(format!("unknown COMPARE {other:?}")),
-            };
-            let oracle = match lines.next_if_eq(&"ORACLE") {
-                Some(_) => Some(read_block(&mut lines, "ORACLE")?.join("\n")),
-                None => None,
-            };
-            Expected::Block {
-                reason,
-                replacement,
-                compare,
-                oracle,
-            }
+            Expected::Rewrite(replacement)
         },
         other => return Err(format!("unknown VERDICT line {other:?}")),
     };
@@ -179,6 +176,44 @@ fn parse_case(text: &str) -> Result<Case, String> {
         command,
         expected,
         xfail,
+    })
+}
+
+fn parse_replacement<'a, I: Iterator<Item = &'a str>>(
+    lines: &mut std::iter::Peekable<I>,
+    verdict: &str,
+) -> Result<Replacement, String> {
+    let Some(reason_line) = lines.next_if(|line| line.starts_with("REASON ")) else {
+        return Err(format!("a {verdict} case names its REASON"));
+    };
+    let reason = reason_line["REASON ".len()..].to_owned();
+    if lines.next() != Some("REPLACEMENT") {
+        return Err(format!("a {verdict} case names its REPLACEMENT"));
+    }
+    let runs: Vec<String> = read_block(lines, "REPLACEMENT")?
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    if runs.is_empty() || !runs.iter().all(|line| line.starts_with("run: ")) {
+        return Err("REPLACEMENT holds one or more `run: ` lines and nothing else".to_owned());
+    }
+    let compare = match lines.next().and_then(|line| line.strip_prefix("COMPARE ")) {
+        Some("read") => Compare::Read,
+        Some("search") => Compare::Search,
+        Some("search-files") => Compare::SearchFiles,
+        Some("search-count") => Compare::SearchCount,
+        Some("write") => Compare::Write,
+        other => return Err(format!("unknown COMPARE {other:?}")),
+    };
+    let oracle = match lines.next_if_eq(&"ORACLE") {
+        Some(_) => Some(read_block(lines, "ORACLE")?.join("\n")),
+        None => None,
+    };
+    Ok(Replacement {
+        reason,
+        runs,
+        compare,
+        oracle,
     })
 }
 
@@ -205,44 +240,113 @@ fn check_case(case: &Case) -> Vec<String> {
             run.code, run.err
         )];
     }
-    let Expected::Block {
-        reason: expected_reason,
-        replacement,
-        compare,
-        oracle,
-    } = &case.expected
-    else {
-        return if run.out.is_empty() {
-            Vec::new()
-        } else {
-            vec![format!("expected allow (empty stdout), got:\n{}", run.out)]
-        };
-    };
-    let reason = match deny_reason(&run.out) {
-        Ok(reason) => reason,
-        Err(failure) => return vec![failure],
+    let (expected, reason, runs) = match &case.expected {
+        Expected::Allow => {
+            return if run.out.is_empty() {
+                Vec::new()
+            } else {
+                vec![format!("expected allow (empty stdout), got:\n{}", run.out)]
+            };
+        },
+        Expected::Block(expected) => {
+            let reason = match deny_reason(&run.out) {
+                Ok(reason) => reason,
+                Err(failure) => return vec![failure],
+            };
+            let runs: Vec<String> = reason
+                .lines()
+                .filter(|line| line.starts_with("run: "))
+                .map(str::to_owned)
+                .collect();
+            (expected, reason, runs)
+        },
+        Expected::Rewrite(expected) => {
+            let (reason, command) = match rewrite_of(&run.out, &case.command) {
+                Ok(rewrite) => rewrite,
+                Err(failure) => return vec![failure],
+            };
+            let mut failures = codex_still_denies(&tree, &case.command);
+            if !failures.is_empty() {
+                failures.insert(0, "the Codex-shaped event:".to_owned());
+                return failures;
+            }
+            (expected, reason, vec![format!("run: {command}")])
+        },
     };
 
     let mut failures = Vec::new();
-    if reason.lines().next() != Some(expected_reason.as_str()) {
+    if reason.lines().next() != Some(expected.reason.as_str()) {
         failures.push(format!(
-            "the reason's first line is not {expected_reason:?}:\n{reason}"
+            "the reason's first line is not {:?}:\n{reason}",
+            expected.reason
         ));
     }
-    let runs: Vec<&str> = reason
-        .lines()
-        .filter(|line| line.starts_with("run: "))
-        .collect();
-    if runs != *replacement {
+    if runs != expected.runs {
         failures.push(format!(
             "the run lines differ from REPLACEMENT\n--- expected\n{}\n--- actual\n{}",
-            replacement.join("\n"),
+            expected.runs.join("\n"),
             runs.join("\n")
         ));
     }
-    let oracle = oracle.as_deref().unwrap_or(&case.command);
-    failures.extend(execute(*compare, oracle, &case.command, &tree, &runs));
+    let oracle = expected.oracle.as_deref().unwrap_or(&case.command);
+    let runs: Vec<&str> = runs.iter().map(String::as_str).collect();
+    failures.extend(execute(
+        expected.compare,
+        oracle,
+        &case.command,
+        &tree,
+        &runs,
+    ));
     failures
+}
+
+/// The rewrite's context and command, after checking the JSON carries no permission decision and
+/// hands back every other field of the tool input unchanged.
+fn rewrite_of(stdout: &str, original: &str) -> Result<(String, String), String> {
+    let value: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|error| format!("expected a rewrite, stdout is not JSON ({error}):\n{stdout}"))?;
+    let output = &value["hookSpecificOutput"];
+    if output.get("permissionDecision").is_some() {
+        return Err(format!(
+            "a rewrite carries no permissionDecision, so the user's rules still judge it:\n{stdout}"
+        ));
+    }
+    if output["hookEventName"] != "PreToolUse" {
+        return Err(format!("hookEventName is not PreToolUse:\n{stdout}"));
+    }
+    let input = &output["updatedInput"];
+    let Some(command) = input["command"].as_str() else {
+        return Err(format!("no updatedInput.command:\n{stdout}"));
+    };
+    let kept = serde_json::json!({
+        "command": command,
+        "description": "corpus case",
+        "timeout": 60000,
+    });
+    if *input != kept {
+        return Err(format!(
+            "updatedInput dropped or changed a field of the tool input `{original}` sent:\n{stdout}"
+        ));
+    }
+    let Some(context) = output["additionalContext"].as_str() else {
+        return Err(format!("a rewrite tells the agent what ran:\n{stdout}"));
+    };
+    Ok((context.to_owned(), command.to_owned()))
+}
+
+fn codex_still_denies(tree: &Sandbox, command: &str) -> Vec<String> {
+    let run = run_hook(&codex_event(tree.path(), command));
+    match deny_reason(&run.out) {
+        Ok(reason)
+            if reason
+                .lines()
+                .any(|line| line.starts_with("run: ") && line.contains("lets show ")) =>
+        {
+            Vec::new()
+        },
+        Ok(reason) => vec![format!("a deny with no `lets show` run line:\n{reason}")],
+        Err(failure) => vec![failure],
+    }
 }
 
 fn deny_reason(stdout: &str) -> Result<String, String> {
@@ -603,9 +707,13 @@ fn case_root_holding(name: &str, case: &str) -> TempDir {
     root
 }
 
-const SHOW_A: &str = "COMMAND\ncat src/a.ts\n===END===\nVERDICT block\nREASON lets show reads \
+const SHOW_A: &str = "COMMAND\ncat src/a.ts\n===END===\nVERDICT rewrite\nREASON lets show reads \
                       several files and ranges in one call.\nREPLACEMENT\nrun: lets show \
-                      src/a.ts\n===END===\nCOMPARE read\n";
+                      src/a.ts --all\n===END===\nCOMPARE read\n";
+
+const FIND_FOO: &str = "COMMAND\nrg foo src/e.ts\n===END===\nVERDICT block\nREASON lets find \
+                        returns every hit numbered and grouped by file.\nREPLACEMENT\nrun: lets \
+                        find 'foo' src/e.ts\n===END===\nCOMPARE search\n";
 
 /// A stale xfail marker would hide the day a case starts passing.
 #[test]
@@ -628,6 +736,7 @@ fn a_failing_case_fails_by_name_unless_it_is_marked_xfail() {
     assert_eq!(corpus_failures(passing.path()), Vec::<String>::new());
 
     let wrong = SHOW_A.replace("run: lets show src/a.ts", "run: lets show src/b.ts");
+    assert_ne!(wrong, SHOW_A);
     let failing = case_root_holding("wrong-read", &wrong);
     let failures = corpus_failures(failing.path());
     assert!(
@@ -646,19 +755,106 @@ fn a_failing_case_fails_by_name_unless_it_is_marked_xfail() {
 }
 
 #[test]
-fn a_block_case_with_no_reason_fails_by_name() {
-    let no_reason = SHOW_A.replacen(
-        "REASON lets show reads several files and ranges in one call.\n",
-        "",
-        1,
+fn a_block_or_rewrite_case_with_no_reason_fails_by_name() {
+    for (case, verdict) in [(FIND_FOO, "block"), (SHOW_A, "rewrite")] {
+        let passing = case_root_holding("with-reason", case);
+        assert_eq!(corpus_failures(passing.path()), Vec::<String>::new());
+
+        let no_reason: String = case
+            .split_inclusive('\n')
+            .filter(|line| !line.starts_with("REASON "))
+            .collect();
+        let root = case_root_holding("no-reason", &no_reason);
+
+        let failures = corpus_failures(root.path());
+
+        assert_eq!(failures, vec![format!(
+            "no-reason: a {verdict} case names its REASON"
+        )]);
+    }
+}
+
+#[test]
+fn a_rewrite_case_with_two_run_lines_fails_by_name() {
+    let two = SHOW_A.replace(
+        "run: lets show src/a.ts --all\n",
+        "run: lets show src/a.ts --all\nrun: lets show src/b.ts --all\n",
     );
-    let root = case_root_holding("no-reason", &no_reason);
+    let root = case_root_holding("two-runs", &two);
 
     let failures = corpus_failures(root.path());
 
     assert_eq!(failures, vec![
-        "no-reason: a block case names its REASON".to_owned()
+        "two-runs: a rewrite case's REPLACEMENT is exactly one `run: ` line".to_owned()
     ]);
+}
+
+/// A rewrite runs unseen, so the window a bare `lets show` applies would silently drop lines.
+#[test]
+fn a_windowed_show_of_a_file_over_the_window_is_a_read_mismatch() {
+    let command = "cat long.txt";
+    let replaced = hook_tree();
+    let failures = execute(Compare::Read, command, command, &replaced, &[
+        "run: lets show long.txt",
+    ]);
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.starts_with("read mismatch")),
+        "{failures:#?}"
+    );
+
+    let replaced = hook_tree();
+    let failures = execute(Compare::Read, command, command, &replaced, &[
+        "run: lets show long.txt --all",
+    ]);
+    assert_eq!(failures, Vec::<String>::new());
+}
+
+/// Claude Code rewrites this command; the same command from Codex is today's deny.
+#[test]
+fn a_codex_event_for_a_rewritten_read_denies_with_the_replacement() {
+    let tree = hook_tree();
+    assert!(
+        rewrite_of(
+            &run_hook(&event(tree.path(), "cat src/a.ts")).out,
+            "cat src/a.ts"
+        )
+        .is_ok_and(|(_, command)| command == "lets show src/a.ts --all")
+    );
+
+    let run = run_hook(&codex_event(tree.path(), "cat src/a.ts"));
+
+    assert_eq!(run.code, Some(0));
+    assert_eq!(
+        deny_reason(&run.out),
+        Ok(
+            "lets show reads several files and ranges in one call.\nrun: lets show \
+            src/a.ts\nthe command above replaces the original"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn rewrite_json_that_decides_permission_or_drops_an_input_field_is_refused() {
+    let good = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"lets show a.ts --all","description":"corpus case","timeout":60000},"additionalContext":"ran instead: lets show a.ts --all"}}"#;
+    assert_eq!(
+        rewrite_of(good, "cat a.ts"),
+        Ok((
+            "ran instead: lets show a.ts --all".to_owned(),
+            "lets show a.ts --all".to_owned()
+        ))
+    );
+
+    let allow = good.replace(
+        r#""hookEventName":"PreToolUse","#,
+        r#""hookEventName":"PreToolUse","permissionDecision":"allow","#,
+    );
+    let dropped = good.replace(r#","description":"corpus case""#, "");
+    for bad in [allow, dropped] {
+        assert!(rewrite_of(&bad, "cat a.ts").is_err(), "{bad}");
+    }
 }
 
 /// A whole-file `show` is the replacement the classifier gives for `sed -n '5p'` today.
@@ -1005,14 +1201,20 @@ fn today_failures(cases: &Path, scenarios: &Path) -> Vec<String> {
                     "{id}: the classifier allows it, but it is not named in \
                      tests/hook/today-allow.txt:\n{statement}"
                 )),
-                Verdict::Block { reason } if listed => failures.push(format!(
-                    "{id}: named in tests/hook/today-allow.txt as allow, but the classifier \
-                     blocks it:\n{statement}\nreason: {reason}"
-                )),
-                Verdict::Block { reason } if reason.is_empty() => {
-                    failures.push(format!("{id}: blocked with an empty reason:\n{statement}"));
+                Verdict::Block { reason } | Verdict::Rewrite { reason, .. } if listed => {
+                    failures.push(format!(
+                        "{id}: named in tests/hook/today-allow.txt as allow, but the classifier \
+                         intercepts it:\n{statement}\nreason: {reason}"
+                    ));
                 },
-                Verdict::Block { .. } => {},
+                Verdict::Block { reason } | Verdict::Rewrite { reason, .. }
+                    if reason.is_empty() =>
+                {
+                    failures.push(format!(
+                        "{id}: intercepted with an empty reason:\n{statement}"
+                    ));
+                },
+                Verdict::Block { .. } | Verdict::Rewrite { .. } => {},
             }
         }
     }

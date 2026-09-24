@@ -1,0 +1,8 @@
+# wave1-review H2: dotted-key resolution used to pick the literal "a.b" key and write `{ a.b: 3 }`,
+# silently dropping `c` — the dealbreaker this wave fixes. Same flow-mapping refusal as
+# set-yaml-flow-mapping-refused, reached this time through resolve_dotted's literal reading.
+bin.name = "lets"
+args = ["transform", "c.yaml", "--set", "a.b=3"]
+
+[status]
+code = 7

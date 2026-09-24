@@ -44,9 +44,30 @@ fn spliced_set(
     };
     let line_at = |byte: usize| body[..byte].matches('\n').count() + 1;
     let mut unread = false;
-    let resolved = super::resolve_selectors(
+    let path = super::resolve_dotted(
         file,
         path,
+        raw_key,
+        |arg| super::flag_hint("--set", true, arg),
+        |segments| {
+            if let Ok(found) = locate(body, segments) {
+                found.is_some()
+            } else {
+                unread = true;
+                false
+            }
+        },
+        |segments| match locate(body, segments) {
+            Ok(Some((_, span))) => line_at(span.start),
+            _ => 1,
+        },
+    )?;
+    if unread {
+        return Ok(None);
+    }
+    let resolved = super::resolve_selectors(
+        file,
+        &path,
         raw_key,
         |prefix, key| match fields_at(body, prefix, key) {
             Ok(Some(fields)) => Ok(fields),
@@ -319,12 +340,12 @@ fn through_cst(file: &Path, bom: bool, body: &str, ops: &[Op]) -> Result<Applied
                 raw_key,
                 value,
             } => {
-                let (path, key) = resolved(file, &root, path, raw_key)?;
+                let (path, key) = resolved(file, &root, path, raw_key, "--set", true)?;
                 let node = set(&root, &path.0, raw_key, value)?;
                 touched.push((TransformOp::Set { key }, line_number(&node)));
             },
             Op::Delete { path, raw_key } => {
-                let (path, key) = resolved(file, &root, path, raw_key)?;
+                let (path, key) = resolved(file, &root, path, raw_key, "--delete", false)?;
                 let line = delete(&root, &path.0, raw_key)?;
                 touched.push((TransformOp::Delete { key }, line));
             },
@@ -333,7 +354,7 @@ fn through_cst(file: &Path, bom: bool, body: &str, ops: &[Op]) -> Result<Applied
                 raw_key,
                 value,
             } => {
-                let (path, key) = resolved(file, &root, path, raw_key)?;
+                let (path, key) = resolved(file, &root, path, raw_key, "--append", true)?;
                 let line = append(&root, &path.0, raw_key, value)?;
                 touched.push((TransformOp::Append { key }, line));
             },
@@ -353,10 +374,20 @@ fn resolved(
     root: &CstRootNode,
     path: &super::Path,
     raw_key: &str,
+    flag: &str,
+    has_value: bool,
 ) -> Result<(super::Path, String), crate::Error> {
-    super::resolve_selectors(
+    let path = super::resolve_dotted(
         file,
         path,
+        raw_key,
+        |arg| super::flag_hint(flag, has_value, arg),
+        |segments| value_exists(root, segments),
+        |segments| value_line(root, segments),
+    )?;
+    super::resolve_selectors(
+        file,
+        &path,
         raw_key,
         |prefix, key| {
             let array = array_at(root, prefix).ok_or_else(|| not_found(raw_key))?;
@@ -376,6 +407,46 @@ fn resolved(
                 .map_or(1, |node| line_number(&node))
         },
     )
+}
+
+/// Whether `segments` (absolute from the root) names a value already in the document, container
+/// or scalar; `navigate` with `create: false` leaves everything else it touches unmodified.
+fn value_exists(root: &CstRootNode, segments: &[Segment]) -> bool {
+    let Some((last, _)) = segments.split_last() else {
+        return true;
+    };
+    let Some(root_obj) = root.object_value() else {
+        return false;
+    };
+    let Some(cursor) = navigate(root_obj, segments, false) else {
+        return false;
+    };
+    match (cursor, last) {
+        (Cursor::Obj(obj), Segment::Key(key)) => obj.get(key).is_some(),
+        (Cursor::Arr(arr), Segment::Index(index)) => {
+            arr.elements().into_iter().nth(*index).is_some()
+        },
+        _ => false,
+    }
+}
+
+/// The line of the value `value_exists` already confirmed is there; 1 is the floor for one it
+/// cannot re-locate (unreachable in practice, since the caller only asks after `value_exists`).
+fn value_line(root: &CstRootNode, segments: &[Segment]) -> usize {
+    let Some((last, _)) = segments.split_last() else {
+        return 1;
+    };
+    let Some(node) = root.object_value().and_then(|root_obj| {
+        let cursor = navigate(root_obj, segments, false)?;
+        match (cursor, last) {
+            (Cursor::Obj(obj), Segment::Key(key)) => obj.get(key)?.value(),
+            (Cursor::Arr(arr), Segment::Index(index)) => arr.elements().into_iter().nth(*index),
+            _ => None,
+        }
+    }) else {
+        return 1;
+    };
+    line_number(&node)
 }
 
 /// The trailing `Index(0)` makes `navigate` stop on the array itself.

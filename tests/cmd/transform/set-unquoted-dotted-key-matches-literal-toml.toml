@@ -1,0 +1,6 @@
+# The TOML counterpart of set-unquoted-dotted-key-matches-literal-json. TOML's own grammar already
+# requires quoting a key that holds a literal dot (`"editor.formatOnSave"`, not `editor.formatOnSave`,
+# which TOML itself reads as the table `editor`); with no `[editor]` table to compete, the CLI's
+# unquoted `editor.formatOnSave` path resolves to that quoted key.
+bin.name = "lets"
+args = ["transform", "c.toml", "--set", "editor.formatOnSave=true"]

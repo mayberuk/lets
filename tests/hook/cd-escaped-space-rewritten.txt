@@ -1,0 +1,9 @@
+COMMAND
+cd my\ dir && cat f.txt
+===END===
+VERDICT rewrite
+REASON `cd 'my dir'` kept; lets show reads several files and ranges in one call.
+REPLACEMENT
+run: cd 'my dir' && lets show f.txt --all
+===END===
+COMPARE read

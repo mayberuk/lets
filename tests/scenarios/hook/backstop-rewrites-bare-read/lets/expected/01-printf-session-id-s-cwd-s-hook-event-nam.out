@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"lets show src/usage.ts --all"},"additionalContext":"lets show reads several files and ranges in one call.\nran instead: lets show src/usage.ts --all"}}

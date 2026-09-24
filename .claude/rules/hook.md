@@ -22,6 +22,16 @@ or a blocked heredoc-to-stdin, is a dealbreaker.
 - Block: a bare displayed `cat`, `head`, `tail` or `sed -n` of a repo file (including last in an
   `&&` chain, and after a `lets` call in the same command), displayed `grep`/`rg`, `sed -i`,
   `cat > file <<`, `python -c` writing a file, `xargs cat` displayed.
+- Rewrite (`updatedInput`, no `permissionDecision`) only on Claude Code, and only when one
+  `lets show` prints every line the original would, of named in-tree files that are not dotfiles,
+  keys or credentials; deny everything else a block covers, and always fail open. "Prints every
+  line" is checked on the file itself, after any `cd` and symlink resolves: under `--max-bytes`,
+  no line `show` cuts, no range starting past the end.
+- Before a rewrite, or a block whose `run:` line names a path, match every named path against
+  the `Read` and `Edit` deny and ask rules of each Claude Code settings tier (managed, user,
+  project, local). A match, or a settings file or rule that cannot be read, is allow: Claude
+  Code judges `lets`, not the read it replaced, so only its own rule can decide the original.
+  Load settings on that path only, never on the allow path.
 - Add every new verdict to `tests/hook/` as command → verdict with the replacement text. The
   corpus is the spec of this module.
 - Stay under the `hook classify` gate in `bench/gates.rs`: startup plus one bash parse, no
@@ -34,7 +44,9 @@ or a blocked heredoc-to-stdin, is a dealbreaker.
 - Let a panic, I/O error or missing grammar surface as a block.
 
 ```text
-✅ DO    cat src/a.ts && cat src/b.ts            → block: "run: lets show src/a.ts src/b.ts"
+✅ DO    cat src/a.ts && cat src/b.ts            → Claude Code rewrite: "lets show src/a.ts src/b.ts --all"
+✅ DO    the same command from Codex             → block: "run: lets show src/a.ts src/b.ts"
+✅ DO    rg cap src                              → block: "run: lets find 'cap' src"
 ✅ DO    jq . - <<'JSON'                          → allow  (heredoc-to-stdin)
 ❌ DON'T $(cat VERSION)                          → block  (data flow; must allow)
 ❌ DON'T cat f.ts                                → block: "use lets"  (no runnable command)

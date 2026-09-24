@@ -3,7 +3,7 @@
 # the binary counts, build and target-specific ones too; dev-dependencies never ship.
 set -eu
 
-LIMIT=17
+LIMIT=18
 
 manifest="${1:-$(dirname "$0")/../Cargo.toml}"
 if [ ! -f "$manifest" ]; then

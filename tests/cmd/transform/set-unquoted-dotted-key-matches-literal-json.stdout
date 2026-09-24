@@ -1,0 +1,5 @@
+── c.json · json · set editor.formatOnSave · line 2
+1 	{
+2~	  "editor.formatOnSave": true
+3 	}
+── check: json ok · sha:[..]→[..]

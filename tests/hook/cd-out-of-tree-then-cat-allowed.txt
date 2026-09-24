@@ -1,0 +1,4 @@
+COMMAND
+cd /etc && cat passwd
+===END===
+VERDICT allow

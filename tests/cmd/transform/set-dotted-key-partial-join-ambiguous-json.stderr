@@ -1,0 +1,4 @@
+a.b.c is ambiguous (2 candidates)
+  c.json:3	the path a."b.c" — quote the whole argument: --set '"a"."b.c"=…'
+  c.json:6	the path "a.b".c — quote the whole argument: --set '"a.b"."c"=…'
+ERROR_CODE=ambiguous

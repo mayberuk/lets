@@ -1,1 +1,0 @@
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"lets show reads several files and ranges in one call.\nrun: lets show src/usage.ts"}}

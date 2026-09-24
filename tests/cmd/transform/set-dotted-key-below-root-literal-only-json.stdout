@@ -1,0 +1,7 @@
+── c.json · json · set a.editor.formatOnSave · line 3
+1 	{
+2 	  "a": {
+3 	    "editor.formatOnSave": true
+4 	  }
+5 	}
+── check: json ok · sha:d85ae3e8581d→d85ae3e8581d

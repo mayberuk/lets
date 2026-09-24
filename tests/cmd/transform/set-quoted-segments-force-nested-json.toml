@@ -1,0 +1,7 @@
+# spec.md § transform, literal keys: quoting every segment on its own ("a"."b") means the nested
+# path and skips literal resolution entirely, so it lands on the nested a.b even though the
+# unquoted spelling would be ambiguous against the literal "a.b" key sitting beside it.
+# set-quoted-segments-unquoted-is-ambiguous-json is the control: unquoted, the same document is
+# ambiguous.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", '"a"."b"=3']
