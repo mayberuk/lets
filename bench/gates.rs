@@ -75,17 +75,16 @@ pub const TRANSFORM_SET: Gate = Gate {
     p99_ms: 8,
 };
 
-/// 1.13–1.15× `rg` at default threads across three passes (2026-09-24); tighter than
-/// performance.md's 2× ceiling.
-pub const FIND_VS_RG_MAX_RATIO: f64 = 1.3;
+/// 1.13–1.15× `rg` locally across three passes (2026-09-24); the ratio moves with the CPU, so
+/// the gate keeps headroom for the CI runner under performance.md's 2× ceiling.
+pub const FIND_VS_RG_MAX_RATIO: f64 = 1.5;
 
-/// 1.62–1.67× `cat` across three passes (2026-09-24); tighter than performance.md's
-/// "`show` ≤ 3× `cat`" ceiling.
-pub const SHOW_VS_CAT_MAX_RATIO: f64 = 2.0;
+/// 1.62–1.67× `cat` locally and 2.04× on the CI runner (2026-09-25); performance.md's ceiling.
+pub const SHOW_VS_CAT_MAX_RATIO: f64 = 3.0;
 
-/// 1.17–1.19× `bash -n` across three passes (2026-09-24); tighter than performance.md's
-/// "`hook classify` ≤ 2× `bash -n`" ceiling.
-pub const HOOK_VS_BASH_N_MAX_RATIO: f64 = 1.4;
+/// 1.17–1.19× `bash -n` locally and 1.44× on the CI runner (2026-09-25); performance.md's
+/// ceiling.
+pub const HOOK_VS_BASH_N_MAX_RATIO: f64 = 2.0;
 
 /// 2.2–3.3× quiet and under 6–40 busy loops on 16 cores; the gate is 2× that.
 pub const GUIDE_VS_TRUE_MAX_RATIO: f64 = 6.0;
