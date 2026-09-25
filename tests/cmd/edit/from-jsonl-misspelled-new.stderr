@@ -1,3 +1,12 @@
 line 1: unknown key "neww"
 line 1: no "new"
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+LETS
 ERROR_CODE=usage

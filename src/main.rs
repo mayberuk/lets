@@ -212,7 +212,6 @@ fn render_options(cli: &Cli) -> RenderOptions {
     RenderOptions {
         numbers: !matches!(&cli.verb, Verb::Show(args) if args.no_numbers),
         quiet: cli.global.quiet,
-        cost_first: matches!(&cli.verb, Verb::Show(args) if args.all),
     }
 }
 
@@ -471,7 +470,6 @@ mod tests {
             output::render(&outcome.response, Format::Text, &RenderOptions {
                 numbers: true,
                 quiet: false,
-                cost_first: false,
             })
             .contains("src/a.ts"),
             "the file that landed is named on stdout"
@@ -483,7 +481,6 @@ mod tests {
         RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         }
     }
 

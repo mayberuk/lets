@@ -4,6 +4,6 @@ grep 'a\+b' src/grep.txt
 VERDICT block
 REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find 'a+b' src/grep.txt
+run: lets find -s 'a+b' src/grep.txt
 ===END===
 COMPARE search

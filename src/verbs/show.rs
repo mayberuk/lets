@@ -477,7 +477,6 @@ mod tests {
         let rendered = crate::output::render(&outcome.response, Format::Text, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         });
         rendered
             .lines()
@@ -1025,7 +1024,6 @@ mod tests {
         crate::output::render(&outcome.response, format, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         })
     }
 
@@ -1615,7 +1613,6 @@ mod tests {
         let opts = RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         };
 
         let once = crate::output::render(

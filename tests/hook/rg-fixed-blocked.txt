@@ -4,6 +4,6 @@ rg -F 'foo + ' src
 VERDICT block
 REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find -F 'foo + ' src
+run: lets find -F -s 'foo + ' src
 ===END===
 COMPARE search

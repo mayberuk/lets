@@ -95,9 +95,19 @@ fn search(
         Ok(matcher) => matcher,
         Err(err) => return (Outcome::failed("find", err), None),
     };
-    let spans = match build_spans(args) {
+    let spans = match build_spans(args, effective_case_insensitive(args)) {
         Ok(spans) => spans,
         Err(err) => return (Outcome::failed("find", err), None),
+    };
+    // Only built when smart case actually folded the search: a hit's raw text is re-tested
+    // against it to tell a case-fold-only hit from one that would have matched exactly anyway.
+    let exact = if smart_case_active(args) {
+        match build_spans(args, false) {
+            Ok(exact) => Some(exact),
+            Err(err) => return (Outcome::failed("find", err), None),
+        }
+    } else {
+        None
     };
     let overrides = match build_overrides(&args.globs) {
         Ok(overrides) => overrides,
@@ -107,6 +117,7 @@ fn search(
         args,
         matcher: &matcher,
         spans: &spans,
+        exact: exact.as_ref(),
         max_file_bytes: global.max_file_bytes,
     };
 
@@ -192,9 +203,47 @@ fn base_pattern(args: &FindArgs) -> String {
     }
 }
 
+/// ripgrep's `--smart-case`: insensitive only when the pattern has no literal uppercase letter.
+/// `\S`, `\W` and `\p{Lu}`/`\P{Lu}` name a class, not a literal, so an escape is skipped whole
+/// rather than read for its own case.
+pub(crate) fn pattern_has_uppercase(pattern: &str, fixed_string: bool) -> bool {
+    if fixed_string {
+        return pattern.chars().any(char::is_uppercase);
+    }
+    let mut chars = pattern.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            if ch.is_uppercase() {
+                return true;
+            }
+            continue;
+        }
+        if matches!(chars.next(), Some('p' | 'P')) && chars.peek() == Some(&'{') {
+            for c in chars.by_ref() {
+                if c == '}' {
+                    break;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// True when neither `-i` nor `-s` was asked for and the pattern's own case decided it: the case
+/// the footer must name as a widening, since the reader asked for neither.
+fn smart_case_active(args: &FindArgs) -> bool {
+    !args.ignore_case
+        && !args.case_sensitive
+        && !pattern_has_uppercase(&args.pattern, args.fixed_string)
+}
+
+fn effective_case_insensitive(args: &FindArgs) -> bool {
+    args.ignore_case || smart_case_active(args)
+}
+
 fn build_matcher(args: &FindArgs) -> Result<RegexMatcher, Error> {
     RegexMatcherBuilder::new()
-        .case_insensitive(args.ignore_case)
+        .case_insensitive(effective_case_insensitive(args))
         .word(args.word)
         .build(&base_pattern(args))
         .map_err(|err| invalid_pattern(&args.pattern, &err.to_string()))
@@ -202,7 +251,7 @@ fn build_matcher(args: &FindArgs) -> Result<RegexMatcher, Error> {
 
 /// Compiled a second time for the match offsets: a `Sink` gets only the line, and the offsets'
 /// trait would be an 18th direct dependency. `-w` adds `grep-regex`'s own half word boundaries.
-fn build_spans(args: &FindArgs) -> Result<Regex, Error> {
+fn build_spans(args: &FindArgs, case_insensitive: bool) -> Result<Regex, Error> {
     let base = base_pattern(args);
     let pattern = if args.word {
         format!(r"\b{{start-half}}(?:{base})\b{{end-half}}")
@@ -210,7 +259,7 @@ fn build_spans(args: &FindArgs) -> Result<Regex, Error> {
         base
     };
     RegexBuilder::new(&pattern)
-        .case_insensitive(args.ignore_case)
+        .case_insensitive(case_insensitive)
         .build()
         .map_err(|err| invalid_pattern(&args.pattern, &err.to_string()))
 }
@@ -427,6 +476,8 @@ fn display_path(path: &Path) -> PathBuf {
 
 struct HitSink<'a> {
     spans: &'a Regex,
+    /// The case-sensitive reading of the pattern, checked per hit only while smart case folded.
+    exact: Option<&'a Regex>,
     hits: usize,
     lines: Vec<Line>,
     /// Per line, the first wrapped match in its text: what `window::cut_long_lines` keeps.
@@ -434,17 +485,21 @@ struct HitSink<'a> {
     /// Ascending: looked up by binary search.
     lossy_lines: Vec<usize>,
     binary: bool,
+    /// Hits with no case-sensitive match of the pattern: what the footer must call a widening.
+    case_folded: usize,
 }
 
 impl<'a> HitSink<'a> {
-    fn new(spans: &'a Regex) -> HitSink<'a> {
+    fn new(spans: &'a Regex, exact: Option<&'a Regex>) -> HitSink<'a> {
         HitSink {
             spans,
+            exact,
             hits: 0,
             lines: Vec::new(),
             first_match: Vec::new(),
             lossy_lines: Vec::new(),
             binary: false,
+            case_folded: 0,
         }
     }
 
@@ -464,10 +519,15 @@ impl Sink for HitSink<'_> {
     fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
         self.hits += 1;
         let spans = self.spans;
+        let exact = self.exact;
         let line = self.push(mat.bytes(), mat.line_number(), Marker::Hit);
+        let case_folded = exact.is_some_and(|exact| !exact.is_match(&line.text));
         let (wrapped, first) = wrap_matches(&line.text, spans);
         line.text = wrapped.into();
         self.first_match.push(first);
+        if case_folded {
+            self.case_folded += 1;
+        }
         Ok(true)
     }
 
@@ -1345,12 +1405,13 @@ struct Walk {
     dotfiles: usize,
     gitignored_dirs: Vec<PathBuf>,
     hidden_dirs: Vec<PathBuf>,
+    case_folded: usize,
 }
 
 impl Walk {
     /// Rows are the only order-dependent state, so callers hand files over in render order.
     fn record(&mut self, found: &mut Found, args: &FindArgs, path: &Path, outcome: FileOutcome) {
-        let (lossy_lines, hits, lines, first_match) = match outcome {
+        let (lossy_lines, hits, lines, first_match, case_folded) = match outcome {
             FileOutcome::Skipped(skip) => {
                 match skip {
                     Skip::Binary => self.binary += 1,
@@ -1364,7 +1425,8 @@ impl Walk {
                 hits,
                 lines,
                 first_match,
-            } => (lossy_lines, hits, lines, first_match),
+                case_folded,
+            } => (lossy_lines, hits, lines, first_match, case_folded),
         };
         self.searched += 1;
         if hits == 0 {
@@ -1372,6 +1434,7 @@ impl Walk {
         }
         let display = display_path(path);
         found.total_hits += hits;
+        self.case_folded += case_folded;
         if !lossy_lines.is_empty() {
             self.lossy.insert(display.clone(), lossy_lines);
         }
@@ -1498,6 +1561,7 @@ enum FileOutcome {
         hits: usize,
         lines: Vec<Line>,
         first_match: Vec<Option<Range<usize>>>,
+        case_folded: usize,
     },
     Skipped(Skip),
 }
@@ -1512,6 +1576,8 @@ struct Search<'a> {
     args: &'a FindArgs,
     matcher: &'a RegexMatcher,
     spans: &'a Regex,
+    /// The pattern read case-sensitively; `Some` only while smart case folded the search.
+    exact: Option<&'a Regex>,
     max_file_bytes: u64,
 }
 
@@ -1631,7 +1697,7 @@ impl Search<'_> {
             return FileOutcome::Skipped(Skip::TooLarge);
         }
         let mut source = Utf16Guard::new(file);
-        let mut sink = HitSink::new(self.spans);
+        let mut sink = HitSink::new(self.spans, self.exact);
         if engine
             .search_reader(self.matcher, &mut source, &mut sink)
             .is_err()
@@ -1646,6 +1712,7 @@ impl Search<'_> {
             hits: sink.hits,
             lines: sink.lines,
             first_match: sink.first_match,
+            case_folded: sink.case_folded,
         }
     }
 }
@@ -1724,6 +1791,11 @@ fn walk_omissions(args: &FindArgs, walk: &Walk) -> Vec<Omission> {
     if !args.globs.is_empty() {
         walked.push(Omission::Glob {
             patterns: args.globs.clone(),
+        });
+    }
+    if walk.case_folded > 0 {
+        walked.push(Omission::CaseFolded {
+            hits: walk.case_folded,
         });
     }
     walked.extend(walk.ignored());
@@ -1805,6 +1877,7 @@ mod tests {
             paths: paths.iter().map(|p| (*p).to_owned()).collect(),
             fixed_string: false,
             ignore_case: false,
+            case_sensitive: false,
             word: false,
             cap: 50,
             files: false,
@@ -2030,13 +2103,11 @@ mod tests {
         let rendered = crate::output::render(&outcome.response, Format::Text, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         });
         let preview = (1..=10).fold(String::new(), |mut preview, n| {
             writeln!(preview, "{n:>2}:\t\u{ab}needle\u{bb} {n}").expect("a String write");
             preview
         });
-        // Nine preview lines of 13 bytes and one of 14 are 131 bytes: ~32 tokens at ÷ 4.
         assert_eq!(
             rendered,
             "\u{2500}\u{2500} j.txt\n".to_owned()
@@ -2054,7 +2125,7 @@ mod tests {
              \u{2026} 3 more files\n\
              \u{2500}\u{2500} 58 hits in 13 files \u{b7} searched 13 files \u{b7} over the \
              50-hit cap \u{b7} narrow the pattern or the paths, or --files \u{b7} first 10 of \
-             10 hits in the busiest file shown \u{b7} top 10 files shown \u{b7} ~32 tokens\n"
+             10 hits in the busiest file shown \u{b7} top 10 files shown\n"
         );
     }
 
@@ -2075,13 +2146,11 @@ mod tests {
         let rendered = crate::output::render(&outcome.response, Format::Text, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         });
         assert!(
             !rendered.contains("more file"),
             "no more-files line when every matched file is shown: {rendered}"
         );
-        // The preview holds no more than the cap of 2: two lines of 13 bytes, ~6 tokens at ÷ 4.
         assert_eq!(
             rendered,
             "\u{2500}\u{2500} z.txt\n\
@@ -2092,7 +2161,7 @@ mod tests {
              1\tm.txt\n\
              \u{2500}\u{2500} 6 hits in 3 files \u{b7} searched 3 files \u{b7} over the 2-hit \
              cap \u{b7} narrow the pattern or the paths, or --files \u{b7} first 2 of 3 hits in \
-             the busiest file shown \u{b7} top 3 files shown \u{b7} ~6 tokens\n"
+             the busiest file shown \u{b7} top 3 files shown\n"
         );
     }
 
@@ -2788,7 +2857,6 @@ mod tests {
             let rendered = crate::output::render(&outcome.response, Format::Text, &RenderOptions {
                 numbers: true,
                 quiet: false,
-                cost_first: false,
             });
             assert!(
                 !rendered.contains('\u{ab}') && !rendered.contains('\u{bb}'),
@@ -3009,7 +3077,6 @@ mod tests {
         let json = crate::output::render(&outcome.response, Format::Json, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         });
         assert!(json.contains("\"lossy_lines\":{\"lines\":1}"), "{json}");
     }
@@ -3166,7 +3233,6 @@ mod tests {
         let json = crate::output::render(&outcome.response, Format::Json, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         });
         assert!(
             json.contains("\"unreadable\":{\"path\":\"locked\"}"),
@@ -3486,7 +3552,6 @@ mod tests {
         let text = crate::output::render(&outcome.response, Format::Text, &RenderOptions {
             numbers: true,
             quiet: true,
-            cost_first: false,
         });
         let footer = text.lines().last().unwrap_or_default();
         footer
@@ -3499,7 +3564,6 @@ mod tests {
         let json = crate::output::render(&outcome.response, Format::Json, &RenderOptions {
             numbers: true,
             quiet: true,
-            cost_first: false,
         });
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let ignored = value["omitted"]
@@ -3861,7 +3925,6 @@ mod tests {
         let opts = RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         };
         let mut both = crate::output::render(&outcome.response, Format::Text, &opts);
         both.push_str(&crate::output::render(

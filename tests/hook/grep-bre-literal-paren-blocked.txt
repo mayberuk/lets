@@ -4,6 +4,6 @@ grep -rn 'call(x)' src/
 VERDICT block
 REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find 'call[(]x[)]' src/
+run: lets find -s 'call[(]x[)]' src/
 ===END===
 COMPARE search

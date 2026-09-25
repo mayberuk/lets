@@ -244,7 +244,6 @@ mod tests {
         crate::output::render(&outcome.response, Format::Text, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         })
     }
 

@@ -426,3 +426,36 @@ $ lets find needle many-hits.txt
 ERROR_CODE=over_cap
 
 ```
+
+Case is smart by default, as in ripgrep's `--smart-case`: a pattern with no uppercase letter
+searches case-insensitively, and a hit that matched only by ignoring case is named in the footer.
+`-s` forces exact case back; the second call is the control, finding nothing once folding is
+turned off. A pattern carrying an uppercase letter stays exact on its own, and a folded search
+whose hits all matched exactly anyway carries no case note.
+
+```console
+$ lets find 'billing plan' notes.md
+── notes.md
+1:	«Billing plan» renews monthly.
+2-	usage cap applies here.
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines · 1 hit matches only ignoring case (-s for exact case)
+
+$ lets find 'billing plan' -s notes.md
+? 1
+── 0 hits in 0 files · searched 1 file
+no hits for «billing plan»
+ERROR_CODE=not_found
+
+$ lets find 'Billing plan' notes.md
+── notes.md
+1:	«Billing plan» renews monthly.
+2-	usage cap applies here.
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines
+
+$ lets find 'usage cap' notes.md
+── notes.md
+1-	Billing plan renews monthly.
+2:	«usage cap» applies here.
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines
+
+```

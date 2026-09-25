@@ -412,16 +412,24 @@ fn the_guessed_span_refusal_on_a_lua_function_inserts_after_its_end_at_top_level
 /// A `.toml` case can't unset `LETS_NO_STATS`: trycmd merges the suite env back in after
 /// `[env] remove`.
 #[test]
-fn show_all_prints_the_cost_line_before_the_first_header() {
+fn show_all_never_prints_a_cost_line_even_with_stats_enabled() {
     let sandbox = support::sandbox::sandbox("read");
 
     let run = sandbox.bash("unset LETS_NO_STATS; lets show big.ts --all");
 
     assert_eq!(run.code, 0);
+    assert!(!run.out.contains("tokens"), "{}", run.out);
     let first = run.out.lines().next().expect("show --all has output");
     assert!(
-        first.starts_with("── ~") && first.ends_with(" tokens"),
-        "the cost line must lead: {first}"
+        first.starts_with("── big.ts"),
+        "the header must lead: {first}"
+    );
+
+    let json = sandbox.bash("unset LETS_NO_STATS; lets show big.ts --all --json");
+    assert!(
+        json.out.contains("\"tokens_est\":") && !json.out.contains("\"tokens_est\":null"),
+        "{}",
+        json.out
     );
 }
 

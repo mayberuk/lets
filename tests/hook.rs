@@ -740,7 +740,7 @@ const SHOW_A: &str = "COMMAND\ncat src/a.ts\n===END===\nVERDICT rewrite\nREASON 
 
 const FIND_FOO: &str = "COMMAND\nrg foo src/e.ts\n===END===\nVERDICT block\nREASON lets find \
                         returns every hit numbered and grouped by file.\nREPLACEMENT\nrun: lets \
-                        find 'foo' src/e.ts\n===END===\nCOMPARE search\n";
+                        find -s 'foo' src/e.ts\n===END===\nCOMPARE search\n";
 
 /// A stale xfail marker would hide the day a case starts passing.
 #[test]

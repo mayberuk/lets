@@ -1711,10 +1711,25 @@ fn build_specs(args: &EditArgs) -> Result<Vec<EditSpec>, Error> {
                 "an edit spec (`--from` reads `-`, stdin, only)".to_owned(),
             ));
         }
-        return parse_batch(&stdin_text("--from -")?);
+        return parse_batch(&stdin_text("--from -")?).map_err(|error| with_batch_example(&error));
     }
     from_args(args)
 }
+
+/// Trial sessions that got the batch format wrong had only the parse failure to go on, called
+/// `lets guide`, and gave up rather than retry; the example runs as written.
+fn with_batch_example(error: &Error) -> Error {
+    usage(format!("{error}\n\n{BATCH_EXAMPLE}"))
+}
+
+const BATCH_EXAMPLE: &str = "lets edit --from - <<'LETS'\n\
+@@ a.ts\n\
+<<<<<<< old\n\
+cap = 10\n\
+======= new\n\
+cap = 20\n\
+>>>>>>>\n\
+LETS";
 
 fn stdin_text(flag: &str) -> Result<String, Error> {
     let mut raw = Vec::new();
@@ -2292,7 +2307,6 @@ mod tests {
         crate::output::render(&outcome.response, Format::Text, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         })
     }
 
@@ -3604,7 +3618,7 @@ mod tests {
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         let text = rendered(&outcome);
         assert!(text.contains("\u{b7}\t:3-40 not shown"), "{text}");
-        assert!(text.contains("\u{b7} :3-40 not shown \u{b7}"), "{text}");
+        assert!(text.contains("\u{b7} :3-40 not shown\n"), "{text}");
         let Body::Edit(results) = &outcome.response.body else {
             panic!("a replacement renders as Body::Edit");
         };
@@ -3623,7 +3637,6 @@ mod tests {
         let json = crate::output::render(&outcome.response, Format::Json, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         });
         assert!(json.contains("\"marker\":\"gap\""), "{json}");
         assert!(json.contains("\"region_gap\""), "{json}");

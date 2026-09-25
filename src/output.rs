@@ -24,7 +24,6 @@ pub enum Format {
 pub struct RenderOptions {
     pub numbers: bool,
     pub quiet: bool,
-    pub cost_first: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -556,6 +555,10 @@ pub enum Omission {
         pattern: String,
         read_as: String,
     },
+    /// Smart case folded the search; these hits have no case-sensitive match of the pattern.
+    CaseFolded {
+        hits: usize,
+    },
 }
 
 /// `find` hits printed with their enclosing symbol or `around` lines either side. `unparsed` of
@@ -761,6 +764,14 @@ impl fmt::Display for Omission {
                 f,
                 "\u{ab}{pattern}\u{bb} had no hits, read grep-style as \u{ab}{read_as}\u{bb}"
             ),
+            Omission::CaseFolded { hits } => {
+                let matches = if *hits == 1 { "matches" } else { "match" };
+                write!(
+                    f,
+                    "{hits} hit{} {matches} only ignoring case (-s for exact case)",
+                    plural_suffix(*hits)
+                )
+            },
         }
     }
 }
@@ -873,16 +884,9 @@ fn error_text(message: &str, slug: &str) -> String {
 fn render_text(resp: &Response, opts: RenderOptions) -> String {
     let mut out = String::with_capacity(capacity_hint(resp));
     let width = number_width(resp);
-    let cost = resp.stats.tokens_est().map(cost_segment);
     match &resp.body {
         Body::Raw { text, .. } => out.push_str(text),
         Body::Targets(blocks) => {
-            // `show --all` ignores the budget, so the bill comes before the body.
-            if opts.cost_first
-                && let Some(cost) = &cost
-            {
-                writeln!(out, "── {cost}").unwrap();
-            }
             for block in blocks {
                 push_target_header(&mut out, block);
                 push_lines(&mut out, &block.lines, width, opts);
@@ -890,12 +894,7 @@ fn render_text(resp: &Response, opts: RenderOptions) -> String {
             if !opts.quiet {
                 push_top_files(&mut out, &resp.top_files, resp.top_files_more);
             }
-            push_footer(
-                &mut out,
-                &[&resp.footer.summary],
-                &resp.omitted,
-                cost.as_deref(),
-            );
+            push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
         },
         Body::Files(paths) => {
             if !opts.quiet {
@@ -903,28 +902,18 @@ fn render_text(resp: &Response, opts: RenderOptions) -> String {
                     writeln!(out, "{}", path.display()).unwrap();
                 }
             }
-            push_footer(
-                &mut out,
-                &[&resp.footer.summary],
-                &resp.omitted,
-                cost.as_deref(),
-            );
+            push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
         },
         Body::Counts(rows) => {
-            push_footer(
-                &mut out,
-                &[&resp.footer.summary],
-                &resp.omitted,
-                cost.as_deref(),
-            );
+            push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
             push_count_rows(&mut out, rows, opts);
         },
         Body::Edit(results) => {
-            push_edit(&mut out, resp, results, width, opts, cost.as_deref());
+            push_edit(&mut out, resp, results, width, opts);
         },
         Body::Write(result) => push_write(&mut out, result, &resp.omitted),
         Body::Transform(results) => {
-            push_transform(&mut out, resp, results, width, opts, cost.as_deref());
+            push_transform(&mut out, resp, results, width, opts);
         },
         Body::Stats(report) => push_stats(&mut out, report),
         Body::Update(check) => push_update(&mut out, check),
@@ -1057,7 +1046,6 @@ fn push_edit(
     results: &[EditResult],
     width: usize,
     opts: RenderOptions,
-    cost: Option<&str>,
 ) {
     if !opts.quiet {
         for result in results {
@@ -1081,9 +1069,9 @@ fn push_edit(
             )
         };
         let unchanged = if only.reverted { "file unchanged" } else { "" };
-        push_footer(out, &[&check, unchanged, &sha], &resp.omitted, cost);
+        push_footer(out, &[&check, unchanged, &sha], &resp.omitted);
     } else {
-        push_footer(out, &[&resp.footer.summary], &resp.omitted, cost);
+        push_footer(out, &[&resp.footer.summary], &resp.omitted);
     }
 }
 
@@ -1178,7 +1166,6 @@ fn push_transform(
     results: &[TransformResult],
     width: usize,
     opts: RenderOptions,
-    cost: Option<&str>,
 ) {
     if !opts.quiet {
         for result in results {
@@ -1196,14 +1183,9 @@ fn push_transform(
             only.sha.before.as_str(),
             only.sha.after.as_str()
         );
-        push_footer(
-            out,
-            &[&resp.footer.summary, &check, &sha],
-            &resp.omitted,
-            cost,
-        );
+        push_footer(out, &[&resp.footer.summary, &check, &sha], &resp.omitted);
     } else {
-        push_footer(out, &[&resp.footer.summary], &resp.omitted, cost);
+        push_footer(out, &[&resp.footer.summary], &resp.omitted);
     }
 }
 
@@ -1272,7 +1254,7 @@ fn push_write(out: &mut String, result: &WriteResult, omitted: &[Omission]) {
             if let Some(check) = &result.check {
                 writeln!(out, "── {}", check_line(check)).unwrap();
             }
-            push_footer(out, &[], omitted, None);
+            push_footer(out, &[], omitted);
         },
     }
 }
@@ -1330,9 +1312,9 @@ fn push_stats(out: &mut String, report: &StatsReport) {
     }
 }
 
-fn push_footer(out: &mut String, lead: &[&str], omitted: &[Omission], cost: Option<&str>) {
+fn push_footer(out: &mut String, lead: &[&str], omitted: &[Omission]) {
     let lead = lead.iter().filter(|s| !s.is_empty());
-    if lead.clone().count() == 0 && omitted.is_empty() && cost.is_none() {
+    if lead.clone().count() == 0 && omitted.is_empty() {
         return;
     }
     out.push_str("── ");
@@ -1345,10 +1327,6 @@ fn push_footer(out: &mut String, lead: &[&str], omitted: &[Omission], cost: Opti
         push_segment(out, &mut first);
         write!(out, "{omission}").unwrap();
     }
-    if let Some(cost) = cost {
-        push_segment(out, &mut first);
-        out.push_str(cost);
-    }
     out.push('\n');
 }
 
@@ -1358,15 +1336,6 @@ fn push_segment(out: &mut String, first: &mut bool) {
     } else {
         out.push_str(" · ");
     }
-}
-
-/// Under 100 tokens a tenth-of-a-thousand reading rounds to `0.0k`, which states nothing.
-fn cost_segment(tokens: usize) -> String {
-    if tokens < 100 {
-        return format!("~{tokens} tokens");
-    }
-    let tenths = (tokens + 50) / 100;
-    format!("~{}.{}k tokens", tenths / 10, tenths % 10)
 }
 
 pub fn plural_suffix(n: usize) -> &'static str {
@@ -1571,7 +1540,6 @@ mod tests {
         RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         }
     }
 
@@ -1579,7 +1547,6 @@ mod tests {
         RenderOptions {
             numbers: true,
             quiet: true,
-            cost_first: false,
         }
     }
 
@@ -1743,7 +1710,6 @@ mod tests {
         let out = render(&targets(vec![b], 0), Format::Text, &RenderOptions {
             numbers: false,
             quiet: false,
-            cost_first: false,
         });
 
         assert!(out.contains("\nkept\nreplaced\n"), "{out}");
@@ -1764,7 +1730,7 @@ mod tests {
     }
 
     #[test]
-    fn footer_names_every_omission_in_push_order_then_the_cost() {
+    fn footer_names_every_omission_in_push_order() {
         let mut resp = targets(vec![], 3600);
         resp.footer.summary = "find 'onBack' · 4 hits in 2 files · searched 31 files".to_owned();
         resp.omitted = vec![Omission::HitCap { hits: 312, cap: 50 }, Omission::Ignored {
@@ -1778,33 +1744,7 @@ mod tests {
         assert_eq!(
             out,
             "── find 'onBack' · 4 hits in 2 files · searched 31 files · over the 50-hit cap · \
-             narrow the pattern or the paths, or --files · ignored 12 (gitignore 9 · hidden 3) · \
-             ~0.9k tokens\n"
-        );
-    }
-
-    #[test]
-    fn cost_first_puts_the_cost_line_before_the_first_header() {
-        let mut b = block("a.ts", 9, 10, 1234);
-        b.lines = vec![line(9, Marker::None, "kept")];
-        let out = render(&targets(vec![b], 3600), Format::Text, &RenderOptions {
-            numbers: true,
-            quiet: false,
-            cost_first: true,
-        });
-
-        assert_eq!(first_line(&out), "── ~0.9k tokens", "{out}");
-    }
-
-    #[test]
-    fn without_cost_first_the_header_stays_first() {
-        let mut b = block("a.ts", 9, 10, 1234);
-        b.lines = vec![line(9, Marker::None, "kept")];
-        let out = render(&targets(vec![b], 3600), Format::Text, &opts());
-
-        assert!(
-            first_line(&out).starts_with("── a.ts"),
-            "the header leads unless --all asked for the cost first: {out}"
+             narrow the pattern or the paths, or --files · ignored 12 (gitignore 9 · hidden 3)\n"
         );
     }
 
@@ -1826,7 +1766,7 @@ mod tests {
         assert_eq!(
             out,
             "── find 'onBack' · ignored 12 (gitignore 9 · hidden 3) · over the 50-hit cap · \
-             narrow the pattern or the paths, or --files · ~0.9k tokens\n"
+             narrow the pattern or the paths, or --files\n"
         );
     }
 
@@ -2014,14 +1954,11 @@ mod tests {
         assert_eq!(resp.stats.tokens_est(), Some(450));
 
         resp.footer.summary = "showed 1 file".to_owned();
-        assert_eq!(
-            render(&resp, Format::Text, &opts()),
-            "── showed 1 file · ~0.5k tokens\n"
-        );
+        assert_eq!(render(&resp, Format::Text, &opts()), "── showed 1 file\n");
     }
 
     #[test]
-    fn the_text_cost_and_the_json_cost_come_from_one_number() {
+    fn the_json_cost_stays_and_the_text_footer_drops_it() {
         // Token estimates are bytes ÷ 4, so 3600 bytes is 900 tokens.
         let mut resp = targets(vec![block("a.ts", 1, 1, 1)], 3600);
         resp.footer.summary = "showed 1 file".to_owned();
@@ -2031,15 +1968,7 @@ mod tests {
             serde_json::from_str(&render(&resp, Format::Json, &opts())).expect("valid json");
 
         assert_eq!(json["stats"]["tokens_est"], 900);
-        assert!(text.ends_with("· ~0.9k tokens\n"), "{text}");
-        assert_eq!(cost_segment(900), "~0.9k tokens");
-    }
-
-    #[test]
-    fn cost_segment_uses_thousands_only_where_a_tenth_reads() {
-        assert_eq!(cost_segment(210), "~0.2k tokens");
-        assert_eq!(cost_segment(2600), "~2.6k tokens");
-        assert_eq!(cost_segment(99), "~99 tokens");
+        assert!(!text.contains("tokens"), "{text}");
     }
 
     #[test]
@@ -2118,7 +2047,7 @@ mod tests {
             "── .claude/plans/rt-fe-wire-and-retire-BRIEF.md\n\
              549:\t## Back navigation\n\
              550-\tThe «onBack» handler …\n\
-             ── 4 hits in 2 files · searched 31 files · ~0.9k tokens\n"
+             ── 4 hits in 2 files · searched 31 files\n"
         );
     }
 
@@ -2221,7 +2150,7 @@ mod tests {
              40 \texport function usage() {\n\
              42~\t  const cap = 20\n\
              44 \t}\n\
-             ── check: structure ok · sha:e77be77be77b→b410b410b410 · ~0.2k tokens\n"
+             ── check: structure ok · sha:e77be77be77b→b410b410b410\n"
         );
     }
 
@@ -2240,7 +2169,7 @@ mod tests {
 
         assert_eq!(
             out,
-            "── check: structure ok · sha:e77be77be77b→b410b410b410 · ~0.2k tokens\n"
+            "── check: structure ok · sha:e77be77be77b→b410b410b410\n"
         );
     }
 
@@ -2335,7 +2264,7 @@ mod tests {
             "── src/a.ts · 1 replacement · line 42\n\
              ── src/b.ts · 1 replacement · line 3\n\
              ── src/c.ts · inserted 1 line after line 1\n\
-             ── 3 files · 3 edits · all applied · checks: structure ok ×3 · ~0.4k tokens\n"
+             ── 3 files · 3 edits · all applied · checks: structure ok ×3\n"
         );
         assert!(
             !out.contains("sha:"),
@@ -2472,7 +2401,7 @@ mod tests {
             serde_json::from_str(&render(&resp, Format::Json, &opts())).expect("valid json");
 
         assert!(
-            text.contains("── check: structure ok · sha:e77be77be77b→b410b410b410 · normalized · "),
+            text.contains("── check: structure ok · sha:e77be77be77b→b410b410b410 · normalized"),
             "{text}"
         );
         assert_eq!(keys(&value), [
@@ -3144,6 +3073,14 @@ mod tests {
                     read_as: "a|b".to_owned(),
                 },
                 r"«a\|b» had no hits, read grep-style as «a|b»",
+            ),
+            (
+                Omission::CaseFolded { hits: 1 },
+                "1 hit matches only ignoring case (-s for exact case)",
+            ),
+            (
+                Omission::CaseFolded { hits: 3 },
+                "3 hits match only ignoring case (-s for exact case)",
             ),
         ];
         for (omission, expected) in cases {

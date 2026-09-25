@@ -512,6 +512,37 @@ const cap = 10
 EOF
 ? 64
 line 1: usage.ts: no `======= new` section
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+LETS
+ERROR_CODE=usage
+
+```
+
+```console
+$ lets edit --from - <<'EOF'
+@@ usage.ts
+<<<<<<< old
+const cap = 10
+>>>>>>>
+EOF
+? 64
+line 1: usage.ts: no `======= new` section
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+LETS
 ERROR_CODE=usage
 
 ```
@@ -523,6 +554,15 @@ EOF
 ? 64
 line 1: unknown key "neww"
 line 1: no "new"
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+LETS
 ERROR_CODE=usage
 
 ```
@@ -533,6 +573,15 @@ $ lets edit --from - <<'EOF'
 EOF
 ? 64
 line 1: "new" must be a string
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+LETS
 ERROR_CODE=usage
 
 ```
@@ -543,6 +592,15 @@ $ lets edit --from - <<'EOF'
 EOF
 ? 64
 line 1: exactly one of "old", "insert_after" or "insert_before" is required · found old, insert_after
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+LETS
 ERROR_CODE=usage
 
 ```

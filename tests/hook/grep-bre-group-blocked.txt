@@ -4,6 +4,6 @@ grep '\(alpha\)' src/grep.txt
 VERDICT block
 REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find '(alpha)' src/grep.txt
+run: lets find -s '(alpha)' src/grep.txt
 ===END===
 COMPARE search

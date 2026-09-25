@@ -11,6 +11,7 @@ use tree_sitter::{Node, Parser};
 use super::permissions::{Access, Rules, Sources};
 use super::{Verdict, bre};
 use crate::grammars::{self, Language};
+use crate::verbs::find::pattern_has_uppercase;
 
 /// Each variant keeps the words it names as paths, which Claude Code's own rules are checked
 /// against before any `lets` command is offered for them.
@@ -894,7 +895,7 @@ fn classify_find(
     findings: &mut Vec<Finding>,
 ) {
     let Some(Search {
-        flags,
+        mut flags,
         syntax,
         recursive,
     }) = find_flags(arguments, head)
@@ -944,6 +945,12 @@ fn classify_find(
     let Some(pattern) = translated else {
         return;
     };
+    // grep/rg without `-i` are case-sensitive; `lets find` defaults to smart case, so a
+    // lowercase translated pattern needs `-s` to keep the replacement's matches identical.
+    let fixed_string = flags.first().is_some_and(|flag| flag == "-F");
+    if !flags.iter().any(|flag| flag == "-i") && !pattern_has_uppercase(&pattern, fixed_string) {
+        flags.insert(usize::from(fixed_string), "-s".to_owned());
+    }
     findings.push(Finding::Find {
         flags,
         translated: pattern != *written,
@@ -2110,7 +2117,7 @@ mod tests {
             ("sed -n '9,99p' src/a.ts; ls", "lets show src/a.ts:9-99; ls"),
             (
                 "cat src/a.ts; grep -n x src/b.ts",
-                "lets show src/a.ts --all; lets find 'x' src/b.ts",
+                "lets show src/a.ts --all; lets find -s 'x' src/b.ts",
             ),
             (
                 "cat src/a.ts & git status",
@@ -2139,7 +2146,7 @@ mod tests {
         let reason = blocked("rg cap src/a.ts\ngit status");
 
         assert!(
-            reason.ends_with("\nrun: lets find 'cap' src/a.ts"),
+            reason.ends_with("\nrun: lets find -s 'cap' src/a.ts"),
             "{reason}"
         );
     }
@@ -2152,7 +2159,7 @@ mod tests {
         );
         let reason = blocked("cat src/a.ts && rg cap src/b.ts");
         assert!(
-            reason.ends_with("\nrun: lets show src/a.ts\nrun: lets find 'cap' src/b.ts"),
+            reason.ends_with("\nrun: lets show src/a.ts\nrun: lets find -s 'cap' src/b.ts"),
             "{reason}"
         );
     }
@@ -3225,25 +3232,28 @@ mod tests {
 
     #[test]
     fn a_displayed_search_blocks_with_lets_find() {
-        assert!(blocked("grep -n 'cap' src/a.ts").contains("run: lets find 'cap' src/a.ts"));
-        assert!(blocked("rg 'cap' src/").contains("run: lets find 'cap' src/"));
+        assert!(blocked("grep -n 'cap' src/a.ts").contains("run: lets find -s 'cap' src/a.ts"));
+        assert!(blocked("rg 'cap' src/").contains("run: lets find -s 'cap' src/"));
     }
 
     #[test]
     fn a_search_carries_its_match_changing_flags() {
-        assert!(blocked("grep -F 'a.b' src/a.ts").contains("run: lets find -F 'a.b' src/a.ts"));
+        assert!(blocked("grep -F 'a.b' src/a.ts").contains("run: lets find -F -s 'a.b' src/a.ts"));
         assert!(
             blocked("grep -i -w 'cap' src/a.ts").contains("run: lets find -i -w 'cap' src/a.ts")
         );
-        assert!(blocked("grep -C 3 'cap' src/a.ts").contains("run: lets find -C 3 'cap' src/a.ts"));
         assert!(
-            blocked("grep -A 2 -B 2 'cap' src/a.ts").contains("run: lets find -C 2 'cap' src/a.ts")
+            blocked("grep -C 3 'cap' src/a.ts").contains("run: lets find -s -C 3 'cap' src/a.ts")
         );
         assert!(
-            blocked("grep -l 'cap' src/a.ts").contains("run: lets find --files 'cap' src/a.ts")
+            blocked("grep -A 2 -B 2 'cap' src/a.ts")
+                .contains("run: lets find -s -C 2 'cap' src/a.ts")
         );
         assert!(
-            blocked("grep -c 'cap' src/a.ts").contains("run: lets find --count 'cap' src/a.ts")
+            blocked("grep -l 'cap' src/a.ts").contains("run: lets find -s --files 'cap' src/a.ts")
+        );
+        assert!(
+            blocked("grep -c 'cap' src/a.ts").contains("run: lets find -s --count 'cap' src/a.ts")
         );
         assert!(blocked("rg -iF 'a.b' src/").contains("run: lets find -F -i 'a.b' src/"));
         assert!(
@@ -3265,7 +3275,7 @@ mod tests {
 
     #[test]
     fn a_pathless_search_blocks_only_where_it_searches_the_tree() {
-        assert!(blocked("rg 'cap'").contains("run: lets find 'cap'"));
+        assert!(blocked("rg 'cap'").contains("run: lets find -s 'cap'"));
         assert_allowed("grep 'cap'");
         assert_allowed("cat src/a.ts | rg 'cap'");
     }
@@ -3274,8 +3284,14 @@ mod tests {
     fn two_searches_keep_two_find_lines() {
         let reason = blocked("grep 'a' src/a.ts && grep 'b' src/b.ts");
 
-        assert!(reason.contains("run: lets find 'a' src/a.ts"), "{reason}");
-        assert!(reason.contains("run: lets find 'b' src/b.ts"), "{reason}");
+        assert!(
+            reason.contains("run: lets find -s 'a' src/a.ts"),
+            "{reason}"
+        );
+        assert!(
+            reason.contains("run: lets find -s 'b' src/b.ts"),
+            "{reason}"
+        );
     }
 
     #[test]
@@ -3311,7 +3327,7 @@ mod tests {
         assert!(blocked("cat src/a.ts /etc/hosts").contains("run: lets show src/a.ts /etc/hosts"));
         assert!(
             blocked("grep 'cap' src/a.ts /etc/hosts")
-                .contains("run: lets find 'cap' src/a.ts /etc/hosts")
+                .contains("run: lets find -s 'cap' src/a.ts /etc/hosts")
         );
     }
 
@@ -3514,7 +3530,7 @@ mod tests {
 
         assert!(reason.contains("run: cd src && lets show a.ts"), "{reason}");
         assert!(
-            reason.contains("run: cd src && lets find 'foo' b.ts"),
+            reason.contains("run: cd src && lets find -s 'foo' b.ts"),
             "{reason}"
         );
     }
@@ -3583,7 +3599,7 @@ mod tests {
     fn a_plain_unquoted_glob_passes_into_the_replacement_unquoted() {
         assert!(blocked("cat src/*.ts").contains("run: lets show src/*.ts"));
         assert!(blocked("cat src/?.ts").contains("run: lets show src/?.ts"));
-        assert!(blocked("grep -n foo src/*.ts").contains("run: lets find 'foo' src/*.ts"));
+        assert!(blocked("grep -n foo src/*.ts").contains("run: lets find -s 'foo' src/*.ts"));
         assert!(blocked("cat \"src\"/*.ts").contains("run: lets show src/*.ts"));
     }
 
@@ -3632,7 +3648,7 @@ mod tests {
 
     #[test]
     fn a_find_path_is_not_read_as_a_target() {
-        assert!(blocked("grep -n foo C#.md").contains("run: lets find 'foo' 'C#.md'"));
+        assert!(blocked("grep -n foo C#.md").contains("run: lets find -s 'foo' 'C#.md'"));
     }
 
     #[test]
@@ -3648,12 +3664,12 @@ mod tests {
         ] {
             assert_allowed(command);
         }
-        assert!(blocked("grep -r foo src").contains("run: lets find 'foo' src"));
-        assert!(blocked("grep -R foo src").contains("run: lets find 'foo' src"));
-        assert!(blocked("grep --recursive foo src").contains("run: lets find 'foo' src"));
-        assert!(blocked("grep foo src/*.ts").contains("run: lets find 'foo' src/*.ts"));
-        assert!(blocked("grep foo src/?.ts").contains("run: lets find 'foo' src/?.ts"));
-        assert!(blocked("rg foo src").contains("run: lets find 'foo' src"));
+        assert!(blocked("grep -r foo src").contains("run: lets find -s 'foo' src"));
+        assert!(blocked("grep -R foo src").contains("run: lets find -s 'foo' src"));
+        assert!(blocked("grep --recursive foo src").contains("run: lets find -s 'foo' src"));
+        assert!(blocked("grep foo src/*.ts").contains("run: lets find -s 'foo' src/*.ts"));
+        assert!(blocked("grep foo src/?.ts").contains("run: lets find -s 'foo' src/?.ts"));
+        assert!(blocked("rg foo src").contains("run: lets find -s 'foo' src"));
     }
 
     #[test]
@@ -3671,11 +3687,11 @@ mod tests {
     fn an_escaped_argument_is_read_as_the_command_receives_it() {
         assert!(
             blocked(r"grep alpha\|beta src/grep.txt")
-                .contains("run: lets find 'alpha[|]beta' src/grep.txt")
+                .contains("run: lets find -s 'alpha[|]beta' src/grep.txt")
         );
         assert!(
             blocked(r#"grep "alpha\\|beta" src/grep.txt"#)
-                .contains("run: lets find 'alpha|beta' src/grep.txt")
+                .contains("run: lets find -s 'alpha|beta' src/grep.txt")
         );
         assert!(blocked(r"cat my\ dir/a.ts").contains("run: lets show 'my dir/a.ts'"));
         assert!(blocked(r"cd my\ dir && cat a.ts").contains("run: cd 'my dir' && lets show a.ts"));
@@ -3700,7 +3716,7 @@ mod tests {
             assert_allowed(command);
         }
         assert!(
-            blocked("grep -E 'foo|bar' src/a.ts").contains("run: lets find 'foo|bar' src/a.ts")
+            blocked("grep -E 'foo|bar' src/a.ts").contains("run: lets find -s 'foo|bar' src/a.ts")
         );
     }
 
@@ -3713,7 +3729,7 @@ mod tests {
             "{reason}"
         );
         assert!(
-            reason.contains("run: cd src && lets find 'a|b' grep.txt"),
+            reason.contains("run: cd src && lets find -s 'a|b' grep.txt"),
             "{reason}"
         );
     }
@@ -3727,23 +3743,26 @@ mod tests {
 
     #[test]
     fn grep_g_is_a_basic_regex_like_plain_grep() {
-        assert!(blocked(r"grep -G 'a\|b' src/a.ts").contains(r"run: lets find 'a|b' src/a.ts"));
+        assert!(blocked(r"grep -G 'a\|b' src/a.ts").contains(r"run: lets find -s 'a|b' src/a.ts"));
         assert!(
             blocked(r"grep --basic-regexp 'a\|b' src/a.ts")
-                .contains(r"run: lets find 'a|b' src/a.ts")
+                .contains(r"run: lets find -s 'a|b' src/a.ts")
         );
     }
 
     #[test]
     fn extended_fixed_and_rg_patterns_pass_unchanged() {
         for (command, run) in [
-            ("grep -E 'a|b' src/a.ts", "run: lets find 'a|b' src/a.ts"),
+            ("grep -E 'a|b' src/a.ts", "run: lets find -s 'a|b' src/a.ts"),
             (
                 "grep --extended-regexp 'f(x)' src/a.ts",
-                "run: lets find 'f(x)' src/a.ts",
+                "run: lets find -s 'f(x)' src/a.ts",
             ),
-            ("grep -F 'a|b' src/a.ts", "run: lets find -F 'a|b' src/a.ts"),
-            (r"rg 'a\|b' src/", r"run: lets find 'a\|b' src/"),
+            (
+                "grep -F 'a|b' src/a.ts",
+                "run: lets find -F -s 'a|b' src/a.ts",
+            ),
+            (r"rg 'a\|b' src/", r"run: lets find -s 'a\|b' src/"),
         ] {
             let reason = blocked(command);
             assert!(reason.contains(run), "{command:?}: {reason}");
@@ -3760,7 +3779,7 @@ mod tests {
 
     #[test]
     fn a_plain_grep_star_with_nothing_to_repeat_searches_for_a_star() {
-        assert!(blocked(r"grep -rn '*a' src/").contains(r"run: lets find '\*a' src/"));
+        assert!(blocked(r"grep -rn '*a' src/").contains(r"run: lets find -s '\*a' src/"));
     }
 
     #[test]
@@ -3768,6 +3787,6 @@ mod tests {
         assert_allowed("grep -E -F 'a' src/a.ts");
         assert_allowed("grep -G -E 'a' src/a.ts");
         assert_allowed("grep -FG 'a' src/a.ts");
-        assert!(blocked("grep -E -E 'a' src/a.ts").contains("run: lets find 'a' src/a.ts"));
+        assert!(blocked("grep -E -E 'a' src/a.ts").contains("run: lets find -s 'a' src/a.ts"));
     }
 }

@@ -4,6 +4,6 @@ rg foo src/c.ts; rg foo src/e.ts
 VERDICT block
 REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find 'foo' src/c.ts; lets find 'foo' src/e.ts
+run: lets find -s 'foo' src/c.ts; lets find -s 'foo' src/e.ts
 ===END===
 COMPARE search

@@ -4,6 +4,6 @@ cd src && grep -n foo c.ts
 VERDICT block
 REASON `cd src` kept; lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: cd src && lets find 'foo' c.ts
+run: cd src && lets find -s 'foo' c.ts
 ===END===
 COMPARE search

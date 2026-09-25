@@ -162,3 +162,4 @@ toml-insert-after-before-comment.trycmd
 toml-insert-after-before-comment.out
 batch-truncated-spans-name-their-files.toml
 batch-truncated-spans-name-their-files.out
+from-batch-malformed-shows-a-runnable-example.toml

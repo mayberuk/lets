@@ -97,6 +97,7 @@ grep-extended-blocked
 grep-fixed-blocked
 grep-glob-with-directory-allowed
 grep-ignore-case-blocked
+grep-ignore-case-keeps-i-blocked
 grep-include-allowed
 grep-into-head-allowed
 grep-missing-file-allowed
@@ -104,6 +105,7 @@ grep-only-matching-allowed
 grep-recursive-directory-blocked
 grep-redirect-allowed
 grep-two-patterns-allowed
+grep-uppercase-pattern-no-smart-case-blocked
 grep-word-blocked
 hash-path-rewritten
 hash-path-with-range-allowed

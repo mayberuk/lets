@@ -23,12 +23,17 @@ files are skipped unless asked for. Capped at 50 hits by default — over the ca
 printed; instead a bounded map of the files holding the most hits, so the next call can narrow to
 one of them. Replaces `grep -rn` and `rg` run directly in the shell.
 
+Case is smart by default, as in `ripgrep --smart-case`: insensitive when the pattern has no
+uppercase letter, exact otherwise. `-i` forces insensitive; `-s` forces exact case. A hit that
+matched only because case was ignored is named in the footer.
+
 ## Flags
 
 | Flag | Meaning | Default |
 |---|---|---|
 | `-F, --fixed-string` | match the pattern literally, not as a regex | off |
-| `-i, --ignore-case` | case-insensitive | off |
+| `-i, --ignore-case` | force case-insensitive | off |
+| `-s, --case-sensitive` | force exact case, overriding smart case | off |
 | `-w, --word` | match whole words only | off |
 | `--cap <N>` | raise the hit cap (prints hits, not the over-cap map) | 50 |
 | `-l, --files` | list matching files only, one bare path per line, no cap | off |
@@ -82,6 +87,8 @@ Over the cap, no hit lines print. Instead:
 - A regex holding one of grep's BRE escapes (`\|`, `\(`, `\)`, `\{`, `\}`, `\+`, `\?`) that
   matches nothing is retried read grep-style, and the footer names the reading used:
   `· «A\|B» had no hits, read grep-style as «A|B»`.
+- Smart case folded the search and one or more hits have no case-sensitive match of the pattern:
+  `· 3 hits match only ignoring case (-s for exact case)`.
 
 ## Exit codes
 
@@ -105,7 +112,7 @@ $ lets find usageCap
 1:  export const «usageCap» = 10
 ── src/usage.ts
 1:  import { «usageCap» } from './config'
-── 2 hits in 2 files · searched 3 files · ~17 tokens
+── 2 hits in 2 files · searched 3 files
 ```
 
 Two patterns at once, with context:

@@ -199,7 +199,6 @@ impl Staged {
                 let opts = RenderOptions {
                     numbers: true,
                     quiet: cli.global.quiet,
-                    cost_first: false,
                 };
                 let text = outcome
                     .response

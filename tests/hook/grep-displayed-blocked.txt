@@ -4,6 +4,6 @@ grep -n 'const foo' src/c.ts
 VERDICT block
 REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find 'const foo' src/c.ts
+run: lets find -s 'const foo' src/c.ts
 ===END===
 COMPARE search

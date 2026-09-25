@@ -213,8 +213,12 @@ pub struct FindArgs {
     pub paths: Vec<String>,
     #[arg(short = 'F', long)]
     pub fixed_string: bool,
-    #[arg(short = 'i', long)]
+    #[arg(short = 'i', long, conflicts_with = "case_sensitive")]
     pub ignore_case: bool,
+    /// Force exact case; default is smart case, insensitive only when the pattern has no
+    /// uppercase letter
+    #[arg(short = 's', long = "case-sensitive")]
+    pub case_sensitive: bool,
     #[arg(short = 'w', long)]
     pub word: bool,
     // 50: the SWE-agent-tuned cap on over-cap search suppression.
