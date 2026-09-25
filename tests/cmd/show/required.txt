@@ -25,3 +25,7 @@ mistyped-range-comma.trycmd
 mistyped-unquoted-regex.trycmd
 crlf-header.trycmd
 mistyped-range-colon.trycmd
+no-header.trycmd
+outline.trycmd
+outline-size-bound.trycmd
+outline-refusals.trycmd

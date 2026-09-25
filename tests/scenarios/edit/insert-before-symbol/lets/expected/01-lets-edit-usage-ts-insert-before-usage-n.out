@@ -1,5 +1,1 @@
-── usage.ts · inserted 1 line before #usage (line 3)
-2 	import { clock } from './clock'
-3+	/** Returns the running total for id. */
-4 	export function usage(id: string) {
-── check: structure ok · sha:c5525cc20b61→45b5b2745608
+── usage.ts · inserted 1 line before #usage (line 3) · check: structure ok · sha:c5525cc20b61→45b5b2745608

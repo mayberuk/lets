@@ -1072,6 +1072,52 @@ mod tests {
         assert!(!structured_check(StructuredLang::Frontmatter, before, unfenced).ok);
     }
 
+    /// `write.rs`'s own shape for a file with no prior state: `checker_for` picks the kind from
+    /// the path alone, and `layer1` gets an empty `before` plus one edit spanning all of `after`.
+    /// `src/hook/**` is expected to reuse this exact pair in-process, so a panic or a status this
+    /// shape did not already cover for a supported language is a real gap here, not there.
+    fn checker_for_fresh_file(name: &str, after: &[u8]) -> Layer1 {
+        let kind = checker_for(Path::new(name), after, 0)
+            .unwrap_or_else(|| panic!("{name} has a checker"));
+        layer1(kind, &[], after, &[(span(0, 0), after.len())])
+    }
+
+    #[test]
+    fn a_fresh_valid_rust_file_reports_ok() {
+        let check = checker_for_fresh_file("new.rs", b"fn main() {}\n");
+
+        assert!(check.ok);
+        assert_eq!(check.status, "ok");
+    }
+
+    #[test]
+    fn a_fresh_invalid_rust_file_reports_failed() {
+        let check = checker_for_fresh_file("new.rs", b"fn main( {\n");
+
+        assert!(!check.ok);
+        assert_eq!(check.status, "failed");
+    }
+
+    #[test]
+    fn a_fresh_valid_json_file_reports_ok() {
+        let check = checker_for_fresh_file("new.json", b"{\n  \"a\": 1\n}\n");
+
+        assert!(check.ok);
+        assert_eq!(check.status, "ok");
+    }
+
+    /// Structured formats never reach `failed()` — that status is reserved for the tree-sitter
+    /// path (`structural`'s `Verdict::Failed`). `structured` reports `errors_after > 0` as
+    /// `"invalid"`, unchanged from `an_edit_that_breaks_json_is_not_ok_and_counts_one_error_after`
+    /// above; pinning this shape to a literal `"failed"` would require changing that behavior.
+    #[test]
+    fn a_fresh_invalid_json_file_reports_invalid() {
+        let check = checker_for_fresh_file("new.json", b"{\n  \"a\": 1\n");
+
+        assert!(!check.ok);
+        assert_eq!(check.status, "invalid");
+    }
+
     /// Each span on its own, as `--all` hands them over; a single union span cannot express this.
     fn edit_all_and_check(lang: grammars::Language, before: &str, old: &str, new: &str) -> Layer1 {
         let edits: Vec<(matcher::Span, usize)> = before

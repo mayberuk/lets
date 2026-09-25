@@ -1,12 +1,1 @@
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── app.js · 1 replacement · line 2 · exact
-1 	export function usage(id) {
-2~	  const cap = 20
-3 	  return cap + id.length
-── lib.rs · inserted 1 line before #usage (line 1)
-1+	/// Returns the running total for id.
-2 	pub fn usage(id: &str) -> usize {
 ── 3 files · 3 edits · all applied · checks: structure ok ×3

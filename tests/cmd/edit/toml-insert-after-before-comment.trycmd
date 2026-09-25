@@ -4,10 +4,6 @@ the blank line and the comment, and the comment stays with `[deps]`.
 
 ```console
 $ lets edit t2.toml --insert-after '#package' --new 'version = "2"'
-── t2.toml · inserted 1 line after #package (line 2)
-2 	name = "x"
-3+	version = "2"
-4 	
-── check: toml ok · sha:[..]→[..]
+── t2.toml · inserted 1 line after #package (line 2) · check: toml ok · sha:970412923003→f01028e03598
 
 ```

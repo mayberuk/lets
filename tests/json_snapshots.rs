@@ -18,7 +18,7 @@ fn show_a_usage_symbol_target_as_json() {
     assert_eq!(run.code, 0);
     assert!(run.err.is_empty(), "{}", run.err);
     for key in [
-        "target", "path", "start", "end", "total", "resolver", "sha", "lines",
+        "target", "path", "start", "end", "total", "resolver", "lines",
     ] {
         assert!(
             run.out.contains(&format!("\"{key}\":")),
@@ -26,6 +26,40 @@ fn show_a_usage_symbol_target_as_json() {
             run.out
         );
     }
+    assert!(
+        !run.out.contains("\"sha\""),
+        "a read carries no sha: {}",
+        run.out
+    );
+    insta::assert_snapshot!(run.out);
+}
+
+#[test]
+fn show_a_line_range_as_jsonl_carries_no_sha() {
+    let sandbox = sandbox("read");
+
+    let run = sandbox.lets(["show", "big.ts:10-12", "--jsonl"]);
+
+    assert_eq!(run.code, 0);
+    assert!(run.err.is_empty(), "{}", run.err);
+    assert_eq!(run.out.lines().count(), 2, "one target record, one tail");
+    assert!(!run.out.contains("\"sha\""), "{}", run.out);
+}
+
+/// `store.go` defines `Open` at 44-46 and `Store.Open` at 213-215, and nothing else.
+#[test]
+fn show_an_outline_as_json() {
+    let sandbox = sandbox("read");
+
+    let run = sandbox.lets(["show", "store.go", "--outline", "--json"]);
+
+    assert_eq!(run.code, 0);
+    assert!(run.err.is_empty(), "{}", run.err);
+    assert!(run.out.contains(
+        "\"entries\":[{\"sig\":\"func Open(path string) (*Store, error) {\",\"line\":44,\"end_line\":46},\
+         {\"sig\":\"func (s *Store) Open(ctx context.Context) error {\",\"line\":213,\"end_line\":215}]"
+    ), "{}", run.out);
+    assert!(!run.out.contains("\"sha\""), "{}", run.out);
     insta::assert_snapshot!(run.out);
 }
 

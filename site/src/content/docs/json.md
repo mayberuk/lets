@@ -18,13 +18,24 @@ is why `tokens_est` reads `null`).
 
 ```json
 {"targets":[{"target":"usage.ts","path":"usage.ts","start":1,"end":9,"total":9,
-  "sha":"14dc685cb937","lines":[{"number":1,"marker":"none","text":"import { usageCap } from './config'"}]}],
+  "lines":[{"number":1,"marker":"none","text":"import { usageCap } from './config'"}]}],
  "omitted":[],"stats":{"lines":9,"bytes":189,"tokens_est":null}}
 ```
 
 A `#symbol` target adds a `"resolver"` key (`"tree-sitter"` or `"via heuristic (plaintext)"`
 text, depending on the verb). `--jsonl` prints one such object per target, no `targets` wrapper,
-then `{"stats":{...},"omitted":[]}`.
+then `{"stats":{...},"omitted":[]}`. A read carries no `sha`; `edit` does.
+
+`show --outline --json` puts one object per target under `outline`, each entry a definition's
+first line and range. `omitted` on a block is `true` when the size bound stopped it short:
+
+```json
+{"outline":[{"target":"store.go","path":"store.go","entries":[
+  {"sig":"func Open(path string) (*Store, error) {","line":44,"end_line":46},
+  {"sig":"func (s *Store) Open(ctx context.Context) error {","line":213,"end_line":215}],
+  "omitted":false}],
+ "omitted":[],"stats":{"lines":2,"bytes":105,"tokens_est":null}}
+```
 
 ## `find --json`
 

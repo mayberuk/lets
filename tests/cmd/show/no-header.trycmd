@@ -1,0 +1,63 @@
+`--no-header --no-numbers` on a complete range prints the file's own lines 2 through 4, byte for
+byte what `sed -n '2,4p'` prints: no header, no footer, the tab and the spaces kept. The second
+call is the control: without `--no-header` the same range has its header and its summary. A read
+the window cut still names the cut with `--no-header`; one the window left whole has no footer.
+
+```console
+$ lets show poem.txt:2-4 --no-header --no-numbers
+	beta
+  gamma
+delta
+
+$ lets show poem.txt:2-4 --no-numbers
+── poem.txt:2-4  (2-4 of 5)
+	beta
+  gamma
+delta
+── showed 1 target · 3 lines
+
+$ lets show poem.txt --no-header --window 2
+1 	alpha
+2 		beta
+── :3-5 not shown
+
+$ lets show poem.txt --no-header
+1 	alpha
+2 		beta
+3 	  gamma
+4 	delta
+5 	epsilon
+
+```
+
+CRLF stripping and lossy decoding are only ever named in the header; `--no-header` still owes the
+reader that fact, so it moves to the footer instead of vanishing:
+
+```console
+$ lets show crlf.txt --no-header --no-numbers
+one
+two
+── crlf.txt: crlf
+
+$ lets show lossy.txt --no-header
+1 	a�b
+2 	c
+── lossy.txt: non-UTF-8 line 1
+
+```
+
+A file whose last line has no trailing newline: `--no-header --no-numbers` matches `sed -n
+'1,3p'` byte for byte, with none of its own; numbers alone (the control) still add one, since that
+mode is not the byte-faithful one.
+
+```console
+$ lets show noeof.txt --no-header --no-numbers
+a
+b
+c
+$ lets show noeof.txt --no-header
+1 	a
+2 	b
+3 	c
+
+```

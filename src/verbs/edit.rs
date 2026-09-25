@@ -2386,13 +2386,15 @@ mod tests {
         let text = rendered(&outcome);
         assert!(
             text.contains(
-                "\u{2500}\u{2500} usage.ts \u{b7} 1 replacement \u{b7} line 3 \u{b7} exact"
+                "\u{2500}\u{2500} usage.ts \u{b7} 1 replacement \u{b7} line 3 \u{b7} check: \
+                 structure ok \u{b7} sha:"
             ),
             "{text}"
         );
-        assert!(text.contains("3~\t  const cap = 20"), "{text}");
-        assert!(text.contains("2 \t  const now = Date.now()"), "{text}");
-        assert!(text.contains("check: structure ok \u{b7} sha:"), "{text}");
+        assert!(
+            !text.contains("3~\t  const cap = 20"),
+            "an exact, check-passing edit renders one line with no per-line echo: {text}"
+        );
     }
 
     #[test]
@@ -2916,7 +2918,10 @@ mod tests {
         );
         let text = rendered(&outcome);
         assert!(text.contains("inserted 1 line after line 1"), "{text}");
-        assert!(text.contains("2+\timport { usage }"), "{text}");
+        assert!(
+            !text.contains("2+\timport { usage }"),
+            "a clean insert renders one line with no per-line echo: {text}"
+        );
     }
 
     #[test]
@@ -3784,8 +3789,13 @@ mod tests {
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         let text = rendered(&outcome);
-        assert!(text.contains("\u{b7}\t:3-40 not shown"), "{text}");
-        assert!(text.contains("\u{b7} :3-40 not shown\n"), "{text}");
+        // The gap named a hole in the per-line echo; terse drops that echo, so naming the hole
+        // in the footer too would describe something the reader never saw printed.
+        assert!(!text.contains("not shown"), "{text}");
+        assert!(
+            !text.contains("3~\t"),
+            "an exact, check-passing edit renders one line with no per-line echo: {text}"
+        );
         let Body::Edit(results) = &outcome.response.body else {
             panic!("a replacement renders as Body::Edit");
         };

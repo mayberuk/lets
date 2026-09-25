@@ -10,11 +10,13 @@ The footer is a contract, not a status line: if it does not name a narrowing, th
 not happen. `docs/agents.md` § The footer contract holds the full text.
 
 ## Always
-- Emit every header as `── <target>  (<a>-<b> of <N>[ · window W · :x-y not shown][ · via R]) · sha:<12 hex>`
+- Emit every header as `── <target>  (<a>-<b> of <N>[ · window W · :x-y not shown][ · via R])`
   and every footer as `── <verb summary>`; numbered lines right-aligned to the widest number, a
   tab, a `+`/`~` marker column that is blank otherwise. The tab, not two spaces, is the gutter
   separator, not two spaces — a model reads it the way it already reads `cat -n`, and cannot fold
-  it into the line's own indentation.
+  it into the line's own indentation. A read (`show`, `find`) carries no `sha:` at all; only an
+  `edit` result's one-line footer does, as `sha:<12 hex>` (unchanged) or `sha:<before>→<after>`
+  (changed) — the sha a `--if sha:` on a later edit is checked against always comes from there.
 - Name every omission in the footer: window, budget trim, hit cap, `.gitignore` and hidden
   skips, checker skipped or inconclusive, xattrs dropped, normalised match, partial-batch files.
 - Write only the answer to stdout. Diagnostics and `ERROR_CODE=<slug>` (the last line) go to

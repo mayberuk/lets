@@ -955,10 +955,13 @@ fn an_edit_on_a_two_mib_one_line_file_prints_at_most_max_bytes() {
 
     assert_eq!(run.code, Some(0), "{}", run.err);
     assert!(run.out.len() <= 65_536, "{} bytes", run.out.len());
+    // The long-line cut is a footer omission, so it still names itself on a clean edit's one line.
     assert!(run.out.contains("1 long line cut"), "{}", &run.out[..200]);
-    assert!(
-        run.out.contains('\u{2026}'),
-        "the cut line ends in an ellipsis"
+    assert_eq!(
+        run.out.lines().count(),
+        1,
+        "a clean exact edit renders one line with no per-line echo: {}",
+        run.out
     );
 }
 
@@ -969,10 +972,22 @@ fn an_edited_line_under_the_display_cap_is_shown_whole() {
     sandbox.write("short.js", line.as_bytes());
 
     let run = sandbox.lets(&["edit", "short.js", "--old", "needle", "--new", "N"]);
-
     assert_eq!(run.code, Some(0), "{}", run.err);
     assert!(!run.out.contains("long line"), "{}", run.out);
-    assert!(run.out.contains(&format!("{}N", "y".repeat(900))));
+
+    // A clean exact edit renders text terse, so the line content is checked in JSON instead.
+    let json = sandbox.lets(&[
+        "edit", "short.js", "--old", "N", "--new", "needle", "--json",
+    ]);
+    assert_eq!(json.code, Some(0), "{}", json.err);
+    let object: serde_json::Value = serde_json::from_str(&json.out).expect("one JSON object");
+    let text = object["region"]["lines"][0]["text"]
+        .as_str()
+        .expect("line text");
+    assert!(
+        text.contains(&format!("{}needle", "y".repeat(900))),
+        "{text}"
+    );
 }
 
 /// 10 one-line `--all` matches on 21 lines, each `±1`-line context window overlapping the next,
@@ -992,9 +1007,10 @@ fn a_region_over_max_bytes_is_cut_to_fit_and_the_trim_is_named() {
             }
         })
         .collect();
-    sandbox.write("t.txt", format!("{}\n", before.join("\n")).as_bytes());
+    let content = format!("{}\n", before.join("\n"));
+    sandbox.write("t.txt", content.as_bytes());
 
-    let run = sandbox.lets(&[
+    let args = [
         "edit",
         "t.txt",
         "--old",
@@ -1004,7 +1020,8 @@ fn a_region_over_max_bytes_is_cut_to_fit_and_the_trim_is_named() {
         "--all",
         "--max-bytes",
         "100",
-    ]);
+    ];
+    let run = sandbox.lets(&args);
 
     assert_eq!(run.code, Some(0), "{}", run.err);
     assert!(
@@ -1013,22 +1030,37 @@ fn a_region_over_max_bytes_is_cut_to_fit_and_the_trim_is_named() {
         "{}",
         run.out
     );
-    assert!(run.out.contains("12~\tnew0000"), "{}", run.out);
-    assert!(!run.out.contains("keep007"), "{}", run.out);
     assert_eq!(
         sandbox.read("t.txt").len(),
         21 * 8,
         "the file holds every line"
+    );
+
+    // A clean exact edit renders text terse, so the surviving lines are checked in JSON instead.
+    sandbox.write("t.txt", content.as_bytes());
+    let json = sandbox.lets(&[&args[..], &["--json"]].concat());
+    assert_eq!(json.code, Some(0), "{}", json.err);
+    let object: serde_json::Value = serde_json::from_str(&json.out).expect("one JSON object");
+    let lines = object["region"]["lines"].as_array().expect("region lines");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["text"] == "new0000" && line["number"] == 12),
+        "{}",
+        json.out
+    );
+    assert!(
+        !lines.iter().any(|line| line["text"] == "keep007"),
+        "{}",
+        json.out
     );
 }
 
 #[test]
 fn a_region_within_max_bytes_is_not_trimmed() {
     let sandbox = Sandbox::new();
-    sandbox.write("t.txt", b"x = 1\n");
     let new: Vec<String> = (1..=20).map(|n| format!("v{n:02} = 0")).collect();
-
-    let run = sandbox.lets(&[
+    let args = [
         "edit",
         "t.txt",
         "--old",
@@ -1037,11 +1069,24 @@ fn a_region_within_max_bytes_is_not_trimmed() {
         &new.join("\n"),
         "--max-bytes",
         "160",
-    ]);
+    ];
+    sandbox.write("t.txt", b"x = 1\n");
+    let run = sandbox.lets(&args);
 
     assert_eq!(run.code, Some(0), "{}", run.err);
     assert!(!run.out.contains("output over"), "{}", run.out);
-    assert!(run.out.contains("20~\tv20 = 0"), "{}", run.out);
+
+    // A clean exact edit renders text terse, so the last surviving line is checked in JSON instead.
+    sandbox.write("t.txt", b"x = 1\n");
+    let json = sandbox.lets(&[&args[..], &["--json"]].concat());
+    assert_eq!(json.code, Some(0), "{}", json.err);
+    let object: serde_json::Value = serde_json::from_str(&json.out).expect("one JSON object");
+    let lines = object["region"]["lines"].as_array().expect("region lines");
+    assert!(
+        lines.iter().any(|line| line["text"] == "v20 = 0"),
+        "{}",
+        json.out
+    );
 }
 
 /// The header and footer sit outside `--max-bytes`, so the 512-byte slack below covers both;
@@ -1074,9 +1119,10 @@ fn an_all_edit_over_every_line_stays_near_max_bytes() {
 
     assert_eq!(run.code, Some(0), "{}", run.err);
     assert!(run.out.len() <= 200 + 512, "{} bytes", run.out.len());
+    // A clean exact edit renders one line: the header lead, then the footer's check/sha/omission.
     assert!(
         run.out
-            .starts_with("── f.txt · 3000 replacements · lines 1-3000 · exact\n"),
+            .starts_with("── f.txt \u{b7} 3000 replacements \u{b7} lines 1-3000 \u{b7} "),
         "{}",
         run.out
     );
@@ -1103,13 +1149,20 @@ fn an_edits_cost_estimate_counts_its_header() {
         "200",
     ];
 
-    let text = sandbox.lets(&args);
-    sandbox.write("f.txt", &three_thousand_x_lines());
     let json = sandbox.lets(&[&args[..], &["--json"]].concat());
 
     assert_eq!(json.code, Some(0), "{}", json.err);
-    let header = text.out.lines().next().expect("a header line").len() + 1;
     let object: serde_json::Value = serde_json::from_str(&json.out).expect("one JSON object");
+    // The cost estimate always sizes the full header (`push_edit_header`), even when a clean
+    // exact edit like this one renders terse in text mode and never prints it.
+    let path = object["path"].as_str().expect("path");
+    let replacements = object["replacements"].as_u64().expect("replacements");
+    let match_kind = object["match"].as_str().expect("match");
+    let header = format!(
+        "\u{2500}\u{2500} {path} \u{b7} {replacements} replacements \u{b7} lines 1-3000 \u{b7} \
+         {match_kind}\n"
+    )
+    .len();
     let content: usize = object["region"]["lines"]
         .as_array()
         .expect("the rendered region")

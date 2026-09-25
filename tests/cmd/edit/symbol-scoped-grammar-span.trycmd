@@ -3,11 +3,7 @@ a parsed end, so the same scoped edit names no guessed span in text or `--json`.
 
 ```console
 $ lets edit 'usage.ts#usage' --old 'cap = 20' --new 'cap = 30'
-── usage.ts · 1 replacement · line 2 · exact
-1 	export function usage(n: number): number {
-2~	  const cap = 30;
-3 	  return Math.min(n, cap);
-── check: structure ok · sha:[..]→[..]
+── usage.ts · 1 replacement · line 2 · check: structure ok · sha:844bd3453883→2acdc7ca40e5
 
 $ lets edit 'usage.ts#usage' --old 'cap = 30' --new 'cap = 40' --json
 {"path":"usage.ts","replacements":1,"lines":[2],"match":"exact","region":[..]}

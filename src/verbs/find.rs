@@ -146,7 +146,15 @@ fn search(
         counts.sort_by(|a, b| a.path.cmp(&b.path));
         respond_counts(counts, found.total_hits, &args.pattern, walked)
     } else {
-        respond_targets(found, &mut walk, &search, global, walked)
+        respond_targets(
+            found,
+            &mut walk,
+            &search,
+            global,
+            walked,
+            &search_paths,
+            &overrides,
+        )
     };
     // The walker skips a missing root silently, so it is named here and its error comes first.
     if !missing.is_empty() {
@@ -204,8 +212,8 @@ fn base_pattern(args: &FindArgs) -> String {
 }
 
 /// ripgrep's `--smart-case`: insensitive only when the pattern has no literal uppercase letter.
-/// `\S`, `\W` and `\p{Lu}`/`\P{Lu}` name a class, not a literal, so an escape is skipped whole
-/// rather than read for its own case.
+/// `\S`, `\W`, `\pL`/`\PL` and `\p{Lu}`/`\P{Lu}` name a class, not a literal, so an escape is
+/// skipped whole rather than read for its own case.
 pub(crate) fn pattern_has_uppercase(pattern: &str, fixed_string: bool) -> bool {
     if fixed_string {
         return pattern.chars().any(char::is_uppercase);
@@ -218,11 +226,15 @@ pub(crate) fn pattern_has_uppercase(pattern: &str, fixed_string: bool) -> bool {
             }
             continue;
         }
-        if matches!(chars.next(), Some('p' | 'P')) && chars.peek() == Some(&'{') {
-            for c in chars.by_ref() {
-                if c == '}' {
-                    break;
+        if matches!(chars.next(), Some('p' | 'P')) {
+            if chars.peek() == Some(&'{') {
+                for c in chars.by_ref() {
+                    if c == '}' {
+                        break;
+                    }
                 }
+            } else {
+                chars.next();
             }
         }
     }
@@ -596,7 +608,7 @@ fn hit_block(path: PathBuf, lines: Vec<Line>) -> TargetBlock {
         resolver: None,
         crlf: false,
         lossy_lines: Vec::new(),
-        sha: None,
+        no_trailing_newline: false,
         lines,
     }
 }
@@ -629,6 +641,8 @@ fn respond_targets(
     search: &Search<'_>,
     global: &Global,
     walked: Vec<Omission>,
+    search_paths: &[PathBuf],
+    overrides: &Override,
 ) -> Outcome {
     let args = search.args;
     if found.total_hits > args.cap {
@@ -706,9 +720,61 @@ fn respond_targets(
         });
     }
     if total_hits == 0 {
+        // Ran case-sensitively either because `-s` was given or because the pattern's own
+        // uppercase letter triggered smart case automatically; either way, dropping it might
+        // find something. Excludes a folded search: that already tried case-insensitively.
+        if !effective_case_insensitive(args) {
+            let hits = case_insensitive_hits(args, global, search_paths, overrides);
+            if hits > 0 {
+                response
+                    .omitted
+                    .push(Omission::CaseInsensitiveOnly { hits });
+            }
+        }
         return Outcome::partial(response, no_match_error(&args.pattern));
     }
     Outcome::ok(response)
+}
+
+/// Only reached from the already-rare 0-hit `-s` path: re-walks the same roots case-insensitively
+/// to tell the reader whether dropping `-s` would have found anything. A build failure on the
+/// probe search folds to 0 hits rather than surfacing a second error for an advisory-only re-walk.
+fn case_insensitive_hits(
+    args: &FindArgs,
+    global: &Global,
+    search_paths: &[PathBuf],
+    overrides: &Override,
+) -> usize {
+    let mut probe_args = args.clone();
+    probe_args.ignore_case = true;
+    let Ok(matcher) = build_matcher(&probe_args) else {
+        return 0;
+    };
+    let Ok(spans) = build_spans(&probe_args, true) else {
+        return 0;
+    };
+    let probe = Search {
+        args: &probe_args,
+        matcher: &matcher,
+        spans: &spans,
+        exact: None,
+        max_file_bytes: global.max_file_bytes,
+    };
+    let (builder, filters) = walker(search_paths, !args.hidden, !global.no_ignore, overrides);
+    let mut walk = Walk::default();
+    let mut found = Found::default();
+    match traversal_of(search_paths) {
+        Traversal::Sequential => probe.sequential(builder, filters, &mut walk, &mut found),
+        Traversal::Parallel { threads } => probe.parallel(
+            builder,
+            filters.as_ref(),
+            threads,
+            search_paths,
+            &mut walk,
+            &mut found,
+        ),
+    }
+    found.total_hits
 }
 
 fn respond_over_cap(
@@ -756,6 +822,9 @@ fn respond_over_cap(
     response.footer = Footer {
         summary: hit_summary(total_hits, matched_files, walk.searched),
     };
+    if args.cap_exit_0 {
+        return Outcome::ok(response);
+    }
     Outcome::partial(response, Error::OverCap {
         hits: total_hits,
         files: matched_files,
@@ -1863,6 +1932,26 @@ mod tests {
     use crate::output::{Format, Marker, RenderOptions};
     use crate::own_process::{Workdir, repo, workdir};
 
+    #[test]
+    fn a_one_letter_unicode_class_name_is_skipped_whole_not_read_for_its_own_case() {
+        assert!(
+            !pattern_has_uppercase(r"\pL", false),
+            "L names a class (any letter), not a literal uppercase L"
+        );
+        assert!(
+            !pattern_has_uppercase(r"\PL", false),
+            "P negates the class name that follows it, still not a literal"
+        );
+        assert!(
+            !pattern_has_uppercase(r"\p{Lu}", false),
+            "the braced form was already skipped whole before this fix"
+        );
+        assert!(
+            pattern_has_uppercase("Return", false),
+            "control: a real literal uppercase letter still counts"
+        );
+    }
+
     fn many_hits(n: usize) -> String {
         let mut lines = String::new();
         for i in 1..=n {
@@ -1889,6 +1978,8 @@ mod tests {
             before: None,
             context: None,
             no_expand: false,
+            no_numbers: false,
+            cap_exit_0: false,
             grep: crate::cli::GrepCompat::default(),
         }
     }
@@ -1977,7 +2068,6 @@ mod tests {
         let block = &blocks[0];
         assert_eq!(block.target, "a.txt");
         assert!(block.span.is_none(), "a find hit block names no range");
-        assert!(block.sha.is_none());
         assert_eq!(block.lines.len(), 3);
         assert_eq!(block.lines[0].marker, Marker::Context);
         assert_eq!(block.lines[1].marker, Marker::Hit);
@@ -2037,6 +2127,46 @@ mod tests {
             "{:?}",
             outcome.response.omitted
         );
+    }
+
+    #[test]
+    fn cap_exit_0_over_the_cap_exits_clean_but_keeps_the_cap_footer_line() {
+        let Some(dir) = repo() else { return };
+        let lines = many_hits(55);
+        write(&dir, "many.txt", &lines);
+
+        let mut args = find_args("needle", &[]);
+        args.cap = 50;
+        args.cap_exit_0 = true;
+        let outcome = run_find(&args, &global_args());
+
+        assert!(
+            outcome.error.is_none(),
+            "--cap-exit-0 exits 0 over the cap: {:?}",
+            outcome.error
+        );
+        assert!(
+            outcome
+                .response
+                .omitted
+                .iter()
+                .any(|o| matches!(o, Omission::HitCap { hits: 55, cap: 50 })),
+            "the cap is still named regardless of the exit-status flag: {:?}",
+            outcome.response.omitted
+        );
+    }
+
+    #[test]
+    fn cap_exit_0_with_zero_hits_still_exits_not_found() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "a.txt", "nothing to see\n");
+
+        let mut args = find_args("needle", &[]);
+        args.cap_exit_0 = true;
+        let outcome = run_find(&args, &global_args());
+
+        let err = outcome.error.as_ref().expect("no hits is still terminal");
+        assert_eq!(err.slug(), "not_found");
     }
 
     #[test]
@@ -2276,6 +2406,119 @@ mod tests {
         assert_eq!(
             outcome.response.footer.summary,
             "0 hits in 0 files · searched 1 file"
+        );
+    }
+
+    #[test]
+    fn case_sensitive_zero_hits_names_the_case_insensitive_count_when_one_exists() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "a.txt", "Needle one\nNeedle two\n");
+
+        let mut args = find_args("needle", &[]);
+        args.case_sensitive = true;
+        let outcome = run_find(&args, &global_args());
+
+        let err = outcome.error.as_ref().expect("still 0 exact-case hits");
+        assert_eq!(
+            err.slug(),
+            "not_found",
+            "-s alone does not flip the exit code"
+        );
+        assert!(
+            outcome
+                .response
+                .omitted
+                .iter()
+                .any(|o| matches!(o, Omission::CaseInsensitiveOnly { hits: 2 })),
+            "{:?}",
+            outcome.response.omitted
+        );
+    }
+
+    #[test]
+    fn case_sensitive_zero_hits_prints_no_hint_when_case_insensitive_also_finds_nothing() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "a.txt", "nothing relevant\n");
+
+        let mut args = find_args("needle", &[]);
+        args.case_sensitive = true;
+        let outcome = run_find(&args, &global_args());
+
+        assert!(outcome.error.is_some(), "no match is terminal");
+        assert!(
+            !outcome
+                .response
+                .omitted
+                .iter()
+                .any(|o| matches!(o, Omission::CaseInsensitiveOnly { .. })),
+            "{:?}",
+            outcome.response.omitted
+        );
+    }
+
+    /// Non-goal from the action: smart case already searched case-insensitively, so a second
+    /// case-insensitive re-walk on a 0-hit result would find nothing new the primary walk hadn't
+    /// already tried.
+    #[test]
+    fn default_smart_case_zero_hits_never_runs_the_case_insensitive_probe() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "a.txt", "nothing relevant\n");
+
+        let outcome = run_find(&find_args("needle", &[]), &global_args());
+
+        assert!(
+            !outcome
+                .response
+                .omitted
+                .iter()
+                .any(|o| matches!(o, Omission::CaseInsensitiveOnly { .. })),
+            "{:?}",
+            outcome.response.omitted
+        );
+    }
+
+    /// An uppercase letter in the pattern runs case-sensitively under smart case with no `-s`
+    /// given; that is still an exact-case search, so a 0-hit result deserves the same hint `-s`
+    /// gets.
+    #[test]
+    fn smart_case_exact_by_an_uppercase_pattern_names_the_case_insensitive_count_on_zero_hits() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "a.txt", "return one\nreturn two\n");
+
+        let outcome = run_find(&find_args("Return", &[]), &global_args());
+
+        let err = outcome.error.as_ref().expect("still 0 exact-case hits");
+        assert_eq!(err.slug(), "not_found");
+        assert!(
+            outcome
+                .response
+                .omitted
+                .iter()
+                .any(|o| matches!(o, Omission::CaseInsensitiveOnly { hits: 2 })),
+            "{:?}",
+            outcome.response.omitted
+        );
+    }
+
+    /// Control: `-i` on the same uppercase pattern already searched case-insensitively, so
+    /// nothing is left for a second re-walk to find.
+    #[test]
+    fn ignore_case_on_an_uppercase_pattern_never_runs_the_case_insensitive_probe() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "a.txt", "nothing relevant\n");
+
+        let mut args = find_args("Return", &[]);
+        args.ignore_case = true;
+        let outcome = run_find(&args, &global_args());
+
+        assert!(
+            !outcome
+                .response
+                .omitted
+                .iter()
+                .any(|o| matches!(o, Omission::CaseInsensitiveOnly { .. })),
+            "{:?}",
+            outcome.response.omitted
         );
     }
 
@@ -4505,6 +4748,24 @@ mod tests {
         let outcome = run_find(&find_args("needle", &[]), &global_args());
 
         assert_eq!(line_numbers(only_block(&outcome)), [1, 2, 3, 6, 7, 8]);
+        assert_eq!(named(&outcome), ["expanded 2 hits to enclosing symbols"]);
+    }
+
+    /// Expansion is the one measured request-saver in evidence; this pins the default itself
+    /// (independent of the other expansion tests above) against an accidental flip.
+    #[test]
+    fn a_plain_run_with_no_flags_still_expands_by_default() {
+        let Some(dir) = repo() else { return };
+        std::fs::create_dir(dir.path().join("src")).expect("a src dir");
+        write(&dir, "src/fee.ts", FEE_TS);
+        let args = find_args("computeFee", &["src"]);
+        assert!(!args.no_expand, "the default must be expand-on");
+
+        let outcome = run_find(&args, &global_args());
+
+        assert_eq!(line_numbers(only_block(&outcome)), [
+            3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15
+        ]);
         assert_eq!(named(&outcome), ["expanded 2 hits to enclosing symbols"]);
     }
 

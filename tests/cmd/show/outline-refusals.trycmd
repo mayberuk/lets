@@ -1,0 +1,39 @@
+A file with no bundled grammar has no definitions to list, so `--outline` exits 1 with
+`no_grammar`, while reading the same file whole still works. `--outline` reads whole files, so a
+`:line`, `:a-b`, `#symbol` or `@'regex'` target refuses the whole call as a usage error naming the
+form, and prints nothing from either mode, even beside a target it could have outlined.
+
+```console
+$ lets show page.vue --outline
+? 1
+page.vue is unsupported: no grammar for .vue · drop --outline
+ERROR_CODE=no_grammar
+
+$ lets show page.vue
+── page.vue  (1-3 of 3)
+1 	<template>
+2 	  <p>page</p>
+3 	</template>
+── showed 1 target · 3 lines
+
+$ lets show lib.rs lib.rs:3 --outline
+? 64
+--outline reads whole files, and lib.rs:3 is a :line target · drop the :line or --outline
+ERROR_CODE=usage
+
+$ lets show lib.rs:3-5 --outline
+? 64
+--outline reads whole files, and lib.rs:3-5 is a :a-b target · drop the :a-b or --outline
+ERROR_CODE=usage
+
+$ lets show lib.rs#open --outline
+? 64
+--outline reads whole files, and lib.rs#open is a #symbol target · drop the #symbol or --outline
+ERROR_CODE=usage
+
+$ lets show "lib.rs@'fn'" --outline
+? 64
+--outline reads whole files, and lib.rs@'fn' is a @'regex' target · drop the @'regex' or --outline
+ERROR_CODE=usage
+
+```

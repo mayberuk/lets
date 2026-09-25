@@ -50,22 +50,6 @@ line 7 EDITED
 line 8 EDITED
 >>>>>>>
 EOF
-── p.txt · 1 replacement · lines 4-10 · exact
- 3 	line 3
- 4~	line 4 EDITED
- 5~	line 5 EDITED
-  ·	:6-8 not shown
- 9~	line 9 EDITED
-10~	line 10 EDITED
-11 	line 11
-── q.txt · 1 replacement · lines 2-8 · exact
- 1 	line 1
- 2~	line 2 EDITED
- 3~	line 3 EDITED
-  ·	:4-6 not shown
- 7~	line 7 EDITED
- 8~	line 8 EDITED
- 9 	line 9
 ── 2 files · 2 edits · all applied · check: skipped (p.txt: no grammar for .txt) · p.txt:6-8 not shown · check: skipped (q.txt: no grammar for .txt) · q.txt:4-6 not shown
 
 ```
@@ -74,11 +58,7 @@ EOF
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check @auto
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: skipped (@auto found no manifest)
+── usage.ts · 1 replacement · line 6 · check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: skipped (@auto found no manifest)
 
 ```
 
@@ -86,11 +66,7 @@ The control for `check-cargo-workspace-reverts`: the same workspace-wide check o
 
 ```console
 $ lets edit a/src/lib.rs --old 'n * 2' --new 'n + n' --check @cargo
-── a/src/lib.rs · 1 replacement · line 2 · exact
-1 	pub fn double(n: i32) -> i32 {
-2~	    n + n
-3 	}
-── check: cargo check --workspace --quiet --all-targets ok · sha:[..]
+── a/src/lib.rs · 1 replacement · line 2 · check: cargo check --workspace --quiet --all-targets ok · sha:[..]
 
 ```
 
@@ -108,21 +84,13 @@ A checker that already failed before the edit cannot judge it, so the edit is ke
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check checker-fail
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: checker-fail inconclusive (failed before and after)
+── usage.ts · 1 replacement · line 6 · check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: checker-fail inconclusive (failed before and after)
 
 ```
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check checker-pass
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── check: checker-pass ok · sha:c5525cc20b61→419c5d6249b3
+── usage.ts · 1 replacement · line 6 · check: checker-pass ok · sha:c5525cc20b61→419c5d6249b3
 
 ```
 
@@ -140,11 +108,7 @@ A checker that is not installed is named in the footer, never silently dropped.
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check no-such-checker
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: skipped (no-such-checker absent)
+── usage.ts · 1 replacement · line 6 · check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: skipped (no-such-checker absent)
 
 ```
 
@@ -165,11 +129,7 @@ An edit between the fences of a `.md` file is a YAML edit, and the footer names 
 
 ```console
 $ lets edit notes.md --old 'date: 2026-09-19' --new 'date: 2026-09-21'
-── notes.md · 1 replacement · line 3 · exact
-2 	title: notes
-3~	date: 2026-09-21
-4 	---
-── check: frontmatter ok · sha:a4f8537ddc9b→d50c4ac20aa0
+── notes.md · 1 replacement · line 3 · check: frontmatter ok · sha:a4f8537ddc9b→d50c4ac20aa0
 
 ```
 
@@ -188,11 +148,7 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit main.go --old 'cap := 10' --new 'cap := 20'
-── main.go · 1 replacement · line 3 · exact
-2 	func usage(id string) int {
-3~		cap := 20
-4 		return cap + len(id)
-── check: structure ok · sha:db91a17c0af6→723cc9310c11
+── main.go · 1 replacement · line 3 · check: structure ok · sha:db91a17c0af6→723cc9310c11
 
 ```
 
@@ -210,11 +166,7 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit app.js --old 'const cap = 10' --new 'const cap = 20'
-── app.js · 1 replacement · line 2 · exact
-1 	export function usage(id) {
-2~	  const cap = 20
-3 	  return cap + id.length
-── check: structure ok · sha:0edfd9883665→4ab3906a3bfd
+── app.js · 1 replacement · line 2 · check: structure ok · sha:0edfd9883665→4ab3906a3bfd
 
 ```
 
@@ -233,20 +185,13 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit config.json --old '"window": 200' --new '"window": 100'
-── config.json · 1 replacement · line 2 · exact
-1 	{
-2~	  "window": 100,
-3 	  "threads": 4
-── check: json ok · sha:e44762446524→21a40c895946
+── config.json · 1 replacement · line 2 · check: json ok · sha:e44762446524→21a40c895946
 
 ```
 
 ```console
 $ lets edit notes.md --old 'Layer 2 is the validator for markdown.' --new 'Layer 2 is the validator here.'
-── notes.md · 1 replacement · line 7 · exact
-6 	In that case the agent – not the user – decides.
-7~	Layer 2 is the validator here.
-── check: structure ok · sha:a4f8537ddc9b→983c07fb7869
+── notes.md · 1 replacement · line 7 · check: structure ok · sha:a4f8537ddc9b→983c07fb7869
 
 ```
 
@@ -254,10 +199,7 @@ The markdown block grammar has no error state: an unterminated fence that would 
 
 ```console
 $ lets edit notes.md --old 'Layer 2 is the validator for markdown.' --new '```'
-── notes.md · 1 replacement · line 7 · exact
-6 	In that case the agent – not the user – decides.
-7~	```
-── check: structure ok · sha:a4f8537ddc9b→e5d43c02dbf4
+── notes.md · 1 replacement · line 7 · check: structure ok · sha:a4f8537ddc9b→e5d43c02dbf4
 
 ```
 
@@ -266,11 +208,7 @@ footer says which layer did not run.
 
 ```console
 $ lets edit widget.vue --old 'cap' --new 'limit'
-── widget.vue · 1 replacement · line 2 · exact
-1 	<template>
-2~	  <span>{{ limit }}</span>
-3 	</template>
-── sha:da828baa490c→a97d99c23045 · check: skipped (no grammar for .vue)
+── widget.vue · 1 replacement · line 2 · sha:da828baa490c→a97d99c23045 · check: skipped (no grammar for .vue)
 
 ```
 
@@ -302,20 +240,13 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit m.py --old 'limit = 10' --new 'limit = 20' --check @py
-── m.py · 1 replacement · line 3 · exact
-2 	    return 1
-3~	limit = 20
-── check: python3 -m py_compile {} ok · sha:[..]
+── m.py · 1 replacement · line 3 · check: python3 -m py_compile {} ok · sha:5f4386996edb→b8320252403b
 
 ```
 
 ```console
 $ lets edit cap.py --old 'cap = 10' --new 'cap = 20'
-── cap.py · 1 replacement · line 2 · exact
-1 	def usage(id):
-2~	    cap = 20
-3 	    return cap + len(id)
-── check: structure ok · sha:d0139c7b27dc→bb6601d33406
+── cap.py · 1 replacement · line 2 · check: structure ok · sha:d0139c7b27dc→bb6601d33406
 
 ```
 
@@ -343,11 +274,7 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit lib.rs --old 'let cap = 10;' --new 'let cap = 20;'
-── lib.rs · 1 replacement · line 2 · exact
-1 	pub fn usage(id: &str) -> usize {
-2~	    let cap = 20;
-3 	    cap + id.len()
-── check: structure ok · sha:4524d71069e8→0822e5131981
+── lib.rs · 1 replacement · line 2 · check: structure ok · sha:4524d71069e8→0822e5131981
 
 ```
 
@@ -365,11 +292,7 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit run.sh --old 'echo "$name"' --new 'printf "%s" "$name"'
-── run.sh · 1 replacement · line 3 · exact
-2 	for name in one two; do
-3~	  printf "%s" "$name"
-4 	done
-── check: structure ok · sha:1a0659d2422d→b2a25dfc11cf
+── run.sh · 1 replacement · line 3 · check: structure ok · sha:1a0659d2422d→b2a25dfc11cf
 
 ```
 
@@ -387,10 +310,7 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit config.toml --old 'threads = 4' --new 'threads = 8'
-── config.toml · 1 replacement · line 3 · exact
-2 	name = "lets"
-3~	threads = 8
-── check: toml ok · sha:96cdbcfee3f4→d1e6d9f7f737
+── config.toml · 1 replacement · line 3 · check: toml ok · sha:96cdbcfee3f4→d1e6d9f7f737
 
 ```
 
@@ -409,11 +329,7 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit usage.ts --old 'return total' --new 'return total * 2'
-── usage.ts · 1 replacement · line 9 · exact
- 8 	  const total = usageCap + id.length
- 9~	  return total * 2
-10 	}
-── check: structure ok · sha:c5525cc20b61→11aa374800a2
+── usage.ts · 1 replacement · line 9 · check: structure ok · sha:c5525cc20b61→11aa374800a2
 
 ```
 
@@ -431,11 +347,7 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit badge.tsx --old 'className="badge"' --new 'className="chip"'
-── badge.tsx · 1 replacement · line 2 · exact
-1 	export const Badge = () => (
-2~	  <span className="chip" />
-3 	)
-── check: structure ok · sha:09a8548c52f6→8db345fb0af8
+── badge.tsx · 1 replacement · line 2 · check: structure ok · sha:09a8548c52f6→8db345fb0af8
 
 ```
 
@@ -453,21 +365,13 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit config.yaml --old 'name: lets' --new 'name: lets-cli'
-── config.yaml · 1 replacement · line 1 · exact
-1~	name: lets-cli
-2 	items:
-── check: yaml ok · sha:e1046ecc996b→c3a6db4757bd
+── config.yaml · 1 replacement · line 1 · check: yaml ok · sha:e1046ecc996b→c3a6db4757bd
 
 ```
 
 ```console
 $ lets edit crlf.txt --old $'beta\ngamma' --new $'BETA\nGAMMA'
-── crlf.txt · 1 replacement · lines 2, 3 · exact
-1 	alpha
-2~	BETA
-3~	GAMMA
-4 	delta
-── sha:c636be1b624d→99dc02a6c775 · check: skipped (no grammar for .txt) · --old matched as CRLF
+── crlf.txt · 1 replacement · lines 2, 3 · sha:c636be1b624d→99dc02a6c775 · check: skipped (no grammar for .txt) · --old matched as CRLF
 
 ```
 
@@ -621,12 +525,6 @@ const floor = 1
 const floor = 2
 >>>>>>>
 EOF
-── a.ts · 1 replacement · line 1 · exact
-1~	const cap = 20
-2 	const floor = 1
-── a.ts · 1 replacement · line 2 · exact
-1 	const cap = 20
-2~	const floor = 2
 ── 1 file · 2 edits · all applied · checks: structure ok ×2
 
 ```
@@ -651,14 +549,6 @@ const top = 9
 const top = 90
 >>>>>>>
 EOF
-── a.ts · 1 replacement · line 1 · exact
-1~	const cap = 20
-2 	const floor = 1
-── a.ts · 1 replacement · line 2 · exact
-1 	const cap = 20
-2~	const floor = 2
-── b.ts · 1 replacement · line 1 · exact
-1~	const top = 90
 ── 2 files · 3 edits · all applied · checks: structure ok ×3
 
 ```
@@ -671,9 +561,7 @@ const cap = 10
 const cap = 20
 >>>>>>>
 EOF
-── a.ts · 1 replacement · line 1 · exact
-1~	const cap = 20
-── check: structure ok · sha:68c7b7831721→d1f03fd922de
+── a.ts · 1 replacement · line 1 · check: structure ok · sha:68c7b7831721→d1f03fd922de
 
 ```
 
@@ -769,11 +657,7 @@ The control for the stale hash above: the same edit, with the hash the file actu
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:c5525cc20b61
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── check: structure ok · sha:c5525cc20b61→419c5d6249b3
+── usage.ts · 1 replacement · line 6 · check: structure ok · sha:c5525cc20b61→419c5d6249b3
 
 ```
 
@@ -799,15 +683,7 @@ ERROR_CODE=usage
 
 ```console
 $ lets edit s.txt --insert-after '@'\''^line 5$'\''' --new $'new 1\nnew 2\nnew 3\nnew 4\nnew 5\nnew 6\nnew 7'
-── s.txt · inserted 7 lines after line 5
- 5 	line 5
- 6+	new 1
- 7+	new 2
-  ·	:8-10 not shown
-11+	new 6
-12+	new 7
-13 	line 6
-── sha:[..]→[..] · check: skipped (no grammar for .txt) · :8-10 not shown
+── s.txt · inserted 7 lines after line 5 · sha:b72837628326→bcfdb5987d81 · check: skipped (no grammar for .txt) · :8-10 not shown
 
 ```
 
@@ -815,10 +691,7 @@ The anchor, typed with its quotes as the guide shows it, joins the file name as 
 
 ```console
 $ lets edit C#.md --insert-after "@'^b'" --new 'c'
-── C#.md · inserted 1 line after line 2
-2 	b
-3+	c
-── check: structure ok · sha:[..]→[..]
+── C#.md · inserted 1 line after line 2 · check: structure ok · sha:41153ec5e22e→f2a0aad84bf0
 
 $ lets edit C#.md --insert-after :3 --new 'd'
 ? 1
@@ -829,43 +702,25 @@ ERROR_CODE=not_found
 
 ```console
 $ lets edit usage.ts --insert-before '#usage' --new '/** Returns the running total for id. */'
-── usage.ts · inserted 1 line before #usage (line 3)
-2 	import { clock } from './clock'
-3+	/** Returns the running total for id. */
-4 	export function usage(id: string) {
-── check: structure ok · sha:c5525cc20b61→45b5b2745608
+── usage.ts · inserted 1 line before #usage (line 3) · check: structure ok · sha:c5525cc20b61→45b5b2745608
 
 ```
 
 ```console
 $ lets edit m.py --insert-after '@^import' --new $'import sys\n'
-── m.py · inserted 1 line after line 1
-1 	import os
-2+	import sys
-3 	x = 1
-── check: structure ok · sha:[..]→[..]
+── m.py · inserted 1 line after line 1 · check: structure ok · sha:3697beb3be74→cef419f486bf
 
 ```
 
 ```console
 $ lets edit lf.txt --old beta --new $'BETA\r\nGAMMA'
-── lf.txt · 1 replacement · lines 2, 3 · exact
-1 	alpha
-2~	BETA
-3~	GAMMA
-4 	gamma
-── sha:ed8b7a779a4a→2ba220f13fc2 · check: skipped (no grammar for .txt)
+── lf.txt · 1 replacement · lines 2, 3 · sha:ed8b7a779a4a→2ba220f13fc2 · check: skipped (no grammar for .txt)
 
 ```
 
 ```console
 $ lets edit lf.txt --old beta --new $'BETA\r\nGAMMA' --literal-newlines
-── lf.txt · 1 replacement · lines 2, 3 · exact
-1 	alpha
-2~	BETA
-3~	GAMMA
-4 	gamma
-── sha:ed8b7a779a4a→c2b975bba63b · check: skipped (no grammar for .txt)
+── lf.txt · 1 replacement · lines 2, 3 · sha:ed8b7a779a4a→c2b975bba63b · check: skipped (no grammar for .txt)
 
 ```
 
@@ -892,15 +747,7 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit block.txt --old $'line 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\nline 24\nline 25\nline 26\nline 27\nline 28\nline 29\nline 30\nline 31\nline 32\nline 33\nline 34\nline 35\nline 36\nline 37\nline 38\nline 39\nline 40\nline 41\nline 42\nline 43\nline 44\nline 45' --new $'line 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED\nline 10 EDITED\nline 11 EDITED\nline 12 EDITED\nline 13 EDITED\nline 14 EDITED\nline 15 EDITED\nline 16 EDITED\nline 17 EDITED\nline 18 EDITED\nline 19 EDITED\nline 20 EDITED\nline 21 EDITED\nline 22 EDITED\nline 23 EDITED\nline 24 EDITED\nline 25 EDITED\nline 26 EDITED\nline 27 EDITED\nline 28 EDITED\nline 29 EDITED\nline 30 EDITED\nline 31 EDITED\nline 32 EDITED\nline 33 EDITED\nline 34 EDITED\nline 35 EDITED\nline 36 EDITED\nline 37 EDITED\nline 38 EDITED\nline 39 EDITED\nline 40 EDITED\nline 41 EDITED\nline 42 EDITED\nline 43 EDITED\nline 44 EDITED\nline 45 EDITED'
-── block.txt · 1 replacement · lines 6-45 · exact
- 5 	line 5
- 6~	line 6 EDITED
- 7~	line 7 EDITED
-  ·	:8-43 not shown
-44~	line 44 EDITED
-45~	line 45 EDITED
-46 	line 46
-── sha:[..]→[..] · check: skipped (no grammar for .txt) · :8-43 not shown
+── block.txt · 1 replacement · lines 6-45 · sha:05a1c3600fc7→2ed41fefbb3a · check: skipped (no grammar for .txt) · :8-43 not shown
 
 ```
 
@@ -926,15 +773,6 @@ ERROR_CODE=not_found
 
 ```console
 $ lets edit app.js cap.py --old cap --new limit --all
-── app.js · 2 replacements · lines 2, 3 · exact
-1 	export function usage(id) {
-2~	  const limit = 10
-3~	  return limit + id.length
-4 	}
-── cap.py · 2 replacements · lines 2, 3 · exact
-1 	def usage(id):
-2~	    limit = 10
-3~	    return limit + len(id)
 ── 2 files · 2 edits · all applied · checks: structure ok ×2
 
 ```
@@ -959,25 +797,13 @@ ERROR_CODE=usage
 
 ```console
 $ lets edit usage.ts app.js --old 'const cap = 10' --new 'const cap = 20'
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── app.js · 1 replacement · line 2 · exact
-1 	export function usage(id) {
-2~	  const cap = 20
-3 	  return cap + id.length
 ── 2 files · 2 edits · all applied · checks: structure ok ×2
 
 ```
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --no-check
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── sha:c5525cc20b61→419c5d6249b3 · check: skipped (--no-check)
+── usage.ts · 1 replacement · line 6 · sha:c5525cc20b61→419c5d6249b3 · check: skipped (--no-check)
 
 ```
 
@@ -1011,11 +837,7 @@ ERROR_CODE=not_found
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20'
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── check: structure ok · sha:c5525cc20b61→419c5d6249b3
+── usage.ts · 1 replacement · line 6 · check: structure ok · sha:c5525cc20b61→419c5d6249b3
 
 ```
 
@@ -1032,11 +854,7 @@ The same plaintext match, `#greet`, has a brace-matched end (`end_guessed` false
 
 ```console
 $ lets edit greet.kt --insert-after '#greet' --new '// end greet'
-── greet.kt · inserted 1 line after #greet (line 6)
-6 	}
-7+	// end greet
-8 	
-── sha:[..]→[..] · check: skipped (no grammar for .kt)
+── greet.kt · inserted 1 line after #greet (line 6) · sha:28d97b9d9e49→7732f6bba255 · check: skipped (no grammar for .kt)
 
 ```
 
@@ -1060,11 +878,7 @@ match applies like any tree-sitter symbol.
 
 ```console
 $ lets edit greet.kt --insert-before '#greet' --new '// prints a greeting'
-── greet.kt · inserted 1 line before #greet (line 3)
-2 	
-3+	// prints a greeting
-4 	fun greet(name: String): String {
-── sha:[..]→[..] · check: skipped (no grammar for .kt)
+── greet.kt · inserted 1 line before #greet (line 3) · sha:28d97b9d9e49→eebd063aa6ca · check: skipped (no grammar for .kt)
 
 ```
 
@@ -1085,10 +899,7 @@ its heuristic, and `--json` carries it under the same `resolver` key.
 
 ```console
 $ lets edit 'greet.kt#limit' --old 20 --new 30
-── greet.kt · 1 replacement · line 8 · exact · span guessed (plaintext heuristic)
-7 	
-8~	val limit = 30
-── sha:[..]→[..] · check: skipped (no grammar for .kt)
+── greet.kt · 1 replacement · line 8 · sha:28d97b9d9e49→d160887527f5 · check: skipped (no grammar for .kt)
 
 $ lets edit 'greet.kt#limit' --old 30 --new 40 --json
 {"path":"greet.kt","replacements":1,"lines":[8],"match":"exact","resolver":"span guessed (plaintext heuristic)",[..]}
@@ -1097,43 +908,19 @@ $ lets edit 'greet.kt#limit' --old 30 --new 40 --json
 
 ```console
 $ lets edit usage.ts --old 'usageCap' --new 'usageLimit' --all
-── usage.ts · 2 replacements · lines 1, 8 · exact
-1~	import { usageLimit } from './config'
-2 	import { clock } from './clock'
- ·	:3-6 not shown
-7 	  if (now > cap) return
-8~	  const total = usageLimit + id.length
-9 	  return total
-── check: structure ok · sha:c5525cc20b61→0e1115009972 · :3-6 not shown
+── usage.ts · 2 replacements · lines 1, 8 · check: structure ok · sha:c5525cc20b61→0e1115009972 · :3-6 not shown
 
 ```
 
 ```console
 $ lets edit s.txt --old $'line 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10' --new $'line 4 EDITED\nline 5 EDITED\nline 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED\nline 10 EDITED'
-── s.txt · 1 replacement · lines 4-10 · exact
- 3 	line 3
- 4~	line 4 EDITED
- 5~	line 5 EDITED
-  ·	:6-8 not shown
- 9~	line 9 EDITED
-10~	line 10 EDITED
-11 	line 11
-── sha:[..]→[..] · check: skipped (no grammar for .txt) · :6-8 not shown
+── s.txt · 1 replacement · lines 4-10 · sha:b72837628326→a57bcaac3450 · check: skipped (no grammar for .txt) · :6-8 not shown
 
 ```
 
 ```console
 $ lets edit s.txt --old $'line 4\nline 5\nline 6\nline 7\nline 8\nline 9' --new $'line 4 EDITED\nline 5 EDITED\nline 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED'
-── s.txt · 1 replacement · lines 4-9 · exact
- 3 	line 3
- 4~	line 4 EDITED
- 5~	line 5 EDITED
- 6~	line 6 EDITED
- 7~	line 7 EDITED
- 8~	line 8 EDITED
- 9~	line 9 EDITED
-10 	line 10
-── sha:[..]→[..] · check: skipped (no grammar for .txt)
+── s.txt · 1 replacement · lines 4-9 · sha:b72837628326→5d7adc29422a · check: skipped (no grammar for .txt)
 
 ```
 
@@ -1142,11 +929,7 @@ a parsed end, so the same scoped edit names no guessed span in text or `--json`.
 
 ```console
 $ lets edit 'usage.ts#usage' --old 'cap = 20' --new 'cap = 30'
-── usage.ts · 1 replacement · line 2 · exact
-1 	export function usage(n: number): number {
-2~	  const cap = 30;
-3 	  return Math.min(n, cap);
-── check: structure ok · sha:[..]→[..]
+── usage.ts · 1 replacement · line 2 · check: structure ok · sha:844bd3453883→2acdc7ca40e5
 
 $ lets edit 'usage.ts#usage' --old 'cap = 30' --new 'cap = 40' --json
 {"path":"usage.ts","replacements":1,"lines":[2],"match":"exact","region":[..]}
@@ -1159,11 +942,7 @@ the blank line and the comment, and the comment stays with `[deps]`.
 
 ```console
 $ lets edit t2.toml --insert-after '#package' --new 'version = "2"'
-── t2.toml · inserted 1 line after #package (line 2)
-2 	name = "x"
-3+	version = "2"
-4 	
-── check: toml ok · sha:[..]→[..]
+── t2.toml · inserted 1 line after #package (line 2) · check: toml ok · sha:970412923003→f01028e03598
 
 ```
 
@@ -1172,10 +951,6 @@ A table's span now stops before the next table's header (`src/symbols/mod.rs`'s 
 
 ```console
 $ lets edit t.toml --insert-after '#package' --new 'version = "2"'
-── t.toml · inserted 1 line after #package (line 2)
-2 	name = "x"
-3+	version = "2"
-4 	[deps]
-── check: toml ok · sha:[..]→[..]
+── t.toml · inserted 1 line after #package (line 2) · check: toml ok · sha:0486752c92ba→9a6349c4cd25
 
 ```

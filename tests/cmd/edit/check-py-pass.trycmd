@@ -1,9 +1,5 @@
 ```console
 $ lets edit cap.py --old 'cap = 10' --new 'cap = 20'
-── cap.py · 1 replacement · line 2 · exact
-1 	def usage(id):
-2~	    cap = 20
-3 	    return cap + len(id)
-── check: structure ok · sha:d0139c7b27dc→bb6601d33406
+── cap.py · 1 replacement · line 2 · check: structure ok · sha:d0139c7b27dc→bb6601d33406
 
 ```

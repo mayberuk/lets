@@ -8,13 +8,18 @@ use crate::cli::{Global, ShowArgs};
 use crate::error::{Candidate, Error, UnsupportedReason};
 use crate::hook::bre;
 use crate::output::{
-    Body, Format, Line, Marker, Omission, Resolver, Response, Sha12, Span, TargetBlock,
+    Body, Format, Line, Marker, Omission, OutlineBlock, OutlineEntry, Resolver, Response, Span,
+    TargetBlock,
 };
 use crate::window::Bounds;
-use crate::{Outcome, atomic, fs, grammars, symbols, target, window};
+use crate::{Outcome, fs, grammars, symbols, target, window};
 
 pub fn run(args: &ShowArgs, global: &Global, _format: Format) -> Outcome {
+    if args.outline {
+        return outline(args, global);
+    }
     let mut response = Response::empty("show");
+    response.no_header = args.no_header;
     let mut blocks = Vec::with_capacity(args.targets.len());
     let mut errors = Vec::new();
 
@@ -98,6 +103,180 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
+/// 120 chars keeps 99% of definition first lines whole in this crate (p99 96) and in one
+/// TypeScript codebase (p99 115), and 95% in another (p95 117).
+const OUTLINE_SIG_CAP: usize = 120;
+
+/// Bounded by `--max-bytes` rather than an entry count: a signature's length varies ten-fold.
+fn outline(args: &ShowArgs, global: &Global) -> Outcome {
+    if let Some(conflict) = args.targets.iter().find_map(|raw| narrowed(raw)) {
+        return Outcome::failed("show", conflict);
+    }
+    // Entries carry no file column, so `--no-header` on several targets would run one file's
+    // definitions into the next with nothing to tell them apart.
+    if args.no_header && args.targets.len() > 1 {
+        return Outcome::failed("show", Error::Usage {
+            message: "--outline --no-header prints no file name, and several targets need one \
+                      \u{b7} pass one target at a time"
+                .to_owned(),
+        });
+    }
+    let mut response = Response::empty("show");
+    response.no_header = args.no_header;
+    let mut blocks = Vec::with_capacity(args.targets.len());
+    let mut errors = Vec::new();
+    for raw in &args.targets {
+        match outline_of(raw, global) {
+            Ok(block) => blocks.push(block),
+            Err(error) => {
+                response.omitted.push(Omission::Unresolved {
+                    target: raw.clone(),
+                    error: error.slug(),
+                });
+                errors.push(error);
+            },
+        }
+    }
+
+    let (mut room, mut full, mut cut, mut left_out) = (global.max_bytes, false, 0, 0);
+    for block in &mut blocks {
+        let mut kept = 0;
+        while !full && kept < block.entries.len() {
+            let entry = &mut block.entries[kept];
+            let was_cut = cap_sig(&mut entry.sig);
+            let bytes = entry_bytes(entry);
+            full = bytes > room;
+            if !full {
+                room -= bytes;
+                cut += usize::from(was_cut);
+                kept += 1;
+            }
+        }
+        if kept < block.entries.len() {
+            left_out += block.entries.len() - kept;
+            block.entries.truncate(kept);
+            block.omitted = true;
+        }
+    }
+    if cut > 0 {
+        response.omitted.push(Omission::LongLinesCut { lines: cut });
+    }
+    if left_out > 0 {
+        response.omitted.push(Omission::OutlineTrimmed {
+            limit: global.max_bytes,
+            definitions: left_out,
+        });
+    }
+
+    let (resolved, shown) = (
+        blocks.len(),
+        blocks.iter().map(|block| block.entries.len()).sum(),
+    );
+    response.stats.lines = shown;
+    response.stats.bytes = global.max_bytes - room;
+    response.footer.summary = format!(
+        "showed {resolved} target{} · {shown} definition{}",
+        plural(resolved),
+        plural(shown)
+    );
+    response.body = Body::Outline(blocks);
+    match Error::all(errors) {
+        None => Outcome::ok(response),
+        Some(failure) if resolved == 0 => Outcome::failed("show", failure),
+        Some(failure) => Outcome::partial(response, failure),
+    }
+}
+
+/// An outline reads whole files, so a target that narrows one asks a different question.
+fn narrowed(raw: &str) -> Option<Error> {
+    let form = match target::parse(raw).kind {
+        target::Kind::Whole => return None,
+        target::Kind::Line(_) => ":line",
+        target::Kind::Range(..) => ":a-b",
+        target::Kind::Symbol(_) => "#symbol",
+        target::Kind::Regex { .. } => "@'regex'",
+    };
+    Some(Error::Usage {
+        message: format!(
+            "--outline reads whole files, and {raw} is a {form} target · drop the {form} or \
+             --outline"
+        ),
+    })
+}
+
+fn outline_of(raw: &str, global: &Global) -> Result<OutlineBlock, Error> {
+    let path = target::parse(raw).path;
+    fs::guard_scope(&path, global.allow_outside)?;
+    let file = read_text(&path, global.max_file_bytes).map_err(|error| mistyped(raw, error))?;
+    let extension = path.extension().unwrap_or_default().to_string_lossy();
+    let lang = grammars::from_extension(&extension).ok_or_else(|| Error::NoGrammar {
+        path: path.clone(),
+        ext: extension.clone().into_owned(),
+    })?;
+    let lines: Vec<&str> = file.content.lines().collect();
+    let entries = definition_spans(lang, &file.content)
+        .into_iter()
+        .filter_map(|(line, end_line)| {
+            Some(OutlineEntry {
+                sig: lines.get(line.checked_sub(1)?)?.trim_start().to_owned(),
+                line,
+                end_line: end_line.clamp(line, lines.len()),
+            })
+        })
+        .collect();
+    Ok(OutlineBlock {
+        target: raw.to_owned(),
+        path,
+        entries,
+        omitted: false,
+    })
+}
+
+/// In source order, an enclosing definition before one that starts on its first line.
+fn definition_spans(lang: grammars::Language, content: &str) -> Vec<(usize, usize)> {
+    let mut spans: Vec<(usize, usize)> = match symbols::query(lang) {
+        Some(query) => {
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(grammars::language(lang))
+                .expect("a bundled grammar's ABI matches the linked runtime");
+            parser.parse(content, None).map_or_else(Vec::new, |tree| {
+                symbols::definitions(&query, tree.root_node(), content)
+                    .iter()
+                    .map(|defined| (defined.line, defined.end_line))
+                    .collect()
+            })
+        },
+        None => symbols::markdown_sections(content)
+            .into_iter()
+            .map(|(_, start, end)| (start, end))
+            .collect(),
+    };
+    spans.sort_by_key(|&(line, end_line)| (line, std::cmp::Reverse(end_line)));
+    spans
+}
+
+/// Cut with the mark a long line gets, so a cut signature says so on its own line too.
+fn cap_sig(sig: &mut String) -> bool {
+    let Some((at, _)) = sig.char_indices().nth(OUTLINE_SIG_CAP) else {
+        return false;
+    };
+    sig.truncate(at);
+    sig.push('\u{2026}');
+    true
+}
+
+/// The bytes `{line}[-{end_line}]\t{sig}\n` renders to.
+fn entry_bytes(entry: &OutlineEntry) -> usize {
+    let digits = |n: usize| n.checked_ilog10().map_or(1, |log| log as usize + 1);
+    let range = if entry.end_line == entry.line {
+        digits(entry.line)
+    } else {
+        digits(entry.line) + 1 + digits(entry.end_line)
+    };
+    range + 1 + entry.sig.len() + 1
+}
+
 fn resolve(
     raw: &str,
     args: &ShowArgs,
@@ -111,7 +290,8 @@ fn resolve(
     let file =
         read_text(&parsed.path, global.max_file_bytes).map_err(|error| mistyped(raw, error))?;
     let newlines = fs::count_byte(file.content.as_bytes(), b'\n');
-    let total = newlines + usize::from(!file.content.is_empty() && !file.content.ends_with('\n'));
+    let open_ended = !file.content.is_empty() && !file.content.ends_with('\n');
+    let total = newlines + usize::from(open_ended);
 
     // `window::Bounds` has no zero-line range, so an empty file gets a bare header and no span.
     if total == 0 && matches!(parsed.kind, target::Kind::Whole) {
@@ -124,7 +304,7 @@ fn resolve(
             resolver: None,
             crlf: false,
             lossy_lines: Vec::new(),
-            sha: Some(file.sha),
+            no_trailing_newline: false,
             lines: Vec::new(),
         });
     }
@@ -194,7 +374,7 @@ fn resolve(
             .into_iter()
             .filter(|line| (bounds.start..=bounds.end).contains(line))
             .collect(),
-        sha: Some(file.sha),
+        no_trailing_newline: bounds.end == total && open_ended,
         lines,
     })
 }
@@ -222,14 +402,12 @@ fn mostly_crlf(content: &str, lf: usize) -> bool {
 
 struct Text {
     content: String,
-    sha: Sha12,
     lossy_lines: Vec<usize>,
 }
 
 fn read_text(path: &Path, max_file_bytes: u64) -> Result<Text, Error> {
     match fs::read(path, max_file_bytes) {
         Ok(file) => Ok(Text {
-            sha: file.sha(),
             content: file.content,
             lossy_lines: Vec::new(),
         }),
@@ -253,7 +431,7 @@ enum LossyOutcome {
 }
 
 /// Unlike `fs::read`, decodes invalid UTF-8 lossily so a Latin-1 file `edit` can change stays
-/// readable; only a NUL or a UTF-16 BOM is binary. The sha is the raw bytes', for `edit --if`.
+/// readable; only a NUL or a UTF-16 BOM is binary.
 fn read_lossy(path: &Path, max_file_bytes: u64) -> Result<LossyOutcome, Error> {
     let raw = std::fs::read(path).map_err(|source| Error::Io {
         path: path.to_path_buf(),
@@ -280,7 +458,6 @@ fn read_lossy(path: &Path, max_file_bytes: u64) -> Result<LossyOutcome, Error> {
         .map(|(index, _)| index + 1)
         .collect();
     Ok(LossyOutcome::Text(Text {
-        sha: atomic::hash12(&raw),
         content: String::from_utf8_lossy(&raw).into_owned(),
         lossy_lines,
     }))
@@ -438,6 +615,8 @@ mod tests {
             before: None,
             context: None,
             no_numbers: false,
+            no_header: false,
+            outline: false,
         }
     }
 
@@ -505,7 +684,7 @@ mod tests {
         assert_eq!(block.not_shown, None);
         assert_eq!(block.lines.len(), 64);
         assert_eq!(block.lines[63].number, 64);
-        assert!(block.sha.is_some());
+        assert_eq!(header(&outcome), "── small.md  (1-64 of 64)");
         assert!(outcome.response.omitted.is_empty());
         assert!(outcome.error.is_none(), "every target resolved");
         assert_eq!(
@@ -606,10 +785,7 @@ mod tests {
         assert_eq!(block.lines.last().map(|line| line.number), Some(6));
         assert_eq!(
             header(&outcome),
-            format!(
-                "── usage.ts#usage  (3-6 of 8 · via tree-sitter) · sha:{}",
-                block.sha.as_ref().expect("a read file has a sha").as_str()
-            )
+            "── usage.ts#usage  (3-6 of 8 · via tree-sitter)"
         );
     }
 
@@ -826,18 +1002,9 @@ mod tests {
         assert_eq!(block.lines.len(), 8);
         assert_eq!(block.lines[2].text, "line 3 caf\u{fffd}");
         assert_eq!(block.lossy_lines, [3, 7]);
-        let sha = block.sha.as_ref().expect("a read file has a sha");
-        assert_eq!(
-            sha.as_str(),
-            &blake3::hash(&raw).to_hex().as_str()[..12],
-            "the sha is the bytes on disk, the one `edit --if` compares"
-        );
         assert_eq!(
             header(&outcome),
-            format!(
-                "── latin1.txt  (1-8 of 8) · non-UTF-8 lines 3, 7 · sha:{}",
-                sha.as_str()
-            )
+            "── latin1.txt  (1-8 of 8) · non-UTF-8 lines 3, 7"
         );
     }
 
@@ -1300,14 +1467,9 @@ mod tests {
         assert_eq!(block.span, None);
         assert!(block.lines.is_empty());
         assert!(outcome.response.omitted.is_empty());
-        let sha = block.sha.as_ref().expect("a read file has a sha");
-        assert_eq!(sha.as_str(), &blake3::hash(b"").to_hex().as_str()[..12]);
         assert_eq!(
             rendered(&outcome, Format::Text),
-            format!(
-                "── empty.md · sha:{}\n── showed 1 target · 0 lines\n",
-                sha.as_str()
-            )
+            "── empty.md\n── showed 1 target · 0 lines\n"
         );
     }
 
@@ -1728,11 +1890,7 @@ mod tests {
         let outcome = show(&args(&["win.txt"]), &global());
 
         assert!(only(&outcome).crlf);
-        assert!(
-            header(&outcome).starts_with("── win.txt  (1-3 of 3) \u{b7} crlf \u{b7} sha:"),
-            "{}",
-            header(&outcome)
-        );
+        assert_eq!(header(&outcome), "── win.txt  (1-3 of 3) \u{b7} crlf");
         let texts: Vec<&str> = only(&outcome)
             .lines
             .iter()
@@ -1753,5 +1911,211 @@ mod tests {
             assert!(!block.crlf, "{}", block.target);
         }
         assert!(!header(&outcome).contains("crlf"), "{}", header(&outcome));
+    }
+
+    const LIB_RS: &str = "use std::path::Path;\n\npub struct Store {\n    root: String,\n}\n\nimpl \
+                          Store {\n    pub fn open(path: &Path) -> Store {\n        Store { root: \
+                          path.display().to_string() }\n    }\n}\n\nfn helper() {}\n";
+
+    fn outline_args(targets: &[&str]) -> ShowArgs {
+        ShowArgs {
+            outline: true,
+            ..args(targets)
+        }
+    }
+
+    fn outlined(outcome: &Outcome) -> &[OutlineBlock] {
+        match &outcome.response.body {
+            Body::Outline(blocks) => blocks,
+            other => panic!("an outline renders outline blocks, got {other:?}"),
+        }
+    }
+
+    fn entries(block: &OutlineBlock) -> Vec<(usize, usize, &str)> {
+        block
+            .entries
+            .iter()
+            .map(|entry| (entry.line, entry.end_line, entry.sig.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn an_outline_lists_each_queried_definition_s_first_line_and_range_in_source_order() {
+        let Some(dir) = repo() else { return };
+        write(dir.path(), "lib.rs", LIB_RS);
+
+        let outcome = show(&outline_args(&["lib.rs"]), &global());
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        let [block] = outlined(&outcome) else {
+            panic!("one target, one block")
+        };
+        // The Rust query captures functions, structs, enums and traits; an `impl` is only a scope.
+        assert_eq!(entries(block), [
+            (3, 5, "pub struct Store {"),
+            (8, 10, "pub fn open(path: &Path) -> Store {"),
+            (13, 13, "fn helper() {}"),
+        ]);
+        assert!(!block.omitted);
+        assert!(outcome.response.omitted.is_empty());
+        assert_eq!(
+            outcome.response.footer.summary,
+            "showed 1 target · 3 definitions"
+        );
+        assert!(!rendered(&outcome, Format::Text).contains("sha:"));
+    }
+
+    #[test]
+    fn a_markdown_outline_lists_its_headings() {
+        let Some(dir) = repo() else { return };
+        write(
+            dir.path(),
+            "notes.md",
+            "# Title\n\ntext\n\n## Part\n\nmore\n",
+        );
+
+        let outcome = show(&outline_args(&["notes.md"]), &global());
+
+        assert_eq!(entries(&outlined(&outcome)[0]), [
+            (1, 7, "# Title"),
+            (5, 7, "## Part")
+        ]);
+    }
+
+    #[test]
+    fn a_signature_over_the_cap_is_cut_marked_and_named_and_one_at_the_cap_is_not() {
+        let Some(dir) = repo() else { return };
+        let at_cap = format!("fn f() {{}} //{}", "x".repeat(OUTLINE_SIG_CAP - 12));
+        let over = format!("fn g() {{}} //{}", "y".repeat(OUTLINE_SIG_CAP - 11));
+        assert_eq!(
+            (at_cap.chars().count(), over.chars().count()),
+            (OUTLINE_SIG_CAP, OUTLINE_SIG_CAP + 1)
+        );
+        write(dir.path(), "wide.rs", &format!("{at_cap}\n{over}\n"));
+
+        let outcome = show(&outline_args(&["wide.rs"]), &global());
+
+        let [block] = outlined(&outcome) else {
+            panic!("one target, one block")
+        };
+        let cut = format!("{}\u{2026}", &over[..OUTLINE_SIG_CAP]);
+        assert_eq!(entries(block), [
+            (1, 1, at_cap.as_str()),
+            (2, 2, cut.as_str())
+        ]);
+        assert!(
+            matches!(outcome.response.omitted.as_slice(), [
+                Omission::LongLinesCut { lines: 1 }
+            ]),
+            "{:?}",
+            outcome.response.omitted
+        );
+    }
+
+    #[test]
+    fn the_size_bound_stops_at_the_first_entry_that_overflows_it_even_past_a_smaller_one() {
+        let Some(dir) = repo() else { return };
+        // Rendered as `{line}\t{sig}\n`: 14 + 14 bytes, then 16 + 12.
+        write(dir.path(), "a.rs", "fn one() {}\nfn two() {}\n");
+        write(dir.path(), "b.rs", "fn three() {}\nfn f() {}\n");
+        let mut global = global();
+        global.max_bytes = 28 + 15;
+
+        let outcome = show(&outline_args(&["a.rs", "b.rs"]), &global);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        let [a, b] = outlined(&outcome) else {
+            panic!("two targets, two blocks")
+        };
+        assert_eq!(entries(a), [(1, 1, "fn one() {}"), (2, 2, "fn two() {}")]);
+        assert!(!a.omitted);
+        assert!(entries(b).is_empty(), "{:?}", entries(b));
+        assert!(b.omitted);
+        assert!(
+            matches!(outcome.response.omitted.as_slice(), [
+                Omission::OutlineTrimmed {
+                    limit: 43,
+                    definitions: 2
+                }
+            ]),
+            "{:?}",
+            outcome.response.omitted
+        );
+        assert!(rendered(&outcome, Format::Text).ends_with(
+            "── showed 2 targets · 2 definitions · output over --max-bytes 43: 2 definitions not \
+             shown\n"
+        ));
+    }
+
+    #[test]
+    fn a_size_bound_the_outline_fits_exactly_leaves_nothing_out() {
+        let Some(dir) = repo() else { return };
+        write(dir.path(), "a.rs", "fn one() {}\nfn two() {}\n");
+        write(dir.path(), "b.rs", "fn three() {}\nfn f() {}\n");
+        let mut global = global();
+        global.max_bytes = 28 + 16 + 12;
+
+        let outcome = show(&outline_args(&["a.rs", "b.rs"]), &global);
+
+        assert!(
+            outcome.response.omitted.is_empty(),
+            "{:?}",
+            outcome.response.omitted
+        );
+        assert_eq!(outcome.response.stats.bytes, 56);
+        assert!(outlined(&outcome).iter().all(|block| !block.omitted));
+    }
+
+    #[test]
+    fn a_narrowing_target_refuses_the_whole_outline_call_naming_its_form() {
+        let Some(dir) = repo() else { return };
+        write(dir.path(), "lib.rs", LIB_RS);
+
+        for (narrowed, form) in [
+            ("lib.rs:3", ":line"),
+            ("lib.rs:3-5", ":a-b"),
+            ("lib.rs#open", "#symbol"),
+            ("lib.rs@'fn'", "@'regex'"),
+        ] {
+            let outcome = show(&outline_args(&["lib.rs", narrowed]), &global());
+
+            let Some(Error::Usage { message }) = &outcome.error else {
+                panic!(
+                    "{narrowed}: expected a usage error, got {:?}",
+                    outcome.error
+                )
+            };
+            assert!(
+                message.contains(narrowed) && message.contains(form),
+                "{message}"
+            );
+            assert!(
+                !outcome.response.has_output(),
+                "{narrowed}: neither mode ran"
+            );
+        }
+    }
+
+    #[test]
+    fn an_outline_of_a_file_with_no_grammar_is_no_grammar_and_the_rest_still_outline() {
+        let Some(dir) = repo() else { return };
+        write(dir.path(), "page.vue", "<template></template>\n");
+        write(dir.path(), "lib.rs", LIB_RS);
+
+        let outcome = show(&outline_args(&["page.vue", "lib.rs"]), &global());
+
+        assert_eq!(outcome.error.as_ref().map(Error::slug), Some("no_grammar"));
+        let [block] = outlined(&outcome) else {
+            panic!("the resolved target still renders")
+        };
+        assert_eq!(block.target, "lib.rs");
+        assert!(
+            matches!(outcome.response.omitted.as_slice(), [Omission::Unresolved {
+                target,
+                error: "no_grammar"
+            }] if target == "page.vue"),
+            "{:?}",
+            outcome.response.omitted
+        );
     }
 }

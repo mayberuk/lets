@@ -1,9 +1,5 @@
 ```console
 $ lets edit app.js --old 'const cap = 10' --new 'const cap = 20'
-── app.js · 1 replacement · line 2 · exact
-1 	export function usage(id) {
-2~	  const cap = 20
-3 	  return cap + id.length
-── check: structure ok · sha:0edfd9883665→4ab3906a3bfd
+── app.js · 1 replacement · line 2 · check: structure ok · sha:0edfd9883665→4ab3906a3bfd
 
 ```

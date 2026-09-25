@@ -2,10 +2,6 @@ The control for the stale hash above: the same edit, with the hash the file actu
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:c5525cc20b61
-── usage.ts · 1 replacement · line 6 · exact
-5 	  const now = clock.now()
-6~	  const cap = 20
-7 	  if (now > cap) return
-── check: structure ok · sha:c5525cc20b61→419c5d6249b3
+── usage.ts · 1 replacement · line 6 · check: structure ok · sha:c5525cc20b61→419c5d6249b3
 
 ```

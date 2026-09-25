@@ -18,7 +18,7 @@ non-zero, so stdout stays worth reading even on failure.
 |---|---|---|---|
 | 0 | — | done | all verbs |
 | 1 | `not_found` | a target, `--old`, or a pattern matched nothing; the nearest candidate is shown where one exists | `show`, `edit`, `transform`, `find` |
-| 1 | `over_cap` | `find` had more than 50 hits (or `--cap`'s value) and printed the top-files map instead | `find` |
+| 1 | `over_cap` | `find` had more than 50 hits (or `--cap`'s value) and printed the top-files map instead; `--cap-exit-0` prints the same map but exits 0, matching `grep`'s own exit-0-on-any-match | `find` |
 | 1 | `invalid_pattern` | the regex does not parse | `find` |
 | 1 | `exists` | `write` would overwrite an existing file; pass `--force` | `write` |
 | 1 | `empty_input` | `write` got empty stdin; pass `--empty` | `write` |

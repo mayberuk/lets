@@ -1,9 +1,5 @@
 ```console
 $ lets edit usage.ts --old 'return total' --new 'return total * 2'
-── usage.ts · 1 replacement · line 9 · exact
- 8 	  const total = usageCap + id.length
- 9~	  return total * 2
-10 	}
-── check: structure ok · sha:c5525cc20b61→11aa374800a2
+── usage.ts · 1 replacement · line 9 · check: structure ok · sha:c5525cc20b61→11aa374800a2
 
 ```

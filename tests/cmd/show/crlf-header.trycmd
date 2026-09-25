@@ -3,13 +3,13 @@ A file whose endings are mostly CRLF says so in its header, since the rendered l
 
 ```console
 $ lets show win.txt
-── win.txt  (1-2 of 2) · crlf · sha:[..]
+── win.txt  (1-2 of 2) · crlf
 1 	one
 2 	two
 ── showed 1 target · 2 lines
 
 $ lets show unix.txt
-── unix.txt  (1-2 of 2) · sha:[..]
+── unix.txt  (1-2 of 2)
 1 	one
 2 	two
 ── showed 1 target · 2 lines

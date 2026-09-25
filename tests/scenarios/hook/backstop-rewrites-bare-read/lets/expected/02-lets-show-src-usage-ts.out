@@ -1,4 +1,4 @@
-── src/usage.ts  (1-9 of 9) · sha:9925e474e391
+── src/usage.ts  (1-9 of 9)
 1 	const cap = 10
 2 	
 3 	export function usage(entries: number[]) {

@@ -210,7 +210,8 @@ fn format_of(global: &Global) -> Format {
 
 fn render_options(cli: &Cli) -> RenderOptions {
     RenderOptions {
-        numbers: !matches!(&cli.verb, Verb::Show(args) if args.no_numbers),
+        numbers: !matches!(&cli.verb, Verb::Show(args) if args.no_numbers)
+            && !matches!(&cli.verb, Verb::Find(args) if args.no_numbers),
         quiet: cli.global.quiet,
     }
 }

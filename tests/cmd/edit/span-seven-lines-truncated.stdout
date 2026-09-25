@@ -1,9 +1,1 @@
-── s.txt · 1 replacement · lines 4-10 · exact
- 3 	line 3
- 4~	line 4 EDITED
- 5~	line 5 EDITED
-  ·	:6-8 not shown
- 9~	line 9 EDITED
-10~	line 10 EDITED
-11 	line 11
-── sha:[..]→[..] · check: skipped (no grammar for .txt) · :6-8 not shown
+── s.txt · 1 replacement · lines 4-10 · sha:b72837628326→a57bcaac3450 · check: skipped (no grammar for .txt)

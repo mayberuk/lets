@@ -1,4 +1,4 @@
 # spec.md § show: an existing empty file resolves. The header carries no range because there is
-# no line to bound, and the sha is BLAKE3 of zero bytes.
+# no line to bound.
 bin.name = "lets"
 args = ["show", "empty.md"]

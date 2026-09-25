@@ -1,4 +1,4 @@
-── store.go:44-46  (44-46 of 215) · sha:7aacc2f489c8
+── store.go:44-46  (44-46 of 215)
 44 	func Open(path string) (*Store, error) {
 45 		return nil, nil
 46 	}
