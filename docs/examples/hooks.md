@@ -130,7 +130,7 @@ ERROR_CODE=path_conflict
 ```
 
 ```console
-$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; f="$HOME/.claude/settings.json"; head -n 12 "$f" > before; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; if head -n 12 "$f" | cmp -s - before; then echo unrelated-entry-byte-identical; else echo unrelated-entry-changed; fi; grep -c -F '\''"command": "lets hook classify"'\'' "$f"'
+$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; f="$HOME/.claude/settings.json"; head -n 12 "$f" > before; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; if head -n 12 "$f" | cmp -s - before; then echo unrelated-entry-byte-identical; else echo unrelated-entry-changed; fi; grep -c -F '\''"command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"'\'' "$f"'
 unrelated-entry-byte-identical
 1
 

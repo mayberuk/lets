@@ -1,6 +1,7 @@
 //! A target that cannot be resolved fails alone: the rest still render, every failure is
 //! named in the footer and on stderr, and the first in argument order sets the exit.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use crate::cli::{Global, ShowArgs};
@@ -109,7 +110,8 @@ fn resolve(
     fs::guard_scope(&parsed.path, global.allow_outside)?;
     let file =
         read_text(&parsed.path, global.max_file_bytes).map_err(|error| mistyped(raw, error))?;
-    let total = file.content.lines().count();
+    let newlines = fs::count_byte(file.content.as_bytes(), b'\n');
+    let total = newlines + usize::from(!file.content.is_empty() && !file.content.ends_with('\n'));
 
     // `window::Bounds` has no zero-line range, so an empty file gets a bare header and no span.
     if total == 0 && matches!(parsed.kind, target::Kind::Whole) {
@@ -173,7 +175,8 @@ fn resolve(
         },
     };
 
-    let lines = lines_in(&file.content, bounds);
+    let crlf = mostly_crlf(&file.content, newlines);
+    let lines = lines_in(file.content, bounds, total);
     Ok(TargetBlock {
         target: raw.to_owned(),
         path: parsed.path,
@@ -185,7 +188,7 @@ fn resolve(
         window: truncation,
         not_shown: truncation.map(|_| (bounds.end + 1, total)),
         resolver,
-        crlf: mostly_crlf(&file.content),
+        crlf,
         lossy_lines: file
             .lossy_lines
             .into_iter()
@@ -209,9 +212,11 @@ fn mistyped(raw: &str, error: Error) -> Error {
 }
 
 /// `str::lines` drops the `\r` of a CRLF ending, so the header is the only place it shows.
-fn mostly_crlf(content: &str) -> bool {
+fn mostly_crlf(content: &str, lf: usize) -> bool {
+    if fs::count_byte(content.as_bytes(), b'\r') == 0 {
+        return false;
+    }
     let crlf = content.matches("\r\n").count();
-    let lf = content.bytes().filter(|byte| *byte == b'\n').count();
     crlf > lf - crlf
 }
 
@@ -373,18 +378,31 @@ fn not_found(raw: &str, what: String) -> Error {
     }
 }
 
-fn lines_in(content: &str, bounds: Bounds) -> Vec<Line> {
-    content
-        .lines()
-        .enumerate()
-        .skip(bounds.start - 1)
-        .take(bounds.end + 1 - bounds.start)
-        .map(|(index, text)| Line {
-            number: index + 1,
-            marker: Marker::None,
-            text: text.to_owned(),
-        })
-        .collect()
+/// A window over the whole file borrows its lines from the file, leaked for the rest of the
+/// process: a copy per line cost 12% of `show --all` on 8 MiB. A narrower window copies, so a file
+/// shown in part is still freed.
+fn lines_in(content: String, bounds: Bounds, total: usize) -> Vec<Line> {
+    let mut lines = Vec::with_capacity(bounds.end + 1 - bounds.start);
+    let line = |(index, text): (usize, Cow<'static, str>)| Line {
+        number: index + 1,
+        marker: Marker::None,
+        text,
+    };
+    if bounds.start == 1 && bounds.end == total {
+        let content: &'static str = content.leak();
+        lines.extend(content.lines().map(Cow::Borrowed).enumerate().map(line));
+    } else {
+        lines.extend(
+            content
+                .lines()
+                .enumerate()
+                .skip(bounds.start - 1)
+                .take(bounds.end + 1 - bounds.start)
+                .map(|(index, text)| (index, Cow::Owned(text.to_owned())))
+                .map(line),
+        );
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -459,7 +477,6 @@ mod tests {
         let rendered = crate::output::render(&outcome.response, Format::Text, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         });
         rendered
             .lines()
@@ -1007,7 +1024,6 @@ mod tests {
         crate::output::render(&outcome.response, format, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         })
     }
 
@@ -1597,7 +1613,6 @@ mod tests {
         let opts = RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         };
 
         let once = crate::output::render(
@@ -1721,7 +1736,7 @@ mod tests {
         let texts: Vec<&str> = only(&outcome)
             .lines
             .iter()
-            .map(|line| line.text.as_str())
+            .map(|line| &*line.text)
             .collect();
         assert_eq!(texts, ["one", "two", "three"]);
     }

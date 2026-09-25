@@ -1,0 +1,4 @@
+COMMAND
+cd src && cat ../../notes.md; git status
+===END===
+VERDICT allow

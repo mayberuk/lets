@@ -9,7 +9,7 @@ pub fn run() -> Outcome {
     let _ = std::io::stdin().read_to_end(&mut bytes);
 
     let verdict = crate::hook::classify(&bytes);
-    let rendered = crate::hook::render(&verdict);
+    let rendered = crate::hook::render(&verdict, &bytes);
 
     let mut response = Response::empty("hook");
     if !rendered.is_empty() {

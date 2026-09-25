@@ -355,7 +355,8 @@ fn validate(
     }
 
     // One op at a time, so every line number can be carried forward to the written file.
-    let mut rows: Vec<Row> = file.content.lines().map(Row::Kept).collect();
+    let mut rows: Vec<Row> = Vec::with_capacity(fs::count_byte(file.content.as_bytes(), b'\n') + 1);
+    rows.extend(file.content.lines().map(Row::Kept));
     let mut anchors: Vec<(TransformOp, usize)> = Vec::new();
     // Borrowed until the first op rather than cloned: each document held is up to 8 MiB.
     let mut text: Option<String> = None;
@@ -393,7 +394,8 @@ fn validate(
             .into_iter()
             .map(|(selector, resolved)| Omission::SelectorResolved { selector, resolved }),
     );
-    let written: Vec<&str> = text.lines().collect();
+    let mut written: Vec<&str> = Vec::with_capacity(fs::count_byte(text.as_bytes(), b'\n') + 1);
+    written.extend(text.lines());
     let mut lines: Vec<usize> = anchors.iter().map(|(_, line)| *line).collect();
     lines.sort_unstable();
     lines.dedup();
@@ -600,14 +602,14 @@ fn region(
             lines.push(Line {
                 number: 0,
                 marker: Marker::Gap,
-                text: format!(":{}-{} not shown", gap.0, gap.1),
+                text: format!(":{}-{} not shown", gap.0, gap.1).into(),
             });
         }
         for (_, text) in deleted.iter().filter(|(line, _)| *line == number) {
             lines.push(Line {
                 number,
                 marker: Marker::Deleted,
-                text: text.clone(),
+                text: text.clone().into(),
             });
         }
         if shown.contains(&number) {
@@ -618,13 +620,16 @@ fn region(
             lines.push(Line {
                 number,
                 marker,
-                text: written[number - 1].to_owned(),
+                text: written[number - 1].to_owned().into(),
             });
         }
         previous = Some(number);
     }
     if !not_shown.is_empty() {
-        omitted.push(Omission::RegionGap { not_shown });
+        omitted.push(Omission::RegionGap {
+            not_shown,
+            path: None,
+        });
     }
     Some(Region { start, end, lines })
 }
@@ -926,7 +931,6 @@ mod tests {
         crate::output::render(&outcome.response, Format::Text, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         })
     }
 
@@ -1298,7 +1302,7 @@ mod tests {
         region(&written, &rows, &[1, 12], &mut omitted).expect("a region");
 
         assert!(
-            matches!(omitted.as_slice(), [Omission::RegionGap { not_shown }] if not_shown == &[(4, 9)]),
+            matches!(omitted.as_slice(), [Omission::RegionGap { not_shown, .. }] if not_shown == &[(4, 9)]),
             "{omitted:?}"
         );
     }
@@ -1900,7 +1904,6 @@ mod tests {
         let json = crate::output::render(&outcome.response, Format::Json, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         });
         assert!(
             json.contains(

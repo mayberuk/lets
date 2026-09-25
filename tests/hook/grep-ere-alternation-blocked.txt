@@ -1,9 +1,0 @@
-COMMAND
-grep -E 'alpha|beta' src/grep.txt
-===END===
-VERDICT block
-REASON lets find returns every hit numbered and grouped by file.
-REPLACEMENT
-run: lets find 'alpha|beta' src/grep.txt
-===END===
-COMPARE search

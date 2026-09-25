@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Fixed by the stack rule, not read back from the manifest: sixteen crates plus the grammar set.
-const DIRECT_DEPENDENCY_LIMIT: usize = 17;
+/// Fixed by the stack rule, not read back from the manifest: seventeen crates plus the grammar set.
+const DIRECT_DEPENDENCY_LIMIT: usize = 18;
 
 /// Seventeen crates cover eighteen languages — tsx ships inside `tree-sitter-typescript`.
 const GRAMMAR_CRATES: usize = 17;
@@ -32,7 +32,7 @@ fn reported_count(stdout: &str) -> usize {
 }
 
 #[test]
-fn manifest_names_exactly_seventeen_direct_dependencies() {
+fn manifest_names_exactly_eighteen_direct_dependencies() {
     let (code, stdout) = run_gate(&repo_root().join("Cargo.toml"));
 
     assert_eq!(
@@ -95,7 +95,7 @@ fn the_lock_resolves_one_tree_sitter_runtime_for_every_grammar() {
 }
 
 #[test]
-fn an_eighteenth_dependency_in_table_form_fails_the_gate() {
+fn an_nineteenth_dependency_in_table_form_fails_the_gate() {
     let committed =
         std::fs::read_to_string(repo_root().join("Cargo.toml")).expect("Cargo.toml is readable");
     let over_limit = committed.replace(
@@ -126,7 +126,7 @@ fn an_eighteenth_dependency_in_table_form_fails_the_gate() {
 }
 
 #[test]
-fn an_eighteenth_dependency_as_a_build_dependency_fails_the_gate() {
+fn an_nineteenth_dependency_as_a_build_dependency_fails_the_gate() {
     let committed =
         std::fs::read_to_string(repo_root().join("Cargo.toml")).expect("Cargo.toml is readable");
     let over_limit = committed.replace(
@@ -157,7 +157,7 @@ fn an_eighteenth_dependency_as_a_build_dependency_fails_the_gate() {
 }
 
 #[test]
-fn an_eighteenth_dependency_fails_the_gate() {
+fn an_nineteenth_dependency_fails_the_gate() {
     let committed =
         std::fs::read_to_string(repo_root().join("Cargo.toml")).expect("Cargo.toml is readable");
     let over_limit = committed.replace("[dependencies]\n", "[dependencies]\nwalkdir = \"2\"\n");
@@ -171,7 +171,7 @@ fn an_eighteenth_dependency_fails_the_gate() {
 
     assert_eq!(
         code, 1,
-        "an eighteenth dependency passed the gate:\n{stdout}"
+        "a nineteenth dependency passed the gate:\n{stdout}"
     );
     assert_eq!(
         reported_count(&stdout),

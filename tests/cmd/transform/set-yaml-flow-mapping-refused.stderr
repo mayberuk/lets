@@ -1,0 +1,2 @@
+c.yaml is unsupported: a cannot be changed in place (its parent is a single-line flow mapping ({ … }); rewrite it as a block mapping first, or edit the whole line)
+ERROR_CODE=unsupported_file

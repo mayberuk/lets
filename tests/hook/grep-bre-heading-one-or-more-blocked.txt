@@ -1,9 +1,0 @@
-COMMAND
-grep -n '^#\+ ' src/grep.txt
-===END===
-VERDICT block
-REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
-REPLACEMENT
-run: lets find '^#+ ' src/grep.txt
-===END===
-COMPARE search

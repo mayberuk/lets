@@ -1,9 +1,0 @@
-COMMAND
-rg -l foo
-===END===
-VERDICT block
-REASON lets find returns every hit numbered and grouped by file.
-REPLACEMENT
-run: lets find --files 'foo'
-===END===
-COMPARE search-files

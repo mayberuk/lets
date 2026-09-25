@@ -15,6 +15,10 @@ $ rustup toolchain install "$(just --evaluate nightly)" --component rustfmt
 cargo-deny cargo-machete cargo-nextest`), and `dist` if you're touching the release pipeline
 (`cargo install --locked cargo-dist`).
 
+`just bench-gate` benchmarks the musl binary we actually ship, so it needs the musl target
+(`rustup target add x86_64-unknown-linux-musl`) and `musl-gcc` (`musl-tools` on Debian/Ubuntu).
+Without them, set `LETS_BENCH_TARGET=glibc` to fall back to the glibc release build.
+
 The test suite also runs `rg`, and it expects GNU `sed -i`. On macOS, run
 `brew install ripgrep gnu-sed` and put `$(brew --prefix gnu-sed)/libexec/gnubin` first on `PATH`.
 
@@ -85,8 +89,9 @@ comment — names and types carry the what. The full rule, with examples, is
 
 `lets` is called hundreds of times a session, so startup and per-call latency are gated, not just
 measured: `bench/gates.rs` is the single source for every threshold, each with the measurement
-that set it. `just bench-gate` builds a release binary, generates the fixture corpus, and runs
-both bench targets (`benches/wall_clock.rs` for CLI latency against reference tools,
+that set it. `just bench-gate` builds the musl `dist` binary we actually ship (`LETS_BENCH_TARGET=glibc`
+falls back to a glibc release build), generates the fixture corpus, and runs both bench targets
+(`benches/wall_clock.rs` for CLI latency against reference tools,
 `benches/alloc.rs` for allocation counts and bytes under `divan`), failing on the first workload
 that misses its gate or its baseline. Quote its output in any pull request that claims a
 performance change or touches `src/hook/`, `src/output.rs`, `src/matcher.rs`, `src/symbols/` or

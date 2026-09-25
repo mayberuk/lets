@@ -1,0 +1,9 @@
+COMMAND
+cat long.txt
+===END===
+VERDICT rewrite
+REASON lets show reads several files and ranges in one call.
+REPLACEMENT
+run: lets show long.txt --all
+===END===
+COMPARE read

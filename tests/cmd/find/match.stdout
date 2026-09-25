@@ -1,4 +1,13 @@
 ── small.md
  5:	## «Bottom line»
+ 6-	
+ 7-	Lines locate, content confirms.
+ 8-	
+ 9-	```sh
+10-	# not a heading
+11-	```
+12-	
 13:	## «Next»
-── 2 hits in 1 file · searched 1 file
+14-	
+15-	Something else.
+── 2 hits in 1 file · searched 1 file · expanded 2 hits to enclosing symbols

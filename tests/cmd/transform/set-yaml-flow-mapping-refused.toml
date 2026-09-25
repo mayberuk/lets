@@ -1,0 +1,8 @@
+# wave1-review H2 (out-of-scope note): yamlpath resolves query_exists into a `{ ... }` flow mapping
+# for its first entry only, and yamlpatch's flow-mapping replace rewrites the whole `{ ... }` from
+# that entry, dropping every sibling. Refuse rather than risk it, and leave the file untouched.
+bin.name = "lets"
+args = ["transform", "c.yaml", "--set", "a=3"]
+
+[status]
+code = 7

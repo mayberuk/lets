@@ -1,0 +1,4 @@
+COMMAND
+cat ~/.ssh/id_rsa
+===END===
+VERDICT allow

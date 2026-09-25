@@ -74,7 +74,7 @@ pub fn cut_long_lines(lines: &mut [Line], hits: &[Option<Range<usize>>]) -> usiz
         if end < text.len() {
             kept.push(CUT_MARK);
         }
-        line.text = kept;
+        line.text = kept.into();
         cut += 1;
     }
     cut
@@ -109,10 +109,12 @@ pub fn content_bytes(lines: &[Line]) -> usize {
     lines.iter().map(|line| line.text.len() + 1).sum()
 }
 
+/// A `--budget` flag is a token count; find and show both convert it to bytes at this ratio.
+pub const BYTES_PER_TOKEN: usize = 4;
+
 /// A trimmed target keeps its first line: an empty block is a header the footer cannot explain.
 pub fn trim_to_budget(blocks: &mut [TargetBlock], budget: usize) -> Vec<Omission> {
-    // A budget is a token count; the estimate is bytes ÷ 4.
-    let limit = budget.saturating_mul(4);
+    let limit = budget.saturating_mul(BYTES_PER_TOKEN);
     let mut omissions = Vec::new();
     let mut trimmed = vec![false; blocks.len()];
     loop {
@@ -250,7 +252,7 @@ mod tests {
         Line {
             number,
             marker: Marker::None,
-            text: text.to_owned(),
+            text: text.to_owned().into(),
         }
     }
 
@@ -274,7 +276,7 @@ mod tests {
     fn cut_one(text: &str, hit: Option<Range<usize>>) -> (String, usize) {
         let mut lines = vec![line(1, text)];
         let cut = cut_long_lines(&mut lines, &[hit]);
-        (lines.remove(0).text, cut)
+        (lines.remove(0).text.into_owned(), cut)
     }
 
     fn pair_at(start: usize, pair: &str) -> Range<usize> {

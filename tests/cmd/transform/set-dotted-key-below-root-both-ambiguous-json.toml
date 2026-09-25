@@ -1,0 +1,8 @@
+# The ambiguous control for set-dotted-key-below-root-literal-only-json: a holds both the literal
+# key and the nested editor.formatOnSave, so the unquoted path cannot pick one and the file is
+# unchanged.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "a.editor.formatOnSave=true"]
+
+[status]
+code = 2

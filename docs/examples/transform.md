@@ -114,6 +114,16 @@ $ lets transform c.json --set a=2 --check @cargo
 ```
 
 ```console
+$ lets transform c.json --delete editor.formatOnSave
+? 2
+editor.formatOnSave is ambiguous (2 candidates)
+  c.json:2	the literal key "editor.formatOnSave" — quote the whole argument: --delete '"editor.formatOnSave"'
+  c.json:4	the nested path editor.formatOnSave — quote the whole argument: --delete '"editor"."formatOnSave"'
+ERROR_CODE=ambiguous
+
+```
+
+```console
 $ lets transform config/app.json --delete features.missing
 ? 1
 path not found in features.missing
@@ -240,6 +250,74 @@ $ lets transform c.json --set 'plugins[name=gitty].version=2.0'
 ```
 
 ```console
+$ lets transform c.json --set a.editor.formatOnSave=true
+? 2
+a.editor.formatOnSave is ambiguous (2 candidates)
+  c.json:3	the path a."editor.formatOnSave" — quote the whole argument: --set '"a"."editor.formatOnSave"=…'
+  c.json:5	the nested path a.editor.formatOnSave — quote the whole argument: --set '"a"."editor"."formatOnSave"=…'
+ERROR_CODE=ambiguous
+
+```
+
+```console
+$ lets transform c.json --set a.editor.formatOnSave=true
+── c.json · json · set a.editor.formatOnSave · line 3
+1 	{
+2 	  "a": {
+3 	    "editor.formatOnSave": true
+4 	  }
+5 	}
+── check: json ok · sha:d85ae3e8581d→d85ae3e8581d
+
+```
+
+```console
+$ lets transform c.json --set a.editor.formatOnSave=true
+── c.json · json · set a.editor.formatOnSave · line 4
+2 	  "a": {
+3 	    "editor": {
+4 	      "formatOnSave": true
+5 	    }
+6 	  }
+── check: json ok · sha:605b242e9019→605b242e9019
+
+```
+
+```console
+$ lets transform c.json --set a.editor.formatOnSave=true
+── c.json · json · set a.editor.formatOnSave · line 4
+2 	  "a": {
+3 	    "editor": {
+4 	      "formatOnSave": true
+5 	    }
+6 	  }
+── check: json ok · sha:605b242e9019→605b242e9019
+
+```
+
+```console
+$ lets transform c.json --set a.b.c=3
+? 2
+a.b.c is ambiguous (2 candidates)
+  c.json:3	the path a."b.c" — quote the whole argument: --set '"a"."b.c"=…'
+  c.json:6	the path "a.b".c — quote the whole argument: --set '"a.b"."c"=…'
+ERROR_CODE=ambiguous
+
+```
+
+```console
+$ lets transform c.json --set a.b.c=2
+── c.json · json · set a.b.c · line 3
+1 	{
+2 	  "a.b": {
+3 	    "c": 2
+4 	  }
+5 	}
+── check: json ok · sha:834a82dc4722→834a82dc4722
+
+```
+
+```console
 $ lets transform c.json --set build=8
 ── c.json · json · set build · line 4
 2 	  "name": "demo",
@@ -321,15 +399,109 @@ $ lets transform c.json --set editor.formatOnSave
 ```
 
 ```console
+$ lets transform c.json --set a b
+── c.json · json · set "a"."b" · line 4
+2 	  "a.b": 1,
+3 	  "a": {
+4 	    "b": 3
+5 	  }
+6 	}
+── check: json ok · sha:93473d6d80cd→93473d6d80cd
+
+```
+
+```console
+$ lets transform c.json --set a.b=3
+? 2
+a.b is ambiguous (2 candidates)
+  c.json:2	the literal key "a.b" — quote the whole argument: --set '"a.b"=…'
+  c.json:4	the nested path a.b — quote the whole argument: --set '"a"."b"=…'
+ERROR_CODE=ambiguous
+
+```
+
+```console
 $ lets transform c.json --set editor.formatOnSave=true
-── c.json · json · set editor.formatOnSave · line 5
-2 	  "editor.formatOnSave": false,
-3 	  "editor": {
-4~	    "tabSize": 2,
-5+	    "formatOnSave": true
-6 	  }
-7 	}
+? 2
+editor.formatOnSave is ambiguous (2 candidates)
+  c.json:2	the literal key "editor.formatOnSave" — quote the whole argument: --set '"editor.formatOnSave"=…'
+  c.json:4	the nested path editor.formatOnSave — quote the whole argument: --set '"editor"."formatOnSave"=…'
+ERROR_CODE=ambiguous
+
+```
+
+```console
+$ lets transform c.toml --set editor.formatOnSave=true
+? 2
+editor.formatOnSave is ambiguous (2 candidates)
+  c.toml:1	the literal key "editor.formatOnSave" — quote the whole argument: --set '"editor.formatOnSave"=…'
+  c.toml:4	the nested path editor.formatOnSave — quote the whole argument: --set '"editor"."formatOnSave"=…'
+ERROR_CODE=ambiguous
+
+```
+
+```console
+$ lets transform c.yaml --set editor.formatOnSave=true
+? 2
+editor.formatOnSave is ambiguous (2 candidates)
+  c.yaml:1	the literal key "editor.formatOnSave" — quote the whole argument: --set '"editor.formatOnSave"=…'
+  c.yaml:3	the nested path editor.formatOnSave — quote the whole argument: --set '"editor"."formatOnSave"=…'
+ERROR_CODE=ambiguous
+
+```
+
+```console
+$ lets transform c.json --set editor.formatOnSave=true
+── c.json · json · set editor.formatOnSave · line 2
+1 	{
+2~	  "editor.formatOnSave": true
+3 	}
 ── check: json ok · sha:[..]→[..]
+
+```
+
+```console
+$ lets transform c.toml --set editor.formatOnSave=true
+── c.toml · toml · set editor.formatOnSave · line 1
+1~	"editor.formatOnSave" = true
+── check: toml ok · sha:[..]→[..]
+
+```
+
+```console
+$ lets transform c.yaml --set editor.formatOnSave=true
+── c.yaml · yaml · set editor.formatOnSave · line 1
+1~	editor.formatOnSave: true
+── check: yaml ok · sha:[..]→[..]
+
+```
+
+```console
+$ lets transform c.json --set editor.formatOnSave=true
+── c.json · json · set editor.formatOnSave · line 4
+1 	{
+2 	  "editor": {
+3~	    "tabSize": 2,
+4+	    "formatOnSave": true
+5 	  }
+6 	}
+── check: json ok · sha:[..]→[..]
+
+```
+
+```console
+$ lets transform c.yaml --set a.b=3
+? 7
+c.yaml is unsupported: a.b cannot be changed in place (its parent is a single-line flow mapping ({ … }); rewrite it as a block mapping first, or edit the whole line)
+ERROR_CODE=unsupported_file
+
+```
+
+```console
+$ lets transform c.yaml --set a=3
+? 7
+c.yaml is unsupported: a cannot be changed in place (its parent is a single-line flow mapping ({ … }); rewrite it as a block mapping first, or edit the whole line)
+ERROR_CODE=unsupported_file
 
 ```
 

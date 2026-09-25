@@ -1,0 +1,5 @@
+# A batch with no `@@` header and exactly one positional target: 1 of 16 paid-trial sessions
+# wrote a batch shaped like this against a named file and hit the old "no positional target"
+# refusal. Every block on stdin now applies to that one target, as if it opened `@@ a.ts`.
+bin.name = "lets"
+args = ["edit", "a.ts", "--from", "-"]

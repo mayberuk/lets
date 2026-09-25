@@ -1,3 +1,5 @@
 ── legacy/m.rs
+1-	fn good() {}
+2-	let s = "��";
 3:	fn «target_fn»() { 1 }
-── 1 hit in 1 file · searched 1 file · skipped 2 (binary 2)
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines · 1 non-UTF-8 line shown lossily · skipped 2 (binary 2)

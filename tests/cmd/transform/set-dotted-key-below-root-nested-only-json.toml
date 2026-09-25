@@ -1,0 +1,4 @@
+# The nested control for set-dotted-key-below-root-literal-only-json: with no literal
+# "editor.formatOnSave" key under a, the unquoted path still nests under a.editor as it always has.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "a.editor.formatOnSave=true"]

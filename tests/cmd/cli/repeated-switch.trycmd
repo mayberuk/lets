@@ -6,12 +6,14 @@ of the two values without a word.
 $ lets find -i needle . -i
 ── a.txt
 1:	«Needle»
-── 1 hit in 1 file · searched 1 file
+2-	hay
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines
 
 $ lets find -i needle .
 ── a.txt
 1:	«Needle»
-── 1 hit in 1 file · searched 1 file
+2-	hay
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines
 
 $ lets find -C 1 -C 2 needle .
 ? 64

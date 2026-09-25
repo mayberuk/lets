@@ -1,0 +1,5 @@
+# spec.md § transform, literal keys: with no nested `editor` object to compete, the unquoted
+# `editor.formatOnSave` resolves to the existing literal key of that name instead of creating one.
+# set-unquoted-dotted-key-ambiguous-json is the case where both exist.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "editor.formatOnSave=true"]

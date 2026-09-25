@@ -34,6 +34,13 @@ impl Cli {
         {
             args.order = op_order(sub);
         }
+        if let (Verb::Find(args), Some(sub)) = (&mut cli.verb, matches.subcommand_matches("find")) {
+            args.globs = glob_order(
+                sub,
+                std::mem::take(&mut args.globs),
+                std::mem::take(&mut args.exclude),
+            );
+        }
         if let Verb::Find(args) = &cli.verb
             && args.grep.invert_match
         {
@@ -191,8 +198,8 @@ pub struct ShowArgs {
     // Unlike edit/transform, `show` has no `--from -` batch form to stand in for targets.
     #[arg(required = true)]
     pub targets: Vec<String>,
-    // 200: the corpus's measured p75 full-read is 211 lines.
-    #[arg(long, default_value_t = 200)]
+    // 100: Opus's lets reads had a median of 138 lines against 55 for raw reads.
+    #[arg(long, default_value_t = 100)]
     pub window: usize,
     #[arg(long)]
     pub all: bool,
@@ -206,6 +213,20 @@ pub struct ShowArgs {
     pub no_numbers: bool,
 }
 
+/// `--exclude GLOB` is `-g '!GLOB'`; interleaved with `-g` by argv position so a later flag can
+/// still override an earlier one, the way ripgrep's overrides do.
+fn glob_order(sub: &ArgMatches, globs: Vec<String>, excludes: Vec<String>) -> Vec<String> {
+    let mut indexed: Vec<(usize, String)> = Vec::new();
+    if let Some(indices) = sub.indices_of("globs") {
+        indexed.extend(indices.zip(globs));
+    }
+    if let Some(indices) = sub.indices_of("exclude") {
+        indexed.extend(indices.zip(excludes.into_iter().map(|glob| format!("!{glob}"))));
+    }
+    indexed.sort_unstable_by_key(|(at, _)| *at);
+    indexed.into_iter().map(|(_, glob)| glob).collect()
+}
+
 #[derive(Debug, Args, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct FindArgs {
@@ -213,8 +234,12 @@ pub struct FindArgs {
     pub paths: Vec<String>,
     #[arg(short = 'F', long)]
     pub fixed_string: bool,
-    #[arg(short = 'i', long)]
+    #[arg(short = 'i', long, conflicts_with = "case_sensitive")]
     pub ignore_case: bool,
+    /// Force exact case; default is smart case, insensitive only when the pattern has no
+    /// uppercase letter
+    #[arg(short = 's', long = "case-sensitive")]
+    pub case_sensitive: bool,
     #[arg(short = 'w', long)]
     pub word: bool,
     // 50: the SWE-agent-tuned cap on over-cap search suppression.
@@ -226,6 +251,9 @@ pub struct FindArgs {
     pub count: bool,
     #[arg(short = 'g', long = "glob", visible_alias = "include")]
     pub globs: Vec<String>,
+    /// Prune a path from the walk, exactly `-g '!GLOB'` in the order given relative to `-g`
+    #[arg(long)]
+    pub exclude: Vec<String>,
     #[arg(long)]
     pub hidden: bool,
     #[arg(short = 'A')]
@@ -234,6 +262,9 @@ pub struct FindArgs {
     pub before: Option<usize>,
     #[arg(short = 'C')]
     pub context: Option<usize>,
+    /// Print hit lines only, never the enclosing symbol or the lines around a hit
+    #[arg(long)]
+    pub no_expand: bool,
     #[command(flatten)]
     pub grep: GrepCompat,
 }
@@ -280,6 +311,10 @@ pub struct EditArgs {
     pub insert_after: Option<String>,
     #[arg(long)]
     pub insert_before: Option<String>,
+    /// Read a batch from stdin; `-` is the only accepted value. Fenced form: a `@@ file` (or
+    /// `@@ file insert-after @'regex'`) header, then one or more `<<<<<<< old` / `======= new` /
+    /// `>>>>>>>` blocks — the header covers every block until the next `@@`. A JSONL form is also
+    /// accepted, one edit object per line.
     #[arg(long)]
     pub from: Option<String>,
     #[arg(long = "if", value_parser = if_sha)]
@@ -450,12 +485,12 @@ mod tests {
     }
 
     #[test]
-    fn window_defaults_to_200() {
+    fn window_defaults_to_100() {
         let cli = Cli::try_parse_from(["lets", "show", "a.ts"]).unwrap();
         let Verb::Show(args) = cli.verb else {
             panic!("expected Verb::Show");
         };
-        assert_eq!(args.window, 200);
+        assert_eq!(args.window, 100);
     }
 
     #[test]
@@ -718,6 +753,12 @@ mod tests {
     }
 
     #[test]
+    fn no_expand_is_off_unless_typed() {
+        assert!(!find(&["lets", "find", "x"]).no_expand);
+        assert!(find(&["lets", "find", "x", "--no-expand"]).no_expand);
+    }
+
+    #[test]
     fn g_glob_and_include_collect_into_globs_in_order() {
         let args = find(&["lets", "find", "x", "-g", "a", "-g", "b", "--include", "c"]);
         assert_eq!(args.globs, ["a", "b", "c"]);
@@ -725,6 +766,49 @@ mod tests {
             "*.ts"
         ]);
         assert!(find(&["lets", "find", "x"]).globs.is_empty());
+    }
+
+    #[test]
+    fn exclude_is_folded_into_globs_as_a_negated_glob() {
+        let args = find(&["lets", "find", "x", "--exclude", "vendor"]);
+        assert_eq!(args.globs, ["!vendor"]);
+        assert!(
+            args.exclude.is_empty(),
+            "exclude drains into globs, not left behind"
+        );
+    }
+
+    #[test]
+    fn exclude_and_glob_interleave_in_argv_order() {
+        let args = find(&[
+            "lets",
+            "find",
+            "x",
+            "-g",
+            "*.ts",
+            "--exclude",
+            "vendor",
+            "-g",
+            "*.tsx",
+        ]);
+        assert_eq!(args.globs, ["*.ts", "!vendor", "*.tsx"]);
+
+        let reversed = find(&["lets", "find", "x", "--exclude", "vendor", "-g", "*.ts"]);
+        assert_eq!(reversed.globs, ["!vendor", "*.ts"]);
+    }
+
+    #[test]
+    fn repeated_exclude_collects_every_value_in_order() {
+        let args = find(&[
+            "lets",
+            "find",
+            "x",
+            "--exclude",
+            "vendor",
+            "--exclude",
+            "dist",
+        ]);
+        assert_eq!(args.globs, ["!vendor", "!dist"]);
     }
 
     #[test]

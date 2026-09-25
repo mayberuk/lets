@@ -4,7 +4,6 @@ $ lets edit config.json --old '"window": 200' --new '"window": 100'
 1 	{
 2~	  "window": 100,
 3 	  "threads": 4
-4 	}
 ── check: json ok · sha:e44762446524→21a40c895946
 
 ```

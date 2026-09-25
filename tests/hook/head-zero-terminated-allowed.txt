@@ -1,0 +1,4 @@
+COMMAND
+head -z -n 1 src/a.ts
+===END===
+VERDICT allow

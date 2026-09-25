@@ -2,7 +2,6 @@
 $ lets edit config.toml --old 'threads = 4' --new 'threads = 4x'
 ? 3
 ── config.toml · 1 replacement · line 3 · REVERTED
-1 	[package]
 2 	name = "lets"
 3~	threads = 4x          ← invalid toml
 ── check: invalid → reverted · file unchanged · sha:96cdbcfee3f4

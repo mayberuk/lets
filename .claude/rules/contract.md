@@ -11,10 +11,10 @@ not happen. `docs/agents.md` § The footer contract holds the full text.
 
 ## Always
 - Emit every header as `── <target>  (<a>-<b> of <N>[ · window W · :x-y not shown][ · via R]) · sha:<12 hex>`
-  and every footer as `── <verb summary> · <cost>`; numbered lines right-aligned to the widest
-  number, a tab, a `+`/`~` marker column that is blank otherwise. The tab, not two spaces, is the
-  gutter separator, not two spaces — a model reads it the way it already reads `cat -n`, and
-  cannot fold it into the line's own indentation.
+  and every footer as `── <verb summary>`; numbered lines right-aligned to the widest number, a
+  tab, a `+`/`~` marker column that is blank otherwise. The tab, not two spaces, is the gutter
+  separator, not two spaces — a model reads it the way it already reads `cat -n`, and cannot fold
+  it into the line's own indentation.
 - Name every omission in the footer: window, budget trim, hit cap, `.gitignore` and hidden
   skips, checker skipped or inconclusive, xattrs dropped, normalised match, partial-batch files.
 - Write only the answer to stdout. Diagnostics and `ERROR_CODE=<slug>` (the last line) go to
@@ -23,8 +23,8 @@ not happen. `docs/agents.md` § The footer contract holds the full text.
   (`0 1 2 3 4 5 6 7 8`).
 - Render text, `--json` and `--jsonl` from the same output struct. A field exists in all three
   or in none.
-- Print token estimates as `~` with bytes ÷ 4 (or `LETS_TOKEN_RATIO`); omit the cost line under
-  `LETS_NO_STATS=1`.
+- Compute `stats.tokens_est` as bytes ÷ 4 (or `LETS_TOKEN_RATIO`), `null` under `LETS_NO_STATS=1`;
+  `--json`/`--jsonl` carry it, text does not print it.
 - Keep status metadata (headers, footers, `ERROR_CODE`) outside `--budget` and `--max-bytes`.
   Cap candidate lists at 20 with `(+N more)` and a checker excerpt at its first line, 1 KiB.
 - Make stdout byte-identical for identical input and file state: no timestamps, no absolute
@@ -41,7 +41,7 @@ not happen. `docs/agents.md` § The footer contract holds the full text.
 
 ```text
 ✅ DO
-── find 'onBack' · 4 hits in 2 files · searched 31 files · ignored 12 (gitignore 9 · hidden 3) · ~0.9k tokens
+── find 'onBack' · 4 hits in 2 files · searched 31 files · ignored 12 (gitignore 9 · hidden 3)
 
 ❌ DON'T
 ── 4 hits in 2 files            ← 12 files were skipped and nothing says so

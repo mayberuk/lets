@@ -1,0 +1,9 @@
+COMMAND
+head -n 1 -n 2 src/a.ts
+===END===
+VERDICT rewrite
+REASON lets show reads several files and ranges in one call.
+REPLACEMENT
+run: lets show src/a.ts:1-2
+===END===
+COMPARE read

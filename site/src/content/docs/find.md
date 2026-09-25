@@ -23,21 +23,28 @@ files are skipped unless asked for. Capped at 50 hits by default — over the ca
 printed; instead a bounded map of the files holding the most hits, so the next call can narrow to
 one of them. Replaces `grep -rn` and `rg` run directly in the shell.
 
+Case is smart by default, as in `ripgrep --smart-case`: insensitive when the pattern has no
+uppercase letter, exact otherwise. `-i` forces insensitive; `-s` forces exact case. A hit that
+matched only because case was ignored is named in the footer.
+
 ## Flags
 
 | Flag | Meaning | Default |
 |---|---|---|
 | `-F, --fixed-string` | match the pattern literally, not as a regex | off |
-| `-i, --ignore-case` | case-insensitive | off |
+| `-i, --ignore-case` | force case-insensitive | off |
+| `-s, --case-sensitive` | force exact case, overriding smart case | off |
 | `-w, --word` | match whole words only | off |
 | `--cap <N>` | raise the hit cap (prints hits, not the over-cap map) | 50 |
 | `-l, --files` | list matching files only, one bare path per line, no cap | off |
 | `-c, --count` | print the footer first, then one `<count>  <path>` row per file | off |
 | `-g, --glob <GLOB>` (alias `--include`) | narrow the walk to paths the glob matches; footer names it | — |
+| `--exclude <GLOB>` | prune a path from the walk; exactly `-g '!GLOB'`, interleaved with `-g` in argv order | — |
 | `--hidden` | include hidden files and directories | off |
 | `-A <N>` | lines of context after a hit | — |
 | `-B <N>` | lines of context before | — |
 | `-C <N>` | lines of context on both sides | — |
+| `--no-expand` | print hit lines only, never the enclosing symbol or the lines around a hit | off |
 | `--no-ignore` | do not honor `.gitignore`/`.ignore`/global excludes | off |
 | `--allow-outside` | permit a path outside the working tree | off |
 | `--json` / `--jsonl` | structured output | off |
@@ -81,6 +88,8 @@ Over the cap, no hit lines print. Instead:
 - A regex holding one of grep's BRE escapes (`\|`, `\(`, `\)`, `\{`, `\}`, `\+`, `\?`) that
   matches nothing is retried read grep-style, and the footer names the reading used:
   `· «A\|B» had no hits, read grep-style as «A|B»`.
+- Smart case folded the search and one or more hits have no case-sensitive match of the pattern:
+  `· 3 hits match only ignoring case (-s for exact case)`.
 
 ## Exit codes
 
@@ -104,7 +113,7 @@ $ lets find usageCap
 1:  export const «usageCap» = 10
 ── src/usage.ts
 1:  import { «usageCap» } from './config'
-── 2 hits in 2 files · searched 3 files · ~17 tokens
+── 2 hits in 2 files · searched 3 files
 ```
 
 Two patterns at once, with context:

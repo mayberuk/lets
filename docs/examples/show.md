@@ -191,9 +191,9 @@ ERROR_CODE=outside_tree
 
 ```console
 $ lets show big.ts --max-bytes 100 --budget 1000
-── big.ts  (1-200 of 212 · window 200 · :201-212 not shown) · sha:e37232c09d01
+── big.ts  (1-100 of 212 · window 100 · :101-212 not shown) · sha:e37232c09d01
 ...
-── showed 1 target · 200 lines · :201-212 not shown
+── showed 1 target · 100 lines · :101-212 not shown
 
 ```
 
@@ -262,6 +262,15 @@ $ lets show 'big.ts#usage'
 ```
 
 ```console
+$ lets show 't.toml#package'
+── t.toml#package  (1-2 of 4 · via tree-sitter) · sha:[..]
+1 	[package]
+2 	name = "x"
+── showed 1 target · 2 lines
+
+```
+
+```console
 $ lets show small.md
 ── small.md  (1-15 of 15) · sha:bc4ff3a9b973
 ...
@@ -271,8 +280,8 @@ $ lets show small.md
 
 ```console
 $ lets show big.ts
-── big.ts  (1-200 of 212 · window 200 · :201-212 not shown) · sha:e37232c09d01
+── big.ts  (1-100 of 212 · window 100 · :101-212 not shown) · sha:e37232c09d01
 ...
-── showed 1 target · 200 lines · :201-212 not shown
+── showed 1 target · 100 lines · :101-212 not shown
 
 ```

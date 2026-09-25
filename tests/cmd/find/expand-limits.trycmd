@@ -1,0 +1,79 @@
+Expansion never costs a hit line. With room for every symbol both functions expand; `--budget 20`
+(80 bytes) holds the two hit lines (52) and one function's context (28), so the second hit stays
+bare and the footer says why; `--budget 15` and `--max-bytes 60` hold the hits alone. Over the hit
+cap, the preview holds no more hits than `--cap`, and none at `--cap 0`. A hit in a one-line
+function gets five lines either side, and a TOML table stops before the next table's header.
+
+```console
+$ lets find needle_ two.rs
+── two.rs
+1-	fn a() {
+2:	    let «needle_»a = 1;
+3-	    let pad = 2;
+4-	}
+6-	fn b() {
+7:	    let «needle_»b = 1;
+8-	    let pad = 2;
+9-	}
+── 2 hits in 1 file · searched 1 file · expanded 2 hits to enclosing symbols
+
+$ lets --budget 20 find needle_ two.rs
+── two.rs
+1-	fn a() {
+2:	    let «needle_»a = 1;
+3-	    let pad = 2;
+4-	}
+7:	    let «needle_»b = 1;
+── 2 hits in 1 file · searched 1 file · expanded 1 hit to enclosing symbols · 1 hit not expanded (budget 20)
+
+$ lets --budget 15 find needle_ two.rs
+── two.rs
+2:	    let «needle_»a = 1;
+7:	    let «needle_»b = 1;
+── 2 hits in 1 file · searched 1 file · 2 hits not expanded (budget 15)
+
+$ lets --max-bytes 60 find needle_ two.rs
+── two.rs
+2:	    let «needle_»a = 1;
+7:	    let «needle_»b = 1;
+── 2 hits in 1 file · searched 1 file · 2 hits not expanded (max-bytes 60)
+
+$ lets find needle n.txt --cap 3
+? 1
+── n.txt
+1:	«needle» 1
+2:	«needle» 2
+3:	«needle» 3
+12	n.txt
+── 12 hits in 1 file · searched 1 file · over the 3-hit cap · narrow the pattern or the paths, or --files · first 3 of 12 hits in the busiest file shown · top 1 file shown
+12 hits in 1 file · over the 3-hit cap · narrow the pattern or the paths, or --files
+ERROR_CODE=over_cap
+
+$ lets find needle n.txt --cap 0
+? 1
+12	n.txt
+── 12 hits in 1 file · searched 1 file · over the 0-hit cap · narrow the pattern or the paths, or --files · top 1 file shown
+12 hits in 1 file · over the 0-hit cap · narrow the pattern or the paths, or --files
+ERROR_CODE=over_cap
+
+$ lets find NEEDLE one.rs
+── one.rs
+1-	use a;
+2-	use b;
+3-	
+4:	fn one() -> u32 { «NEEDLE» }
+5-	
+6-	fn two() {
+7-	    3
+8-	}
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines
+
+$ lets find package c.toml
+── c.toml
+1:	[«package»]
+2-	name = "x"
+3-	version = "1"
+4-	
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to enclosing symbols
+
+```

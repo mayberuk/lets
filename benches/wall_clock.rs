@@ -77,6 +77,7 @@ fn main() -> ExitCode {
         show_small(&bin, &corpus),
         show_symbol(&bin, &corpus),
         find(&bin, &corpus),
+        find_expanded(&bin, &corpus),
         edit(&bin, &corpus),
         edit_batch(&bin, &corpus),
         transform_set(&bin, &corpus),
@@ -203,12 +204,16 @@ fn sample(one: impl Fn() -> Duration) -> (Duration, Duration) {
 }
 
 /// No inherited `RIPGREP_CONFIG_PATH`, git config or global gitignore may skew either side.
+/// `CLAUDE_CONFIG_DIR`/`CLAUDE_PROJECT_DIR` point at the same fresh, settings-free `home` so
+/// `hook classify`'s permission read never sees the real runner's `~/.claude/settings.json`.
 fn scrubbed(program: &Path, cwd: &Path, home: &Path) -> Command {
     let mut command = Command::new(program);
     command
         .current_dir(cwd)
         .env_clear()
         .env("HOME", home)
+        .env("CLAUDE_CONFIG_DIR", home)
+        .env("CLAUDE_PROJECT_DIR", home)
         .env("XDG_RUNTIME_DIR", home)
         .env("XDG_CONFIG_HOME", home)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -326,17 +331,19 @@ fn guide(bin: &Path) -> Row {
 }
 
 /// A command the classifier blocks, so the timed path is the full bash parse, not an early allow.
+/// `sed -i` with a `g` flag, not `cat`: chained whole-file reads now rewrite instead of blocking,
+/// and unlike a search, `sed -i` denies without needing the named files to exist.
 fn blocked_command() -> String {
-    const LINK: &str = " && cat src/module_00.ts";
-    const TAIL: &str = " && cat src/.ts";
-    let mut command = String::from("cat src/a.ts");
+    const LINK: &str = " && sed -i 's/x/x/g' src/module_00.ts";
+    const TAIL: &str = " && sed -i 's/x/x/g' src/.ts";
+    let mut command = String::from("sed -i 's/x/x/g' src/a.ts");
     let mut index = 0;
     while command.len() + LINK.len() + TAIL.len() < HOOK_COMMAND_BYTES {
-        let _ = write!(command, " && cat src/module_{index:02}.ts");
+        let _ = write!(command, " && sed -i 's/x/x/g' src/module_{index:02}.ts");
         index += 1;
     }
     let pad = HOOK_COMMAND_BYTES - command.len() - TAIL.len();
-    let _ = write!(command, " && cat src/{}.ts", "x".repeat(pad));
+    let _ = write!(command, " && sed -i 's/x/x/g' src/{}.ts", "x".repeat(pad));
     assert_eq!(command.len(), HOOK_COMMAND_BYTES);
     command
 }
@@ -467,10 +474,18 @@ fn show_symbol(bin: &Path, corpus: &Path) -> Row {
 }
 
 /// `--no-ignore`: the corpus root's `*` .gitignore would hide every file from both tools.
+/// `--no-expand`: `rg` prints the hit alone, so an expanded hit would not compare like for like.
 fn find(bin: &Path, corpus: &Path) -> Row {
     let lets = readonly(
         bin,
-        &["find", "-F", "--no-ignore", SEARCH_TARGET, "."],
+        &[
+            "find",
+            "-F",
+            "--no-ignore",
+            "--no-expand",
+            SEARCH_TARGET,
+            ".",
+        ],
         corpus,
         None,
         stdout_has("1 hit in 1 file"),
@@ -488,6 +503,24 @@ fn find(bin: &Path, corpus: &Path) -> Row {
         p99,
         gate: gates::FIND,
         relative: Some(relative),
+    }
+}
+
+/// The hit sits mid-way through a 2,000-line TypeScript file, so the expansion pays for parsing it.
+fn find_expanded(bin: &Path, corpus: &Path) -> Row {
+    let (p50, p99) = sample(readonly(
+        bin,
+        &["find", "-F", "--no-ignore", SEARCH_TARGET, "."],
+        corpus,
+        None,
+        stdout_has("expanded 1 hit to enclosing symbols"),
+    ));
+    Row {
+        workload: "find, 1 hit, expanded".into(),
+        p50,
+        p99,
+        gate: gates::FIND_EXPANDED,
+        relative: None,
     }
 }
 

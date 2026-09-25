@@ -21,7 +21,7 @@ pub fn apply(file: &std::path::Path, content: &str, ops: &[Op]) -> Result<Applie
                 raw_key,
                 value,
             } => {
-                let (path, key) = resolved(&document, file, path, raw_key)?;
+                let (path, key) = resolved(&document, file, path, raw_key, "--set", true)?;
                 // The last step is exempt: `Replace`/`Remove` rewrite `y: *x` without following it.
                 refuse_alias_steps(
                     &document,
@@ -54,7 +54,7 @@ pub fn apply(file: &std::path::Path, content: &str, ops: &[Op]) -> Result<Applie
                 )
             },
             Op::Delete { path, raw_key } => {
-                let (path, key) = resolved(&document, file, path, raw_key)?;
+                let (path, key) = resolved(&document, file, path, raw_key, "--delete", false)?;
                 refuse_alias_steps(
                     &document,
                     file,
@@ -72,7 +72,7 @@ pub fn apply(file: &std::path::Path, content: &str, ops: &[Op]) -> Result<Applie
                 raw_key,
                 value,
             } => {
-                let (path, key) = resolved(&document, file, path, raw_key)?;
+                let (path, key) = resolved(&document, file, path, raw_key, "--append", true)?;
                 let (after, line) = appended(&document, file, &path, raw_key, value)?;
                 document = after;
                 (TransformOp::Append { key }, line)
@@ -127,20 +127,21 @@ fn set_patch<'a>(
     value: &Value,
 ) -> Result<yamlpatch::Patch<'a>, crate::Error> {
     let route = route(&path.0);
-    if document.query_exists(&route) {
-        return Ok(yamlpatch::Patch {
-            route,
-            operation: PatchOp::Replace(yaml_value(value, raw_key)?),
-        });
-    }
-
     let Some(Segment::Key(key)) = path.0.last() else {
-        return Err(not_found(
-            raw_key,
-            Some("a sequence index cannot be created by --set".to_owned()),
-        ));
+        return if document.query_exists(&route) {
+            Ok(yamlpatch::Patch {
+                route,
+                operation: PatchOp::Replace(yaml_value(value, raw_key)?),
+            })
+        } else {
+            Err(not_found(
+                raw_key,
+                Some("a sequence index cannot be created by --set".to_owned()),
+            ))
+        };
     };
-    // `Add` classifies the parent with `Feature::kind`, so it is checked here first.
+    // The parent is classified before `query_exists`, because a key's existence inside a flow
+    // mapping decides which branch below refuses.
     let parent = parent_route(path);
     let container = if parent.is_empty() {
         document.top_feature().ok()
@@ -148,14 +149,30 @@ fn set_patch<'a>(
         document.query_exact(&parent).ok().flatten()
     };
     let container = container.ok_or_else(|| not_found(raw_key, None))?;
-    if !matches!(
-        kind_of(document, &container, file, raw_key)?,
-        FeatureKind::BlockMapping | FeatureKind::FlowMapping
-    ) {
+    let parent_kind = kind_of(document, &container, file, raw_key)?;
+    // yamlpath resolves `query_exists`/`query_exact` into a `{ … }` mapping for its first entry
+    // only, and yamlpatch's flow-mapping replace rewrites the whole `{ … }` from that one entry,
+    // dropping every other key. Refuse rather than risk that silently, whether or not
+    // `query_exists` happens to see this particular key.
+    if matches!(parent_kind, FeatureKind::FlowMapping) {
+        return Err(not_in_place(
+            file,
+            raw_key,
+            "its parent is a single-line flow mapping ({ … }); rewrite it as a block mapping \
+             first, or edit the whole line",
+        ));
+    }
+    if !matches!(parent_kind, FeatureKind::BlockMapping) {
         return Err(not_found(
             raw_key,
             Some("its parent is not a mapping".to_owned()),
         ));
+    }
+    if document.query_exists(&route) {
+        return Ok(yamlpatch::Patch {
+            route,
+            operation: PatchOp::Replace(yaml_value(value, raw_key)?),
+        });
     }
     Ok(yamlpatch::Patch {
         route: parent,
@@ -171,10 +188,20 @@ fn resolved(
     file: &std::path::Path,
     path: &Path,
     raw_key: &str,
+    flag: &str,
+    has_value: bool,
 ) -> Result<(Path, String), crate::Error> {
-    super::resolve_selectors(
+    let path = super::resolve_dotted(
         file,
         path,
+        raw_key,
+        |arg| super::flag_hint(flag, has_value, arg),
+        |segments| document.query_exists(&route(segments)),
+        |segments| value_line(document, segments),
+    )?;
+    super::resolve_selectors(
+        file,
+        &path,
         raw_key,
         |prefix, key| {
             let sequence_route = route(prefix);
@@ -653,6 +680,18 @@ fn line_at(
         document.source(),
         byte.ok_or_else(|| not_found(raw_key, None))?,
     ))
+}
+
+/// The line of a value `query_exists` already confirmed is there; the key's line for a mapping
+/// entry, matching `line_at`, and 1 as the floor for one this cannot re-locate.
+fn value_line(document: &yamlpath::Document, segments: &[Segment]) -> usize {
+    let query_route = route(segments);
+    let byte = match segments.last() {
+        Some(Segment::Key(_)) => document.query_key_only(&query_route).ok(),
+        _ => document.query_exact(&query_route).ok().flatten(),
+    }
+    .map(|feature| feature.location.byte_span.0);
+    byte.map_or(1, |byte| line_of(document.source(), byte))
 }
 
 fn item_texts<'d>(

@@ -1,0 +1,4 @@
+# An insert of 7 lines is a changed span of 7, over SPAN_TRUNCATE_LINES(6): truncated the same
+# way a replacement is.
+bin.name = "lets"
+args = ["edit", "s.txt", "--insert-after", "@'^line 5$'", "--new", "new 1\nnew 2\nnew 3\nnew 4\nnew 5\nnew 6\nnew 7"]

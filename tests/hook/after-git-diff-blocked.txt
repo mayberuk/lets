@@ -1,9 +1,0 @@
-COMMAND
-git diff && cat src/a.ts
-===END===
-VERDICT block
-REASON lets show reads several files and ranges in one call.
-REPLACEMENT
-run: lets show src/a.ts
-===END===
-COMPARE read

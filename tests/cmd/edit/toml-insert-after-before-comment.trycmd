@@ -1,0 +1,13 @@
+A comment describing the next table is a tree-sitter "extra" that would otherwise attach to the
+table before it; `[package]` still ends at its last key/value line, so the insert lands before
+the blank line and the comment, and the comment stays with `[deps]`.
+
+```console
+$ lets edit t2.toml --insert-after '#package' --new 'version = "2"'
+── t2.toml · inserted 1 line after #package (line 2)
+2 	name = "x"
+3+	version = "2"
+4 	
+── check: toml ok · sha:[..]→[..]
+
+```

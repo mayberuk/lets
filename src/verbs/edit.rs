@@ -20,7 +20,12 @@ use crate::{
 
 const VERB: &str = "edit";
 
-const CONTEXT_LINES: usize = 2;
+// Opus's edit echo had a median of 2,392 bytes against 92 for the Edit tool, and re-reads after
+// an edit did not fall: trimmed context and a truncated span keep the verification without the
+// bulk.
+const CONTEXT_LINES: usize = 1;
+const SPAN_TRUNCATE_LINES: usize = 6;
+const SPAN_EDGE_LINES: usize = 2;
 
 const BOM: &[u8] = b"\xef\xbb\xbf";
 
@@ -506,6 +511,15 @@ fn merge_omissions(omitted: &mut Vec<Omission>, own: Vec<Omission>, path: &Path,
                 if omitted
                     .iter()
                     .any(|seen| matches!(seen, Omission::CrlfMatched)) => {},
+            Omission::RegionGap {
+                not_shown,
+                path: gap_path,
+            } if several && gap_path.is_none() => {
+                omitted.push(Omission::RegionGap {
+                    not_shown,
+                    path: Some(path.to_path_buf()),
+                });
+            },
             other => omitted.push(other),
         }
     }
@@ -698,6 +712,7 @@ fn one(
             &applied.changed,
             applied.marker,
             annotation.as_deref(),
+            failed,
             omitted,
         ),
         check: checked.as_ref().map(|layer1| CheckResult {
@@ -923,10 +938,7 @@ fn replace(
         .collect();
 
     let replacement = joined(new, before, spec.literal_newlines);
-    let mut after = before.to_vec();
-    for span in spans.iter().rev() {
-        after = matcher::splice(&after, *span, &replacement);
-    }
+    let after = splice_all(before, &spans, &replacement);
 
     let mut changed = Vec::with_capacity(spans.len());
     let (mut grown_new, mut grown_old) = (0usize, 0usize);
@@ -1480,15 +1492,26 @@ fn region(
     changed: &[(usize, usize)],
     marker: Marker,
     annotation: Option<&str>,
+    failed: bool,
     omitted: &mut Vec<Omission>,
 ) -> Option<Region> {
     let text = String::from_utf8_lossy(after);
-    let all: Vec<&str> = text.lines().collect();
+    let mut all: Vec<&str> = Vec::with_capacity(fs::count_byte(after, b'\n') + 1);
+    all.extend(text.lines());
     let mut wanted: BTreeSet<usize> = BTreeSet::new();
     for (first, last) in changed {
         let from = first.saturating_sub(CONTEXT_LINES).max(1);
         let to = (last + CONTEXT_LINES).min(all.len());
-        wanted.extend(from..=to);
+        // A reverted edit's `after` was never written, so a truncated range names lines `show`
+        // can never open: echo every attempted line instead.
+        if !failed && last - first + 1 > SPAN_TRUNCATE_LINES {
+            let head_end = (first + SPAN_EDGE_LINES - 1).min(*last);
+            let tail_start = last.saturating_sub(SPAN_EDGE_LINES - 1).max(*first);
+            wanted.extend(from..=head_end);
+            wanted.extend(tail_start..=to);
+        } else {
+            wanted.extend(from..=to);
+        }
     }
     let (start, end) = (*wanted.first()?, *wanted.last()?);
     let annotated = changed.first().map(|(first, _)| *first);
@@ -1496,7 +1519,8 @@ fn region(
     let mut lines: Vec<Line> = Vec::new();
     let mut previous: Option<usize> = None;
     for number in wanted {
-        // A hole between two `--all` context windows is carried on the row and again in the footer.
+        // A hole between two `--all` context windows, or a truncated span's hidden middle, is
+        // carried on the row and again in the footer.
         if let Some(gap) = previous
             .filter(|p| number > p + 1)
             .map(|p| (p + 1, number - 1))
@@ -1505,7 +1529,7 @@ fn region(
             lines.push(Line {
                 number: 0,
                 marker: Marker::Gap,
-                text: format!(":{}-{} not shown", gap.0, gap.1),
+                text: format!(":{}-{} not shown", gap.0, gap.1).into(),
             });
         }
         let touched = changed
@@ -1519,14 +1543,32 @@ fn region(
         lines.push(Line {
             number,
             marker: if touched { marker } else { Marker::None },
-            text,
+            text: text.into(),
         });
         previous = Some(number);
     }
     if !not_shown.is_empty() {
-        omitted.push(Omission::RegionGap { not_shown });
+        omitted.push(Omission::RegionGap {
+            not_shown,
+            path: None,
+        });
     }
     Some(Region { start, end, lines })
+}
+
+/// `spans` are disjoint and ascending. One pass into a buffer sized up front: splicing one span
+/// at a time copied the whole file once per span.
+fn splice_all(before: &[u8], spans: &[matcher::Span], replacement: &[u8]) -> Vec<u8> {
+    let removed: usize = spans.iter().map(|span| span.end - span.start).sum();
+    let mut after = Vec::with_capacity(before.len() - removed + spans.len() * replacement.len());
+    let mut kept_from = 0;
+    for span in spans {
+        after.extend_from_slice(&before[kept_from..span.start]);
+        after.extend_from_slice(replacement);
+        kept_from = span.end;
+    }
+    after.extend_from_slice(&before[kept_from..]);
+    after
 }
 
 fn span_lines(after: &[u8], start: usize, len: usize) -> (usize, usize) {
@@ -1541,7 +1583,8 @@ fn line_starts(bytes: &[u8]) -> Vec<usize> {
     if bytes.is_empty() {
         return Vec::new();
     }
-    let mut starts = vec![0];
+    let mut starts = Vec::with_capacity(fs::count_byte(bytes, b'\n') + 1);
+    starts.push(0);
     for (index, byte) in bytes.iter().enumerate() {
         if *byte == b'\n' && index + 1 < bytes.len() {
             starts.push(index + 1);
@@ -1655,7 +1698,11 @@ fn joined(new: &[u8], before: &[u8], literal: bool) -> Vec<u8> {
 
 fn build_specs(args: &EditArgs) -> Result<Vec<EditSpec>, Error> {
     if let Some(from) = args.from.as_deref() {
-        if args.target.is_some() {
+        // The one-target exception: a lone `FILE --from -` stands in for `@@ FILE` on stdin, so
+        // it skips the refusal below and is resolved once stdin is in hand.
+        let one_target_with_dash =
+            from == "-" && args.target.is_some() && args.more_targets.is_empty();
+        if args.target.is_some() && !one_target_with_dash {
             return Err(usage(
                 "--from - takes no positional target \u{b7} put every edit in the batch on \
                  stdin"
@@ -1668,10 +1715,57 @@ fn build_specs(args: &EditArgs) -> Result<Vec<EditSpec>, Error> {
                 "an edit spec (`--from` reads `-`, stdin, only)".to_owned(),
             ));
         }
-        return parse_batch(&stdin_text("--from -")?);
+        let text = stdin_text("--from -")?;
+        return match args.target.as_deref() {
+            Some(target) => batch_for_target(target, &text),
+            None => parse_batch(&text).map_err(|error| with_batch_example(&error)),
+        };
     }
     from_args(args)
 }
+
+/// A batch with no `@@` header and a lone positional target names the file the header would
+/// have; a JSONL batch already names its own file per line, so it keeps the usual refusal.
+fn batch_for_target(target: &str, text: &str) -> Result<Vec<EditSpec>, Error> {
+    match text
+        .lines()
+        .map(str::trim_start)
+        .find(|line| !line.is_empty())
+    {
+        None => parse_batch(text).map_err(|error| with_batch_example(&error)),
+        Some(line) if line.starts_with('{') => Err(usage(
+            "--from - takes no positional target \u{b7} put every edit in the batch on stdin"
+                .to_owned(),
+        )),
+        Some(line) if line.starts_with("@@") => Err(usage(format!(
+            "`{target}` and an `@@` header on stdin both name a file \u{b7} pick one: drop the \
+             positional target, or drop the header"
+        ))),
+        Some(_) => {
+            parse_batch(&format!("@@ {target}\n{text}")).map_err(|error| with_batch_example(&error))
+        },
+    }
+}
+
+/// Trial sessions that got the batch format wrong had only the parse failure to go on, called
+/// `lets guide`, and gave up rather than retry; the example runs as written.
+fn with_batch_example(error: &Error) -> Error {
+    usage(format!("{error}\n\n{BATCH_EXAMPLE}"))
+}
+
+const BATCH_EXAMPLE: &str = "lets edit --from - <<'LETS'\n\
+@@ a.ts\n\
+<<<<<<< old\n\
+cap = 10\n\
+======= new\n\
+cap = 20\n\
+>>>>>>>\n\
+<<<<<<< old\n\
+floor = 1\n\
+======= new\n\
+floor = 2\n\
+>>>>>>>\n\
+LETS";
 
 fn stdin_text(flag: &str) -> Result<String, Error> {
     let mut raw = Vec::new();
@@ -2038,17 +2132,22 @@ enum Section {
 /// The `@@` line's number, its file, and its insert anchor when the block inserts.
 type FenceHeader = (usize, String, Option<(AnchorSide, String)>);
 
+/// A header stays active across every block that follows it until the next `@@` line or the end
+/// of the input, so `blocks_under_header` (not `header` itself) is what a completed batch checks.
 fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
     let mut specs = Vec::new();
     let mut errors = Vec::new();
     let mut header: Option<FenceHeader> = None;
+    let mut blocks_under_header: usize = 0;
     let mut old: Option<Vec<&str>> = None;
     let mut new: Option<Vec<&str>> = None;
     let mut section = Section::Outside;
     for (index, line) in text.lines().enumerate() {
         let number = index + 1;
         if let Some(rest) = line.strip_prefix("@@ ") {
-            if let Some((header_line, ..)) = &header {
+            if let Some((header_line, ..)) = &header
+                && (section != Section::Outside || blocks_under_header == 0)
+            {
                 errors.push(usage(format!(
                     "line {header_line}: unterminated `@@` block \u{b7} a new one opens at line \
                      {number}"
@@ -2056,6 +2155,7 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
             }
             let (file, anchor) = fence_header(rest);
             header = Some((number, file, anchor));
+            blocks_under_header = 0;
             old = None;
             new = None;
             section = Section::Outside;
@@ -2072,9 +2172,21 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
             new = Some(Vec::new());
             section = Section::New;
         } else if line.trim_end() == ">>>>>>>" {
-            match header.take() {
+            match &header {
                 Some((header_line, file, anchor)) => {
-                    match fenced_spec(header_line, &file, anchor, old.take(), new.take()) {
+                    blocks_under_header += 1;
+                    // Two inserts under one anchor race for "right after it": the second landed
+                    // adjoins the anchor too, ahead of the first, not after it as written.
+                    if blocks_under_header > 1
+                        && let Some((side, at)) = anchor
+                    {
+                        errors.push(usage(format!(
+                            "line {number}: `@@ {file} insert-{side} {at}` already opened one \
+                             insert block \u{b7} a second block under the same header is \
+                             ambiguous \u{b7} repeat `@@ {file} insert-{side} {at}` before it"
+                        )));
+                    }
+                    match fenced_spec(*header_line, file, anchor.clone(), old.take(), new.take()) {
                         Ok(spec) => specs.push(spec),
                         Err(error) => errors.push(error),
                     }
@@ -2097,7 +2209,9 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
             }
         }
     }
-    if let Some((header_line, ..)) = header {
+    if let Some((header_line, ..)) = &header
+        && (section != Section::Outside || blocks_under_header == 0)
+    {
         errors.push(usage(format!(
             "line {header_line}: unterminated `@@` block"
         )));
@@ -2186,6 +2300,24 @@ mod tests {
         std::fs::read_to_string(path).expect("fixture is readable")
     }
 
+    #[test]
+    fn splice_all_replaces_every_span_and_keeps_every_other_byte() {
+        let span = |start, end| matcher::Span { start, end };
+        assert_eq!(
+            splice_all(b"aXbXXc", &[span(1, 2), span(3, 5)], b"--"),
+            b"a--b--c"
+        );
+        assert_eq!(
+            splice_all(b"abcdef", &[span(0, 1), span(5, 6)], b""),
+            b"bcde"
+        );
+        assert_eq!(
+            splice_all(b"\r\nkeep\r\n", &[span(2, 6)], b"k"),
+            b"\r\nk\r\n"
+        );
+        assert_eq!(splice_all(b"same", &[], b"unused"), b"same");
+    }
+
     fn edit_args(target: &str) -> EditArgs {
         EditArgs {
             target: Some(target.to_owned()),
@@ -2231,7 +2363,6 @@ mod tests {
         crate::output::render(&outcome.response, Format::Text, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         })
     }
 
@@ -2260,7 +2391,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("3~\t  const cap = 20"), "{text}");
-        assert!(text.contains("1 \texport function usage"), "{text}");
+        assert!(text.contains("2 \t  const now = Date.now()"), "{text}");
         assert!(text.contains("check: structure ok \u{b7} sha:"), "{text}");
     }
 
@@ -3234,13 +3365,62 @@ mod tests {
     }
 
     #[test]
-    fn a_from_dash_with_a_positional_target_is_refused() {
-        let mut args = edit_args("a.ts");
+    fn a_from_dash_with_two_positional_targets_is_refused() {
+        let mut args = multi_target_args(&["a.ts", "b.ts"], "const cap = 10", "const cap = 20");
         args.from = Some("-".to_owned());
 
         let error = error_of(run(&args, &global(), Format::Text));
 
         assert_eq!(error.slug(), "usage");
+    }
+
+    #[test]
+    fn a_from_dash_with_a_non_dash_value_and_a_positional_target_is_refused() {
+        let mut args = edit_args("a.ts");
+        args.from = Some("edits.txt".to_owned());
+
+        let error = error_of(run(&args, &global(), Format::Text));
+
+        assert_eq!(error.slug(), "usage");
+    }
+
+    #[test]
+    fn one_target_with_a_headerless_batch_applies_every_block_to_it() {
+        let specs = batch_for_target(
+            "a.ts",
+            "<<<<<<< old\nconst cap = 10\n======= new\nconst cap = 20\n>>>>>>>\n",
+        )
+        .expect("a headerless batch resolves against the one target");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].file, std::path::Path::new("a.ts"));
+    }
+
+    #[test]
+    fn one_target_with_an_at_at_header_on_stdin_is_refused_and_says_pick_one() {
+        let error = batch_for_target(
+            "a.ts",
+            "@@ b.ts\n<<<<<<< old\ncap = 10\n======= new\ncap = 20\n>>>>>>>\n",
+        )
+        .expect_err("a positional target and an @@ header both naming a file must be refused");
+
+        assert_eq!(error.slug(), "usage");
+        assert!(error.to_string().contains("pick one"), "{error}");
+    }
+
+    #[test]
+    fn one_target_with_a_jsonl_batch_keeps_the_original_refusal() {
+        let error = batch_for_target(
+            "a.ts",
+            "{\"file\":\"a.ts\",\"old\":\"const cap = 10\",\"new\":\"const cap = 20\"}\n",
+        )
+        .expect_err("a positional target next to a JSONL batch is still ambiguous");
+
+        assert_eq!(error.slug(), "usage");
+        assert!(
+            error.to_string().contains("takes no positional target"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -3308,6 +3488,68 @@ mod tests {
             error.to_string().contains("unterminated `@@` block"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn one_header_covers_three_blocks_under_it() {
+        let specs = parse_batch(
+            "@@ a.ts\n\
+             <<<<<<< old\n\
+             one\n\
+             ======= new\n\
+             1\n\
+             >>>>>>>\n\
+             <<<<<<< old\n\
+             two\n\
+             ======= new\n\
+             2\n\
+             >>>>>>>\n\
+             <<<<<<< old\n\
+             three\n\
+             ======= new\n\
+             3\n\
+             >>>>>>>\n",
+        )
+        .expect("three blocks under one header parse");
+
+        assert_eq!(specs.len(), 3);
+        assert!(specs.iter().all(|spec| spec.file == Path::new("a.ts")));
+    }
+
+    #[test]
+    fn blank_lines_between_a_header_and_its_first_block_are_ignored() {
+        let specs = parse_batch(
+            "@@ a.ts\n\
+             \n\
+             \n\
+             <<<<<<< old\n\
+             cap = 10\n\
+             ======= new\n\
+             cap = 20\n\
+             >>>>>>>\n",
+        )
+        .expect("blank lines before the first block parse");
+
+        assert_eq!(specs.len(), 1);
+    }
+
+    // A second insert-after under one header would race the first for "right after the anchor":
+    // whichever the matcher runs second lands closer to it, reversing the written order.
+    #[test]
+    fn a_second_block_under_one_insert_header_is_refused_as_ambiguous() {
+        let error = parse_batch(
+            "@@ c.ts insert-after @'^import'\n\
+             ======= new\n\
+             import a\n\
+             >>>>>>>\n\
+             ======= new\n\
+             import b\n\
+             >>>>>>>\n",
+        )
+        .unwrap_err();
+
+        assert_eq!(error.slug(), "usage");
+        assert!(error.to_string().contains("ambiguous"), "{error}");
     }
 
     #[test]
@@ -3542,8 +3784,8 @@ mod tests {
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         let text = rendered(&outcome);
-        assert!(text.contains("\u{b7}\t:4-39 not shown"), "{text}");
-        assert!(text.contains("\u{b7} :4-39 not shown \u{b7}"), "{text}");
+        assert!(text.contains("\u{b7}\t:3-40 not shown"), "{text}");
+        assert!(text.contains("\u{b7} :3-40 not shown\n"), "{text}");
         let Body::Edit(results) = &outcome.response.body else {
             panic!("a replacement renders as Body::Edit");
         };
@@ -3562,7 +3804,6 @@ mod tests {
         let json = crate::output::render(&outcome.response, Format::Json, &RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         });
         assert!(json.contains("\"marker\":\"gap\""), "{json}");
         assert!(json.contains("\"region_gap\""), "{json}");

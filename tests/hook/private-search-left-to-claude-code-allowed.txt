@@ -1,0 +1,4 @@
+COMMAND
+rg HELLO_MARKER private/notes.txt
+===END===
+VERDICT allow

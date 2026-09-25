@@ -1,0 +1,9 @@
+# spec.md § transform, literal keys: the document holds both the literal key
+# "editor.formatOnSave" and the nested editor.formatOnSave, so the unquoted path cannot pick one
+# without guessing; exit 2 names both and the file is unchanged.
+# set-unquoted-dotted-key-matches-literal-json is the case where only the literal key exists.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "editor.formatOnSave=true"]
+
+[status]
+code = 2

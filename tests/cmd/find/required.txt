@@ -14,3 +14,9 @@ missing-roots.toml
 glob-narrows.trycmd
 binary-skipped-named.trycmd
 long-line-cut.trycmd
+binary-over-cap-named-too-large.toml
+binary-under-cap-named-binary.toml
+expand.trycmd
+expand-limits.trycmd
+smart-case.trycmd
+exclude-prunes-nested-vendor.trycmd

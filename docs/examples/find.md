@@ -8,6 +8,15 @@ ERROR_CODE=invalid_pattern
 
 ```
 
+```console
+$ lets find needle --max-file-bytes 50 big.bin
+? 1
+── 0 hits in 0 files · searched 0 files · skipped 1 (too large 1)
+no hits for «needle»
+ERROR_CODE=not_found
+
+```
+
 A file holding a NUL is not text to search, and the footer and `omitted` name the skip rather
 than letting the search read as covering it. The last call is the control: with only the text
 file as the root nothing is skipped, so nothing is named.
@@ -25,6 +34,15 @@ $ lets find needle text.txt
 ── text.txt
 1:	«needle»
 ── 1 hit in 1 file · searched 1 file
+
+```
+
+```console
+$ lets find needle --max-file-bytes 50 small.bin
+? 1
+── 0 hits in 0 files · searched 0 files · skipped 1 (binary 1)
+no hits for «needle»
+ERROR_CODE=not_found
 
 ```
 
@@ -107,6 +125,183 @@ $ lets find filler . --count
 
 ```
 
+`--exclude GLOB` is `-g '!GLOB'`: it prunes a matching path at any depth, the way `rg -g
+'!vendor'` does. The second call proves the equivalence; the third is the negative control with
+no exclusion, where the nested vendor hit comes back.
+
+```console
+$ lets find needle --exclude vendor
+── a.ts
+1:	const «needle» = 1;
+── 1 hit in 1 file · searched 1 file · glob !vendor
+
+$ lets find needle -g '!vendor'
+── a.ts
+1:	const «needle» = 1;
+── 1 hit in 1 file · searched 1 file · glob !vendor
+
+$ lets find needle
+── a.ts
+1:	const «needle» = 1;
+── vendor/pkg/b.py
+1:	«needle» = 1
+── 2 hits in 2 files · searched 2 files
+
+```
+
+Expansion never costs a hit line. With room for every symbol both functions expand; `--budget 20`
+(80 bytes) holds the two hit lines (52) and one function's context (28), so the second hit stays
+bare and the footer says why; `--budget 15` and `--max-bytes 60` hold the hits alone. Over the hit
+cap, the preview holds no more hits than `--cap`, and none at `--cap 0`. A hit in a one-line
+function gets five lines either side, and a TOML table stops before the next table's header.
+
+```console
+$ lets find needle_ two.rs
+── two.rs
+1-	fn a() {
+2:	    let «needle_»a = 1;
+3-	    let pad = 2;
+4-	}
+6-	fn b() {
+7:	    let «needle_»b = 1;
+8-	    let pad = 2;
+9-	}
+── 2 hits in 1 file · searched 1 file · expanded 2 hits to enclosing symbols
+
+$ lets --budget 20 find needle_ two.rs
+── two.rs
+1-	fn a() {
+2:	    let «needle_»a = 1;
+3-	    let pad = 2;
+4-	}
+7:	    let «needle_»b = 1;
+── 2 hits in 1 file · searched 1 file · expanded 1 hit to enclosing symbols · 1 hit not expanded (budget 20)
+
+$ lets --budget 15 find needle_ two.rs
+── two.rs
+2:	    let «needle_»a = 1;
+7:	    let «needle_»b = 1;
+── 2 hits in 1 file · searched 1 file · 2 hits not expanded (budget 15)
+
+$ lets --max-bytes 60 find needle_ two.rs
+── two.rs
+2:	    let «needle_»a = 1;
+7:	    let «needle_»b = 1;
+── 2 hits in 1 file · searched 1 file · 2 hits not expanded (max-bytes 60)
+
+$ lets find needle n.txt --cap 3
+? 1
+── n.txt
+1:	«needle» 1
+2:	«needle» 2
+3:	«needle» 3
+12	n.txt
+── 12 hits in 1 file · searched 1 file · over the 3-hit cap · narrow the pattern or the paths, or --files · first 3 of 12 hits in the busiest file shown · top 1 file shown
+12 hits in 1 file · over the 3-hit cap · narrow the pattern or the paths, or --files
+ERROR_CODE=over_cap
+
+$ lets find needle n.txt --cap 0
+? 1
+12	n.txt
+── 12 hits in 1 file · searched 1 file · over the 0-hit cap · narrow the pattern or the paths, or --files · top 1 file shown
+12 hits in 1 file · over the 0-hit cap · narrow the pattern or the paths, or --files
+ERROR_CODE=over_cap
+
+$ lets find NEEDLE one.rs
+── one.rs
+1-	use a;
+2-	use b;
+3-	
+4:	fn one() -> u32 { «NEEDLE» }
+5-	
+6-	fn two() {
+7-	    3
+8-	}
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines
+
+$ lets find package c.toml
+── c.toml
+1:	[«package»]
+2-	name = "x"
+3-	version = "1"
+4-	
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to enclosing symbols
+
+```
+
+Two hits in one TypeScript file print the function and the method around them, and the footer
+names the expansion. The calls after it are the controls: `-C 2` keeps its own window,
+`--no-expand` prints the hits alone, eleven hits print bare, and a 41-line function is over the
+40-line limit, so its hit gets five lines either side instead.
+
+```console
+$ lets find computeFee src
+── src/fee.ts
+ 3:	export function «computeFee»(amount: number): number {
+ 4-	  const rate = rates.base
+ 5-	  return amount * rate
+ 6-	}
+ 9-	  total(items: number[]): number {
+10-	    let sum = 0
+11-	    for (const item of items) {
+12:	      sum += «computeFee»(item)
+13-	    }
+14-	    return sum
+15-	  }
+── 2 hits in 1 file · searched 1 file · expanded 2 hits to enclosing symbols
+
+$ lets find computeFee src -C 2
+── src/fee.ts
+ 1-	import { rates } from './rates'
+ 2-	
+ 3:	export function «computeFee»(amount: number): number {
+ 4-	  const rate = rates.base
+ 5-	  return amount * rate
+10-	    let sum = 0
+11-	    for (const item of items) {
+12:	      sum += «computeFee»(item)
+13-	    }
+14-	    return sum
+── 2 hits in 1 file · searched 1 file
+
+$ lets find computeFee src --no-expand
+── src/fee.ts
+ 3:	export function «computeFee»(amount: number): number {
+12:	      sum += «computeFee»(item)
+── 2 hits in 1 file · searched 1 file
+
+$ lets find needle notes.txt
+── notes.txt
+ 1:	«needle» 1
+ 5:	«needle» 2
+ 9:	«needle» 3
+13:	«needle» 4
+17:	«needle» 5
+21:	«needle» 6
+25:	«needle» 7
+29:	«needle» 8
+33:	«needle» 9
+37:	«needle» 10
+41:	«needle» 11
+── 11 hits in 1 file · searched 1 file
+
+$ lets find needle big.ts
+── big.ts
+15-	  const filler15 = x + 15
+16-	  const filler16 = x + 16
+17-	  const filler17 = x + 17
+18-	  const filler18 = x + 18
+19-	  const filler19 = x + 19
+20:	  const «needle»20 = x + 20
+21-	  const filler21 = x + 21
+22-	  const filler22 = x + 22
+23-	  const filler23 = x + 23
+24-	  const filler24 = x + 24
+25-	  const filler25 = x + 25
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines
+
+```
+
 ```console
 $ lets find filler . --files
 big.ts
@@ -181,8 +376,17 @@ $ lets find needle short.txt --max-bytes 2000
 $ lets find 'Bottom line|Next' small.md
 ── small.md
  5:	## «Bottom line»
+ 6-	
+ 7-	Lines locate, content confirms.
+ 8-	
+ 9-	```sh
+10-	# not a heading
+11-	```
+12-	
 13:	## «Next»
-── 2 hits in 1 file · searched 1 file
+14-	
+15-	Something else.
+── 2 hits in 1 file · searched 1 file · expanded 2 hits to enclosing symbols
 
 ```
 
@@ -191,7 +395,9 @@ $ lets find Next nope1 small.md nope2
 ? 1
 ── small.md
 13:	## «Next»
-── 1 hit in 1 file · searched 1 file · nope1 failed (not_found) · nope2 failed (not_found)
+14-	
+15-	Something else.
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to enclosing symbols · nope1 failed (not_found) · nope2 failed (not_found)
 nope1: No such file or directory (os error 2)
 nope2: No such file or directory (os error 2)
 ERROR_CODE=not_found
@@ -201,8 +407,9 @@ ERROR_CODE=not_found
 ```console
 $ lets find 'kept out of a default search' . --no-ignore
 ── ignored.log
+1-	this line matches nothing lets find looks for by default
 2:	«kept out of a default search» by the fixture's own .gitignore
-── 1 hit in 1 file · searched 6 files · ignored 2 (hidden 2) · skipped 1 (binary 1)
+── 1 hit in 1 file · searched 6 files · expanded 1 hit to ±5 lines · ignored 2 (hidden 2) · skipped 1 (binary 1)
 
 ```
 
@@ -226,9 +433,53 @@ ERROR_CODE=outside_tree
 ```console
 $ lets find needle many-hits.txt
 ? 1
+── many-hits.txt
+ 1:	line 01 contains the «needle» for lets find's over-cap fixture
+ 2:	line 02 contains the «needle» for lets find's over-cap fixture
+ 3:	line 03 contains the «needle» for lets find's over-cap fixture
+ 4:	line 04 contains the «needle» for lets find's over-cap fixture
+ 5:	line 05 contains the «needle» for lets find's over-cap fixture
+ 6:	line 06 contains the «needle» for lets find's over-cap fixture
+ 7:	line 07 contains the «needle» for lets find's over-cap fixture
+ 8:	line 08 contains the «needle» for lets find's over-cap fixture
+ 9:	line 09 contains the «needle» for lets find's over-cap fixture
+10:	line 10 contains the «needle» for lets find's over-cap fixture
 64	many-hits.txt
-── 64 hits in 1 file · searched 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files · top 1 file shown
+── 64 hits in 1 file · searched 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files · first 10 of 64 hits in the busiest file shown · top 1 file shown
 64 hits in 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files
 ERROR_CODE=over_cap
+
+```
+
+Case is smart by default, as in ripgrep's `--smart-case`: a pattern with no uppercase letter
+searches case-insensitively, and a hit that matched only by ignoring case is named in the footer.
+`-s` forces exact case back; the second call is the control, finding nothing once folding is
+turned off. A pattern carrying an uppercase letter stays exact on its own, and a folded search
+whose hits all matched exactly anyway carries no case note.
+
+```console
+$ lets find 'billing plan' notes.md
+── notes.md
+1:	«Billing plan» renews monthly.
+2-	usage cap applies here.
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines · 1 hit matches only ignoring case (-s for exact case)
+
+$ lets find 'billing plan' -s notes.md
+? 1
+── 0 hits in 0 files · searched 1 file
+no hits for «billing plan»
+ERROR_CODE=not_found
+
+$ lets find 'Billing plan' notes.md
+── notes.md
+1:	«Billing plan» renews monthly.
+2-	usage cap applies here.
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines
+
+$ lets find 'usage cap' notes.md
+── notes.md
+1-	Billing plan renews monthly.
+2:	«usage cap» applies here.
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines
 
 ```

@@ -1,0 +1,9 @@
+COMMAND
+grep -rn deny .claude
+===END===
+VERDICT block
+REASON lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: lets find -s 'deny' .claude
+===END===
+COMPARE search

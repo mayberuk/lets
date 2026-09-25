@@ -4,5 +4,6 @@
 mod bash;
 pub(crate) mod bre;
 mod event;
+mod permissions;
 
 pub use event::{Verdict, classify, render};

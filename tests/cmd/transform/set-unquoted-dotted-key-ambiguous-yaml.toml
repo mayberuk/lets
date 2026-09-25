@@ -1,0 +1,8 @@
+# The YAML counterpart of set-unquoted-dotted-key-ambiguous-json: both the literal scalar key
+# "editor.formatOnSave" and the nested editor.formatOnSave exist, so the unquoted path is
+# ambiguous and the file is left unchanged.
+bin.name = "lets"
+args = ["transform", "c.yaml", "--set", "editor.formatOnSave=true"]
+
+[status]
+code = 2

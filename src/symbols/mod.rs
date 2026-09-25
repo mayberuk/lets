@@ -23,7 +23,7 @@ pub mod plaintext;
 
 use std::collections::HashMap;
 
-use tree_sitter::{Node, Parser, Query, QueryCursor, QueryMatch, StreamingIterator as _};
+use tree_sitter::{Node, Parser, Point, Query, QueryCursor, QueryMatch, StreamingIterator as _};
 
 use crate::grammars::{self, Language};
 use crate::output::Resolver;
@@ -46,8 +46,22 @@ pub fn resolve(lang: Language, content: &str, path: &[String]) -> Vec<SymbolMatc
     if path.is_empty() {
         return Vec::new();
     }
-    let query = match lang {
-        Language::Markdown => return markdown::resolve(content, path),
+    match query(lang) {
+        Some(query) => resolve_query(lang, &query, content, path),
+        None => markdown::resolve(content, path),
+    }
+}
+
+/// Every Markdown heading's text with its section's 1-based first and last lines: what `resolve`
+/// reads for each name, from one pass.
+pub fn markdown_sections(content: &str) -> Vec<(&str, usize, usize)> {
+    markdown::spans(content)
+}
+
+/// `None` for Markdown: its sections come from headings, not a syntax tree.
+pub fn query(lang: Language) -> Option<Query> {
+    let source = match lang {
+        Language::Markdown => return None,
         Language::Bash => bash::QUERY,
         Language::Go => go::QUERY,
         Language::JavaScript => javascript::QUERY,
@@ -66,7 +80,71 @@ pub fn resolve(lang: Language, content: &str, path: &[String]) -> Vec<SymbolMatc
         Language::Ruby => ruby::QUERY,
         Language::Swift => swift::QUERY,
     };
-    resolve_query(lang, query, content, path)
+    Some(
+        Query::new(grammars::language(lang), source).unwrap_or_else(|e| {
+            panic!(
+                "the {} symbol query is malformed: {e}",
+                grammars::name(lang)
+            )
+        }),
+    )
+}
+
+/// A definition `resolve` would return for a one-segment path naming it.
+pub struct Defined<'a> {
+    pub name: &'a str,
+    /// Byte offset, exclusive.
+    pub end: usize,
+    /// 1-based, inclusive.
+    pub line: usize,
+    pub end_line: usize,
+}
+
+/// The definitions under `node`, from a tree the caller already parsed: `resolve` parses the file
+/// and compiles its query again on every call. Every query roots its pattern at the definition, so
+/// no match needs a node above the one given.
+pub fn definitions<'a>(query: &Query, node: Node<'_>, content: &'a str) -> Vec<Defined<'a>> {
+    collect(query, node, content.as_bytes())
+        .1
+        .iter()
+        .map(|definition| Defined {
+            name: definition.name,
+            end: definition.node.end_byte(),
+            line: definition.node.start_position().row + 1,
+            end_line: end_line(definition.node),
+        })
+        .collect()
+}
+
+/// 1-based. A node ending at column 0 holds only the newline before that row: a TOML table runs
+/// to the next table's header, which is not its own.
+fn end_line(node: Node<'_>) -> usize {
+    let end = table_end(node);
+    if end.column == 0 && end.row > node.start_position().row {
+        end.row
+    } else {
+        end.row + 1
+    }
+}
+
+/// A TOML table has no closing token, so a comment (or blanks around it) sitting before the next
+/// table's header is an "extra" tree-sitter attaches as the table's own trailing child; when that
+/// happens the table's end backs up to its last non-comment child, so the comment stays with the
+/// header it describes.
+fn table_end(node: Node<'_>) -> Point {
+    if node.kind() != "table" {
+        return node.end_position();
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node<'_>> = node.named_children(&mut cursor).collect();
+    match children.last() {
+        Some(last) if last.kind() == "comment" => children
+            .iter()
+            .rev()
+            .find(|child| child.kind() != "comment")
+            .map_or_else(|| node.start_position(), Node::end_position),
+        _ => node.end_position(),
+    }
 }
 
 struct Definition<'a, 'tree> {
@@ -78,24 +156,42 @@ struct Definition<'a, 'tree> {
 
 fn resolve_query(
     lang: Language,
-    query_source: &str,
+    query: &Query,
     content: &str,
     path: &[String],
 ) -> Vec<SymbolMatch> {
-    let language = grammars::language(lang);
     let mut parser = Parser::new();
     parser
-        .set_language(language)
+        .set_language(grammars::language(lang))
         .expect("a bundled grammar's ABI matches the linked runtime");
     let Some(tree) = parser.parse(content, None) else {
         return Vec::new();
     };
-    let query = Query::new(language, query_source).unwrap_or_else(|e| {
-        panic!(
-            "the {} symbol query is malformed: {e}",
-            grammars::name(lang)
-        )
-    });
+    let (scopes, definitions) = collect(query, tree.root_node(), content.as_bytes());
+
+    let mut found: Vec<SymbolMatch> = definitions
+        .iter()
+        .filter(|definition| ends_with(&chain(definition, &scopes), path))
+        .map(|definition| {
+            let span = definition.node.byte_range();
+            SymbolMatch {
+                line: definition.node.start_position().row + 1,
+                end_line: end_line(definition.node),
+                text: line_text(content, span.start),
+                start: span.start,
+                end: span.end,
+                resolver: Resolver::TreeSitter,
+                end_guessed: false,
+            }
+        })
+        .collect();
+    found.sort_by_key(|found| (found.start, found.end));
+    found
+}
+
+type Collected<'a, 'tree> = (HashMap<usize, &'a str>, Vec<Definition<'a, 'tree>>);
+
+fn collect<'a, 'tree>(query: &Query, node: Node<'tree>, source: &'a [u8]) -> Collected<'a, 'tree> {
     let (def, name) = (
         query.capture_index_for_name("def"),
         query.capture_index_for_name("name"),
@@ -106,11 +202,10 @@ fn resolve_query(
     );
     let own_scope = query.capture_index_for_name("self.scope");
 
-    let source = content.as_bytes();
     let mut scopes: HashMap<usize, &str> = HashMap::new();
     let mut definitions: Vec<Definition> = Vec::new();
     let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(&query, tree.root_node(), source);
+    let mut matches = cursor.matches(query, node, source);
     // Scopes are collected first: nothing guarantees a container's match precedes its definitions.
     while let Some(matched) = matches.next() {
         if let (Some(node), Some(text)) = (
@@ -129,25 +224,7 @@ fn resolve_query(
             });
         }
     }
-
-    let mut found: Vec<SymbolMatch> = definitions
-        .iter()
-        .filter(|definition| ends_with(&chain(definition, &scopes), path))
-        .map(|definition| {
-            let span = definition.node.byte_range();
-            SymbolMatch {
-                line: definition.node.start_position().row + 1,
-                end_line: definition.node.end_position().row + 1,
-                text: line_text(content, span.start),
-                start: span.start,
-                end: span.end,
-                resolver: Resolver::TreeSitter,
-                end_guessed: false,
-            }
-        })
-        .collect();
-    found.sort_by_key(|found| (found.start, found.end));
-    found
+    (scopes, definitions)
 }
 
 fn captured<'tree>(matched: &QueryMatch<'_, 'tree>, index: Option<u32>) -> Option<Node<'tree>> {
@@ -275,6 +352,34 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].line, found[0].end_line), (213, 215));
         assert_eq!(found[0].text, GO_METHOD);
+    }
+
+    #[test]
+    fn definitions_under_one_top_level_item_leave_out_the_rest_of_the_file() {
+        let source = go_source();
+        let mut parser = Parser::new();
+        parser
+            .set_language(grammars::language(Language::Go))
+            .unwrap();
+        let tree = parser.parse(&source, None).unwrap();
+        let root = tree.root_node();
+        let method = root
+            .children(&mut root.walk())
+            .find(|item| item.start_position().row + 1 == 213)
+            .unwrap();
+        let query = query(Language::Go).unwrap();
+
+        let found: Vec<_> = definitions(&query, method, &source)
+            .iter()
+            .map(|defined| (defined.name, defined.line, defined.end_line))
+            .collect();
+
+        assert_eq!(found, [("Open", 213, 215)]);
+        assert_eq!(
+            definitions(&query, root, &source).len(),
+            2,
+            "the whole tree holds the free function too"
+        );
     }
 
     #[test]
@@ -510,6 +615,37 @@ Something else.
             span: "func open() {}",
         },
     ];
+
+    const TWO_TABLES: &str = "[package]\nname = \"x\"\nversion = \"1\"\n\n[deps]\na = \"1\"\n";
+
+    #[test]
+    fn a_toml_table_ends_on_its_own_last_line_not_on_the_next_header() {
+        let found = find(Language::Toml, TWO_TABLES, &["package"]);
+        assert_eq!((found[0].line, found[0].end_line), (1, 4));
+        let last = find(Language::Toml, TWO_TABLES, &["deps"]);
+        assert_eq!(
+            (last[0].line, last[0].end_line),
+            (5, 6),
+            "not past the file"
+        );
+    }
+
+    #[test]
+    fn a_comment_naming_the_next_table_stays_out_of_the_one_before_it() {
+        const SOURCE: &str = "[package]\nname = \"x\"\n\n# the deps table\n[deps]\na = \"1\"\n";
+        let found = find(Language::Toml, SOURCE, &["package"]);
+        assert_eq!(
+            (found[0].line, found[0].end_line),
+            (1, 2),
+            "the comment on line 4 describes [deps], not [package]"
+        );
+    }
+
+    #[test]
+    fn a_toml_key_ending_mid_line_keeps_its_line() {
+        let found = find(Language::Toml, TWO_TABLES, &["package", "version"]);
+        assert_eq!((found[0].line, found[0].end_line), (3, 3));
+    }
 
     #[test]
     fn every_bundled_language_resolves_a_symbol_of_its_own() {

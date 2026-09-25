@@ -1,0 +1,3 @@
+── a.ts · 1 replacement · line 1 · exact
+1~	const cap = 20
+── check: structure ok · sha:68c7b7831721→d1f03fd922de

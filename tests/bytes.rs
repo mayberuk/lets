@@ -975,20 +975,33 @@ fn an_edited_line_under_the_display_cap_is_shown_whole() {
     assert!(run.out.contains(&format!("{}N", "y".repeat(900))));
 }
 
-/// Twelve 8-byte lines fit `--max-bytes 100` (96 bytes), so eight of the twenty are cut.
+/// 10 one-line `--all` matches on 21 lines, each `±1`-line context window overlapping the next,
+/// merge into one contiguous 21-line region with no span over `SPAN_TRUNCATE_LINES`: only the
+/// byte budget can cut it. Every rendered line is a uniform 8 bytes (7-byte text + `\n`), so
+/// popping from the tail removes exactly 9 lines before 168 bytes reaches `--max-bytes 100`
+/// (168 - 9*8 = 96 <= 100; 168 - 8*8 = 104 > 100), leaving line 12 (a changed line) last.
 #[test]
 fn a_region_over_max_bytes_is_cut_to_fit_and_the_trim_is_named() {
     let sandbox = Sandbox::new();
-    sandbox.write("t.txt", b"x = 1\n");
-    let new: Vec<String> = (1..=20).map(|n| format!("v{n:02} = 0")).collect();
+    let before: Vec<String> = (1..=21)
+        .map(|n| {
+            if n % 2 == 0 {
+                "old0000".to_owned()
+            } else {
+                format!("keep{:03}", (n + 1) / 2)
+            }
+        })
+        .collect();
+    sandbox.write("t.txt", format!("{}\n", before.join("\n")).as_bytes());
 
     let run = sandbox.lets(&[
         "edit",
         "t.txt",
         "--old",
-        "x = 1",
+        "old0000",
         "--new",
-        &new.join("\n"),
+        "new0000",
+        "--all",
         "--max-bytes",
         "100",
     ]);
@@ -996,15 +1009,15 @@ fn a_region_over_max_bytes_is_cut_to_fit_and_the_trim_is_named() {
     assert_eq!(run.code, Some(0), "{}", run.err);
     assert!(
         run.out
-            .contains("output over --max-bytes 100: 8 lines not shown"),
+            .contains("output over --max-bytes 100: 9 lines not shown"),
         "{}",
         run.out
     );
-    assert!(run.out.contains("12~\tv12 = 0"), "{}", run.out);
-    assert!(!run.out.contains("v13 = 0"), "{}", run.out);
+    assert!(run.out.contains("12~\tnew0000"), "{}", run.out);
+    assert!(!run.out.contains("keep007"), "{}", run.out);
     assert_eq!(
         sandbox.read("t.txt").len(),
-        20 * 8,
+        21 * 8,
         "the file holds every line"
     );
 }

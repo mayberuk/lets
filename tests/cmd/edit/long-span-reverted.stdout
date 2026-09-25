@@ -1,0 +1,13 @@
+── m.rs · 1 replacement · lines 2-10 · REVERTED
+ 1 	fn main() {
+ 2~	    let v1 = 1;          ← parse error
+ 3~	    let v2 = 2;
+ 4~	    let v3 = 3;
+ 5~	    let v4 = 4;
+ 6~	    let v5 = 5;
+ 7~	    let v6 = (7;
+ 8~	    let v7 = 7;
+ 9~	    let v8 = 8;
+10~	    let v9 = 9;
+11 	}
+── check: failed → reverted · file unchanged · sha:[..]

@@ -1,9 +1,0 @@
-COMMAND
-cd my\ dir && cat f.txt
-===END===
-VERDICT block
-REASON `cd 'my dir'` kept; lets show reads several files and ranges in one call.
-REPLACEMENT
-run: cd 'my dir' && lets show f.txt
-===END===
-COMPARE read

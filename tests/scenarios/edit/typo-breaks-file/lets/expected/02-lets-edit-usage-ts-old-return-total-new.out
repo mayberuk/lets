@@ -1,5 +1,4 @@
 ── usage.ts · 1 replacement · line 9 · REVERTED
- 7 	  if (now > cap) return
  8 	  const total = usageCap + id.length
  9~	  return total)          ← parse error
 10 	}

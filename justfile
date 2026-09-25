@@ -46,8 +46,17 @@ smoke-agent *args:
     scripts/smoke-agent.sh {{args}}
 
 bench-gate:
-    cargo build --release --locked
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo run --manifest-path tests/corpusgen/Cargo.toml --release
+    if [ "${LETS_BENCH_TARGET:-musl}" = glibc ]; then
+      echo "bench-gate: LETS_BENCH_TARGET=glibc, benchmarking the glibc release build, not the shipped musl binary"
+      cargo build --release --locked
+      export LETS_BENCH_BIN="$PWD/target/release/lets"
+    else
+      cargo build --profile dist --locked --target x86_64-unknown-linux-musl
+      export LETS_BENCH_BIN="$PWD/target/x86_64-unknown-linux-musl/dist/lets"
+    fi
     cargo bench --bench wall_clock --locked
     cargo bench --bench alloc --locked
 

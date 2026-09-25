@@ -1,0 +1,4 @@
+# One line longer than span-six-lines-whole: SPAN_TRUNCATE_LINES(6) is exceeded, so the echo
+# keeps SPAN_EDGE_LINES(2) at each end and names the 3 hidden lines in the footer.
+bin.name = "lets"
+args = ["edit", "s.txt", "--old", "line 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10", "--new", "line 4 EDITED\nline 5 EDITED\nline 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED\nline 10 EDITED"]

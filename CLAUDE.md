@@ -26,7 +26,7 @@ Harness detail and the sandbox contract: `CONTRIBUTING.md`.
 ## Rules: `.claude/rules/`, five global and four scoped
 - **Comments**: why-not-what, default none. `comments.md`
 - **Engineering**: YAGNI ladder, one `Error` enum, no one-impl trait, mechanical over prose. `engineering.md`
-- **Stack**: the crate table, gate 17, ctx7 first. `stack.md`
+- **Stack**: the crate table, gate 18, ctx7 first. `stack.md`
 - **Testing**: tiers, expected from the requirement, negative controls, sandbox. `testing.md`
 - **Performance**: gates in `bench/gates.rs`, expected and forbidden optimizations. `performance.md`
 - **Contract** (`src/output.rs`, `src/main.rs`, `tests/**`): footer names every omission, exit codes in one place, stream discipline. `contract.md`

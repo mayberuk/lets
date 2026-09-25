@@ -4,7 +4,6 @@ $ lets edit lib.rs --old 'fn' --new 'f'
 ── lib.rs · 1 replacement · line 1 · REVERTED
 1~	pub f usage(id: &str) -> usize {          ← parse error
 2 	    let cap = 10;
-3 	    cap + id.len()
 ── check: failed → reverted · file unchanged · sha:4524d71069e8
 structure check failed for lib.rs: failed
 ERROR_CODE=check_failed

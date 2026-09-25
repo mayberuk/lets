@@ -1,9 +1,0 @@
-COMMAND
-grep -r fooBar src
-===END===
-VERDICT block
-REASON lets find returns every hit numbered and grouped by file.
-REPLACEMENT
-run: lets find 'fooBar' src
-===END===
-COMPARE search

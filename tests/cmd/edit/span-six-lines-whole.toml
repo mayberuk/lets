@@ -1,0 +1,4 @@
+# SPAN_TRUNCATE_LINES is 6: a changed span of exactly 6 lines is not "over" it, so the echo
+# shows it whole. The control is span-seven-lines-truncated, one line longer.
+bin.name = "lets"
+args = ["edit", "s.txt", "--old", "line 4\nline 5\nline 6\nline 7\nline 8\nline 9", "--new", "line 4 EDITED\nline 5 EDITED\nline 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED"]

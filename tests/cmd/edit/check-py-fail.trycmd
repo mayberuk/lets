@@ -4,7 +4,6 @@ $ lets edit cap.py --old 'def' --new 'dof'
 ── cap.py · 1 replacement · line 1 · REVERTED
 1~	dof usage(id):          ← parse error
 2 	    cap = 10
-3 	    return cap + len(id)
 ── check: failed → reverted · file unchanged · sha:d0139c7b27dc
 structure check failed for cap.py: failed
 ERROR_CODE=check_failed

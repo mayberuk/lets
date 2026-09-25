@@ -22,6 +22,13 @@ pub struct HookEntry<'a> {
     /// Recognises an earlier install's command, so a changed one replaces it instead of adding
     /// one.
     pub is_ours: fn(&str) -> bool,
+    /// What replaces an earlier install's command when `command` would lose something it named,
+    /// such as the absolute path it ran `lets` from.
+    pub carry_over: fn(&str) -> Option<String>,
+}
+
+pub fn nothing_to_carry_over(_: &str) -> Option<String> {
+    None
 }
 
 /// The JSONC extensions Claude Code's settings.json accepts, and no more.
@@ -108,19 +115,20 @@ fn merge_one(
             format!("`hooks.{}` is not an array", entry.event),
         )
     })?;
-    match our_command_prop(&event_array, entry) {
-        Some(prop) if string_value(&prop).as_deref() == Some(entry.command) => {
-            Ok(InstallStatus::AlreadyInstalled)
-        },
-        Some(prop) => {
-            prop.set_value(CstInputValue::from(entry.command));
-            Ok(InstallStatus::Updated)
-        },
-        None => {
-            event_array.append(entry_value(entry));
-            Ok(InstallStatus::Installed)
-        },
+    let Some(prop) = our_command_prop(&event_array, entry) else {
+        event_array.append(entry_value(entry));
+        return Ok(InstallStatus::Installed);
+    };
+    let existing = string_value(&prop);
+    let wanted = existing
+        .as_deref()
+        .and_then(entry.carry_over)
+        .unwrap_or_else(|| entry.command.to_owned());
+    if existing.as_deref() == Some(wanted.as_str()) {
+        return Ok(InstallStatus::AlreadyInstalled);
     }
+    prop.set_value(CstInputValue::from(wanted.as_str()));
+    Ok(InstallStatus::Updated)
 }
 
 /// One lock spans read and write so concurrent installs cannot both append; every entry is merged
@@ -296,6 +304,7 @@ mod tests {
             matcher: Some(matcher),
             command: "lets hook classify",
             is_ours: is_classify,
+            carry_over: nothing_to_carry_over,
         }
     }
 
@@ -427,6 +436,7 @@ mod tests {
             matcher: None,
             command: "printf '%s' '{}'",
             is_ours: |command| command.starts_with("printf"),
+            carry_over: nothing_to_carry_over,
         };
 
         merge_hook_entries(&sandbox.path(), &[entry], sandbox.runtime.path()).unwrap();
@@ -529,6 +539,7 @@ mod tests {
             matcher: None,
             command: "true",
             is_ours: |command| command == "true",
+            carry_over: nothing_to_carry_over,
         };
 
         let err = merge_hook_entries(
@@ -588,6 +599,7 @@ mod tests {
                     matcher: None,
                     command: "lets hook classify",
                     is_ours: is_classify,
+                    carry_over: nothing_to_carry_over,
                 }]);
 
             assert_eq!(removed, [true, true], "{existing}");

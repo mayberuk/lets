@@ -1,0 +1,4 @@
+COMMAND
+cat a.go | grep x
+===END===
+VERDICT allow

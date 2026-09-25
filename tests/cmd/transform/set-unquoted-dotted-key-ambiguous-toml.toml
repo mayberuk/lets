@@ -1,0 +1,8 @@
+# The TOML counterpart of set-unquoted-dotted-key-ambiguous-json: the quoted top-level key
+# "editor.formatOnSave" and the table [editor]'s own formatOnSave both exist, so the unquoted path
+# is ambiguous and the file is left unchanged.
+bin.name = "lets"
+args = ["transform", "c.toml", "--set", "editor.formatOnSave=true"]
+
+[status]
+code = 2

@@ -1,0 +1,9 @@
+COMMAND
+cat a.go; git status
+===END===
+VERDICT rewrite
+REASON `cat a.go` ran as `lets show a.go --all`; the rest ran as written; lets show reads several files and ranges in one call.
+REPLACEMENT
+run: lets show a.go --all; git status
+===END===
+COMPARE chain

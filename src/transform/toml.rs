@@ -25,13 +25,13 @@ pub fn apply(file: &Path, content: &str, ops: &[Op]) -> Result<Applied, crate::E
                 raw_key,
                 value,
             } => {
-                let (path, key) = resolved(file, &doc, path, raw_key)?;
+                let (path, key) = resolved(file, &doc, path, raw_key, "--set", true)?;
                 set(&mut doc, &path.0, raw_key, value)?;
                 let line = line_of(&doc.to_string(), &path.0);
                 touched.push((TransformOp::Set { key }, line));
             },
             Op::Delete { path, raw_key } => {
-                let (path, key) = resolved(file, &doc, path, raw_key)?;
+                let (path, key) = resolved(file, &doc, path, raw_key, "--delete", false)?;
                 let line = line_of(&doc.to_string(), &path.0);
                 delete(&mut doc, &path.0, raw_key)?;
                 touched.push((TransformOp::Delete { key }, line));
@@ -41,7 +41,7 @@ pub fn apply(file: &Path, content: &str, ops: &[Op]) -> Result<Applied, crate::E
                 raw_key,
                 value,
             } => {
-                let (path, key) = resolved(file, &doc, path, raw_key)?;
+                let (path, key) = resolved(file, &doc, path, raw_key, "--append", true)?;
                 let at = append(&mut doc, &path.0, raw_key, value)?;
                 let line = line_of(&doc.to_string(), &at);
                 touched.push((TransformOp::Append { key }, line));
@@ -324,10 +324,20 @@ fn resolved(
     doc: &DocumentMut,
     path: &super::Path,
     raw_key: &str,
+    flag: &str,
+    has_value: bool,
 ) -> Result<(super::Path, String), crate::Error> {
-    super::resolve_selectors(
+    let path = super::resolve_dotted(
         file,
         path,
+        raw_key,
+        |arg| super::flag_hint(flag, has_value, arg),
+        |segments| value_exists(doc, segments),
+        |segments| line_of(&doc.to_string(), segments),
+    )?;
+    super::resolve_selectors(
+        file,
+        &path,
         raw_key,
         |prefix, key| {
             let mut node = Node::Table(doc.as_table());
@@ -398,6 +408,27 @@ fn span_start(root: &Table, segments: &[Segment]) -> Option<usize> {
         _ => None,
     }
     .map(|span| span.start)
+}
+
+/// Whether `segments` (absolute from the root) names a value already in the document, table or
+/// scalar; never creates or descends into one, matching `navigate`'s own read-only pass.
+fn value_exists(doc: &DocumentMut, segments: &[Segment]) -> bool {
+    let Some((last, parents)) = segments.split_last() else {
+        return true;
+    };
+    let mut node = Node::Table(doc.as_table());
+    for segment in parents {
+        let Some(next) = descend(node, segment) else {
+            return false;
+        };
+        node = next;
+    }
+    match (node, last) {
+        (Node::Table(table), Segment::Key(key)) => table.get(key).is_some(),
+        (Node::Array(array), Segment::Index(index)) => array.get(*index).is_some(),
+        (Node::Tables(tables), Segment::Index(index)) => tables.get(*index).is_some(),
+        _ => false,
+    }
 }
 
 fn descend<'a>(node: Node<'a>, segment: &Segment) -> Option<Node<'a>> {

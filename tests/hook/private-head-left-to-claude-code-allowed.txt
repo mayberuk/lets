@@ -1,0 +1,4 @@
+COMMAND
+head -n 1 private/notes.txt
+===END===
+VERDICT allow

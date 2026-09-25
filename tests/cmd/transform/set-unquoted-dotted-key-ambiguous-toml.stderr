@@ -1,0 +1,4 @@
+editor.formatOnSave is ambiguous (2 candidates)
+  c.toml:1	the literal key "editor.formatOnSave" — quote the whole argument: --set '"editor.formatOnSave"=…'
+  c.toml:4	the nested path editor.formatOnSave — quote the whole argument: --set '"editor"."formatOnSave"=…'
+ERROR_CODE=ambiguous

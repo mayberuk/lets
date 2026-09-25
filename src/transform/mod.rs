@@ -18,8 +18,13 @@ pub enum Segment {
     },
 }
 
+/// The second field is `true` at index `i` when the raw path text quoted segment `i` on its own
+/// (`"a"."b"`, or a key holding a literal dot such as `"a.b"`). `resolve_dotted` treats a quoted
+/// segment as a hard boundary it may never join into a neighbour's literal key, so quoting a
+/// segment is how a caller forces the nested reading. An `Index`/`Attr` slot is always `false`
+/// and unread.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Path(pub Vec<Segment>);
+pub struct Path(pub Vec<Segment>, pub Vec<bool>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -82,6 +87,166 @@ pub fn container(raw: &str) -> jsonc_parser::ast::Value<'_> {
 
 /// Values listed in a zero-match error.
 const SEEN_CAP: usize = 20;
+
+/// `parse_path` splits every top-level, unquoted `.`, so `"editor.formatOnSave"` and nested
+/// `editor: { formatOnSave: ... }` parse to the same `Path`. This tries every grouping of a
+/// maximal run of unquoted key segments against the document, refusing to guess when more than
+/// one grouping exists; a quoted segment (`"a"."b"`) is a hard boundary that forces the nested
+/// path. `hint` turns a candidate into a single-quoted argument a shell cannot unquote; `line`
+/// is only called once `exists` confirms the candidate.
+pub fn resolve_dotted(
+    file: &std::path::Path,
+    path: &Path,
+    raw_key: &str,
+    mut hint: impl FnMut(&str) -> String,
+    mut exists: impl FnMut(&[Segment]) -> bool,
+    mut line: impl FnMut(&[Segment]) -> usize,
+) -> Result<Path, crate::Error> {
+    let mut segments = path.0.clone();
+    let mut quoted = path.1.clone();
+    let spans = key_spans(raw_key);
+    let mut start = 0;
+    while start < segments.len() {
+        if quoted[start] || !matches!(segments[start], Segment::Key(_)) {
+            start += 1;
+            continue;
+        }
+        let run_end = segments[start..]
+            .iter()
+            .zip(&quoted[start..])
+            .position(|(segment, is_quoted)| *is_quoted || !matches!(segment, Segment::Key(_)))
+            .map_or(segments.len(), |offset| start + offset);
+        let run_len = run_end - start;
+        if run_len < 2 {
+            start = run_end.max(start + 1);
+            continue;
+        }
+        let keys: Vec<&str> = segments[start..run_end]
+            .iter()
+            .map(|segment| match segment {
+                Segment::Key(key) => key.as_str(),
+                Segment::Index(_) | Segment::Attr { .. } => {
+                    unreachable!("the run holds only Segment::Key, by construction above")
+                },
+            })
+            .collect();
+        let prefix = &raw_key[..spans[start].0];
+        let suffix = &raw_key[spans[run_end - 1].1..];
+
+        let readings: Vec<(Vec<Segment>, Vec<Segment>, String)> = (0..(1u32 << (run_len - 1)))
+            .filter_map(|mask| {
+                dotted_reading(
+                    &keys,
+                    mask,
+                    run_len,
+                    (&segments[..start], &segments[run_end..]),
+                    (prefix, suffix),
+                    &mut exists,
+                    &mut hint,
+                )
+            })
+            .collect();
+
+        match readings.len() {
+            0 => start = run_end,
+            1 => {
+                let (grouped, ..) = readings.into_iter().next().expect("checked len == 1");
+                let new_len = grouped.len();
+                segments.splice(start..run_end, grouped);
+                quoted.splice(start..run_end, std::iter::repeat_n(false, new_len));
+                start += new_len;
+            },
+            _ => {
+                let candidates = readings
+                    .into_iter()
+                    .map(|(_, candidate, text)| crate::error::Candidate {
+                        path: file.to_path_buf(),
+                        line: line(&candidate),
+                        text,
+                    })
+                    .collect();
+                return Err(crate::Error::Ambiguous {
+                    target: raw_key.to_owned(),
+                    candidates,
+                });
+            },
+        }
+    }
+    Ok(Path(segments, quoted))
+}
+
+/// One grouping of an ambiguous run (see `group_keys`): `None` when it does not exist in the
+/// document, otherwise its replacement segments, the full candidate path (for `line`), and its
+/// ambiguity-message text.
+fn dotted_reading(
+    keys: &[&str],
+    mask: u32,
+    run_len: usize,
+    context: (&[Segment], &[Segment]),
+    text_bounds: (&str, &str),
+    exists: &mut impl FnMut(&[Segment]) -> bool,
+    hint: &mut impl FnMut(&str) -> String,
+) -> Option<(Vec<Segment>, Vec<Segment>, String)> {
+    let (before, after) = context;
+    let (prefix, suffix) = text_bounds;
+    let groups = group_keys(keys, mask);
+    let grouped: Vec<Segment> = groups
+        .iter()
+        .map(|group| Segment::Key(group.join(".")))
+        .collect();
+    let candidate: Vec<Segment> = before
+        .iter()
+        .cloned()
+        .chain(grouped.iter().cloned())
+        .chain(after.iter().cloned())
+        .collect();
+    if !exists(&candidate) {
+        return None;
+    }
+    let display = groups
+        .iter()
+        .map(|group| {
+            let text = group.join(".");
+            if group.len() > 1 {
+                format!("{text:?}")
+            } else {
+                text
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".");
+    let label = if groups.len() == 1 {
+        format!("the literal key {display}")
+    } else if groups.len() == run_len {
+        format!("the nested path {display}")
+    } else {
+        format!("the path {display}")
+    };
+    let argument_run = groups
+        .iter()
+        .map(|group| format!("{:?}", group.join(".")))
+        .collect::<Vec<_>>()
+        .join(".");
+    let text = format!(
+        "{label} \u{2014} quote the whole argument: {}",
+        hint(&format!("{prefix}{argument_run}{suffix}"))
+    );
+    Some((grouped, candidate, text))
+}
+
+/// Every contiguous grouping of `keys`: bit `i - 1` of `mask` cuts between `keys[i - 1]` and
+/// `keys[i]`. `mask == 0` is the single joined literal key; every bit set is the fully nested path.
+fn group_keys<'a>(keys: &[&'a str], mask: u32) -> Vec<Vec<&'a str>> {
+    let mut groups: Vec<Vec<&str>> = vec![vec![keys[0]]];
+    for (i, &key) in keys.iter().enumerate().skip(1) {
+        if mask & (1 << (i - 1)) == 0 {
+            groups.last_mut().expect("seeded with one group").push(key);
+        } else {
+            groups.push(vec![key]);
+        }
+    }
+    groups
+}
 
 /// `fields(prefix, key)` gives, per element of the array at `prefix`, `key`'s scalar string form or
 /// `None`; `line(element)` places a candidate.
@@ -157,10 +322,10 @@ pub fn resolve_selectors(
         resolved.push(Segment::Index(index));
     }
     if !rewrite {
-        return Ok((Path(resolved), raw_key.to_owned()));
+        return Ok((Path(resolved, path.1.clone()), raw_key.to_owned()));
     }
     key_text.push_str(&raw_key[copied..]);
-    Ok((Path(resolved), key_text))
+    Ok((Path(resolved, path.1.clone()), key_text))
 }
 
 fn seen(elements: &[Option<String>], key: &str) -> String {
@@ -261,6 +426,17 @@ pub fn split_flag(flag: &str) -> Result<(&str, &str), crate::Error> {
     Ok((&flag[..eq], &flag[eq + 1..]))
 }
 
+/// A `resolve_dotted` ambiguity candidate, single-quoted whole so a shell hands the flag its
+/// embedded double quotes verbatim instead of stripping them. `--delete` has no value to echo
+/// back.
+pub fn flag_hint(flag: &str, has_value: bool, key_argument: &str) -> String {
+    if has_value {
+        format!("{flag} '{key_argument}=\u{2026}'")
+    } else {
+        format!("{flag} '{key_argument}'")
+    }
+}
+
 fn unquote(s: &str) -> Option<&str> {
     let open = s.chars().next().filter(|c| matches!(c, '"' | '\''))?;
     let inner = s.strip_prefix(open)?.strip_suffix(open)?;
@@ -289,32 +465,70 @@ fn bracket_segment(content: &str) -> Option<Segment> {
     content.parse().ok().map(Segment::Index)
 }
 
-fn push_segment(raw: &str, segment: &str, segments: &mut Vec<Segment>) -> Result<(), crate::Error> {
-    let (key, mut rest) = if let Some(open @ ('"' | '\'')) = segment.chars().next() {
-        let close = segment[1..]
-            .find(open)
-            .ok_or_else(|| malformed(raw, segment))?
-            + 1;
-        (&segment[1..close], &segment[close + 1..])
+/// The key text, whatever `[...]` groups trail it, and whether it was quoted. Shared by
+/// `push_segment` and `key_spans` so the two scans can't drift apart.
+fn split_key(segment: &str) -> Option<(&str, &str, bool)> {
+    if let Some(open @ ('"' | '\'')) = segment.chars().next() {
+        let close = segment[1..].find(open)? + 1;
+        Some((&segment[1..close], &segment[close + 1..], true))
     } else {
         let key_end = segment.find('[').unwrap_or(segment.len());
         let key = &segment[..key_end];
-        if key.is_empty() || key.contains(']') {
-            return Err(malformed(raw, segment));
-        }
-        (key, &segment[key_end..])
-    };
+        (!key.is_empty() && !key.contains(']')).then_some((key, &segment[key_end..], false))
+    }
+}
+
+fn push_segment(
+    raw: &str,
+    segment: &str,
+    segments: &mut Vec<Segment>,
+    quoted: &mut Vec<bool>,
+) -> Result<(), crate::Error> {
+    let (key, mut rest, was_quoted) = split_key(segment).ok_or_else(|| malformed(raw, segment))?;
     segments.push(Segment::Key(key.to_owned()));
+    quoted.push(was_quoted);
 
     while let Some(inner) = rest.strip_prefix('[') {
         let close = find_top_level(inner, b']').ok_or_else(|| malformed(raw, segment))?;
         segments.push(bracket_segment(&inner[..close]).ok_or_else(|| malformed(raw, segment))?);
+        quoted.push(false);
         rest = &inner[close + 1..];
     }
     if rest.is_empty() {
         Ok(())
     } else {
         Err(malformed(raw, segment))
+    }
+}
+
+/// The byte span of each segment's own key text in `raw`, aligned 1:1 with a `Path` parsed from
+/// the same string; a bracketed index or selector gets no span of its own since a run never ends
+/// inside one. Mirrors `push_segment` via `split_key` over a path already known to parse, so every
+/// token here is well-formed.
+fn key_spans(raw: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut rest = raw;
+    loop {
+        let end = find_top_level(rest, b'.').unwrap_or(rest.len());
+        let token = &rest[..end];
+        let offset = raw.len() - rest.len();
+        // unreachable: `raw` already parsed successfully via `parse_path`
+        let Some((key, mut inner, was_quoted)) = split_key(token) else {
+            return spans;
+        };
+        let key_start = offset + usize::from(was_quoted);
+        spans.push((key_start, key_start + key.len()));
+        while let Some(after) = inner.strip_prefix('[') {
+            spans.push((0, 0));
+            let Some(close) = find_top_level(after, b']') else {
+                return spans;
+            };
+            inner = &after[close + 1..];
+        }
+        if end == rest.len() {
+            return spans;
+        }
+        rest = &rest[end + 1..];
     }
 }
 
@@ -329,12 +543,13 @@ pub fn parse_path(raw: &str) -> Result<Path, crate::Error> {
         });
     }
     let mut segments = Vec::new();
+    let mut quoted = Vec::new();
     let mut rest = raw;
     loop {
         let end = find_top_level(rest, b'.').unwrap_or(rest.len());
-        push_segment(raw, &rest[..end], &mut segments)?;
+        push_segment(raw, &rest[..end], &mut segments, &mut quoted)?;
         if end == rest.len() {
-            return Ok(Path(segments));
+            return Ok(Path(segments, quoted));
         }
         rest = &rest[end + 1..];
     }
@@ -377,12 +592,15 @@ mod tests {
     fn dotted_path_with_index_parses_to_key_key_index_key() {
         assert_eq!(
             parse_path("a.b[0].c").unwrap(),
-            Path(vec![
-                Segment::Key("a".into()),
-                Segment::Key("b".into()),
-                Segment::Index(0),
-                Segment::Key("c".into()),
-            ])
+            Path(
+                vec![
+                    Segment::Key("a".into()),
+                    Segment::Key("b".into()),
+                    Segment::Index(0),
+                    Segment::Key("c".into()),
+                ],
+                vec![false, false, false, false]
+            )
         );
     }
 
@@ -408,16 +626,19 @@ mod tests {
     fn quoted_key_with_dots_is_one_literal_key() {
         assert_eq!(
             parse_path("\"editor.formatOnSave\"").unwrap(),
-            Path(vec![Segment::Key("editor.formatOnSave".into())])
+            Path(vec![Segment::Key("editor.formatOnSave".into())], vec![true])
         );
         assert_eq!(
             parse_path("a.'b.c'[1].d").unwrap(),
-            Path(vec![
-                Segment::Key("a".into()),
-                Segment::Key("b.c".into()),
-                Segment::Index(1),
-                Segment::Key("d".into()),
-            ])
+            Path(
+                vec![
+                    Segment::Key("a".into()),
+                    Segment::Key("b.c".into()),
+                    Segment::Index(1),
+                    Segment::Key("d".into()),
+                ],
+                vec![false, true, false, false]
+            )
         );
     }
 
@@ -425,10 +646,13 @@ mod tests {
     fn unquoted_dotted_key_still_splits() {
         assert_eq!(
             parse_path("editor.formatOnSave").unwrap(),
-            Path(vec![
-                Segment::Key("editor".into()),
-                Segment::Key("formatOnSave".into()),
-            ])
+            Path(
+                vec![
+                    Segment::Key("editor".into()),
+                    Segment::Key("formatOnSave".into()),
+                ],
+                vec![false, false]
+            )
         );
     }
 
@@ -451,22 +675,28 @@ mod tests {
     fn bare_and_quoted_attribute_selectors_parse_to_attr() {
         assert_eq!(
             parse_path("a[name=gitty]").unwrap(),
-            Path(vec![Segment::Key("a".into()), Segment::Attr {
-                key: "name".into(),
-                value: "gitty".into()
-            },])
+            Path(
+                vec![Segment::Key("a".into()), Segment::Attr {
+                    key: "name".into(),
+                    value: "gitty".into()
+                },],
+                vec![false, false]
+            )
         );
         assert_eq!(
             parse_path("steps[name=\"has space\"].with.ref").unwrap(),
-            Path(vec![
-                Segment::Key("steps".into()),
-                Segment::Attr {
-                    key: "name".into(),
-                    value: "has space".into()
-                },
-                Segment::Key("with".into()),
-                Segment::Key("ref".into()),
-            ])
+            Path(
+                vec![
+                    Segment::Key("steps".into()),
+                    Segment::Attr {
+                        key: "name".into(),
+                        value: "has space".into()
+                    },
+                    Segment::Key("with".into()),
+                    Segment::Key("ref".into()),
+                ],
+                vec![false, false, false, false]
+            )
         );
     }
 
@@ -474,14 +704,17 @@ mod tests {
     fn quoted_selector_value_may_hold_a_dot_bracket_and_equals() {
         assert_eq!(
             parse_path("a[name='x.y]=z'].b").unwrap(),
-            Path(vec![
-                Segment::Key("a".into()),
-                Segment::Attr {
-                    key: "name".into(),
-                    value: "x.y]=z".into()
-                },
-                Segment::Key("b".into()),
-            ])
+            Path(
+                vec![
+                    Segment::Key("a".into()),
+                    Segment::Attr {
+                        key: "name".into(),
+                        value: "x.y]=z".into()
+                    },
+                    Segment::Key("b".into()),
+                ],
+                vec![false, false, false]
+            )
         );
     }
 
@@ -497,7 +730,9 @@ mod tests {
     fn numeric_bracket_still_parses_to_index() {
         assert_eq!(
             parse_path("a[0]").unwrap(),
-            Path(vec![Segment::Key("a".into()), Segment::Index(0)])
+            Path(vec![Segment::Key("a".into()), Segment::Index(0)], vec![
+                false, false
+            ])
         );
     }
 
@@ -549,13 +784,16 @@ mod tests {
         assert_eq!(key, "a[1].b[0].c");
         assert_eq!(
             path,
-            Path(vec![
-                Segment::Key("a".into()),
-                Segment::Index(1),
-                Segment::Key("b".into()),
-                Segment::Index(0),
-                Segment::Key("c".into()),
-            ])
+            Path(
+                vec![
+                    Segment::Key("a".into()),
+                    Segment::Index(1),
+                    Segment::Key("b".into()),
+                    Segment::Index(0),
+                    Segment::Key("c".into()),
+                ],
+                vec![false, false, false, false, false]
+            )
         );
     }
 
@@ -694,7 +932,7 @@ mod tests {
     fn the_key_without_its_dot_parses_and_a_lone_dot_is_malformed() {
         assert_eq!(
             parse_path("version").unwrap(),
-            Path(vec![Segment::Key("version".into())])
+            Path(vec![Segment::Key("version".into())], vec![false])
         );
         let lone = parse_path(".").unwrap_err().to_string();
         assert!(lone.contains("malformed path segment"), "{lone}");

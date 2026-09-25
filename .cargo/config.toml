@@ -1,0 +1,7 @@
+# Non-PIE static linking on musl measured 11-17% faster p50 startup on `--version`, `guide`,
+# `hook classify` and `show`, with byte-identical stdout and no source change: a static-PIE
+# binary carries a relocation table a static-non-PIE one doesn't. Scoped to this one target —
+# non-PIE is a Linux relocation model, and the aarch64 musl and Darwin targets in
+# dist-workspace.toml were never measured with it.
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "relocation-model=static"]

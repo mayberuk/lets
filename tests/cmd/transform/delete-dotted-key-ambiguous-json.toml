@@ -1,0 +1,8 @@
+# spec.md § transform, literal keys: the literal-vs-nested ambiguity applies to --delete too, not
+# only --set. The hint must say --delete, and (unlike --set) carries no "=..." suffix since
+# --delete takes no value.
+bin.name = "lets"
+args = ["transform", "c.json", "--delete", "editor.formatOnSave"]
+
+[status]
+code = 2

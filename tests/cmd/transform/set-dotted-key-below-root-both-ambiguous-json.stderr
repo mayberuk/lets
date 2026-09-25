@@ -1,0 +1,4 @@
+a.editor.formatOnSave is ambiguous (2 candidates)
+  c.json:3	the path a."editor.formatOnSave" — quote the whole argument: --set '"a"."editor.formatOnSave"=…'
+  c.json:5	the nested path a.editor.formatOnSave — quote the whole argument: --set '"a"."editor"."formatOnSave"=…'
+ERROR_CODE=ambiguous

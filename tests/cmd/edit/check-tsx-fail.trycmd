@@ -4,7 +4,6 @@ $ lets edit badge.tsx --old 'const' --new 'cons'
 ── badge.tsx · 1 replacement · line 1 · REVERTED
 1~	export cons Badge = () => (          ← parse error
 2 	  <span className="badge" />
-3 	)
 ── check: failed → reverted · file unchanged · sha:09a8548c52f6
 structure check failed for badge.tsx: failed
 ERROR_CODE=check_failed

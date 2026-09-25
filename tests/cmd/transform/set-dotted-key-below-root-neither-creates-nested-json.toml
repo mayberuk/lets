@@ -1,0 +1,5 @@
+# The "neither exists" control for set-dotted-key-below-root-literal-only-json: a has neither
+# reading yet, so the path nests a new editor.formatOnSave under it exactly as it would if a were
+# the document root.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "a.editor.formatOnSave=true"]

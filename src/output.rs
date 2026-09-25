@@ -1,11 +1,12 @@
 //! The footer is a contract: a narrowing it does not name did not happen. Its counts live only in
 //! `Response::omitted` and `Response::stats`, so no second count can disagree.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fmt;
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::ser::SerializeStruct as _;
 use serde::{Serialize, Serializer};
@@ -23,7 +24,6 @@ pub enum Format {
 pub struct RenderOptions {
     pub numbers: bool,
     pub quiet: bool,
-    pub cost_first: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -77,7 +77,7 @@ impl Response {
 #[serde(rename_all = "snake_case")]
 pub enum Body {
     Targets(Vec<TargetBlock>),
-    Files(Vec<PathBuf>),
+    Files(#[serde(serialize_with = "lossy_paths")] Vec<PathBuf>),
     Counts(Vec<CountRow>),
     Raw { field: &'static str, text: String },
     Edit(Vec<EditResult>),
@@ -98,6 +98,7 @@ pub struct UpdateCheck {
 #[derive(Debug, Serialize)]
 pub struct TargetBlock {
     pub target: String,
+    #[serde(serialize_with = "lossy_path")]
     pub path: PathBuf,
     /// `None` for a `find` hit block, whose header is the bare path.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -181,7 +182,18 @@ fn is_zero(n: &usize) -> bool {
 #[derive(Debug, Serialize)]
 pub struct CountRow {
     pub count: usize,
+    #[serde(serialize_with = "lossy_path")]
     pub path: PathBuf,
+}
+
+/// `serde_json` refuses a non-UTF-8 `PathBuf`, so JSON carries the lossy name the text shows.
+/// A path `find` walked to can be any bytes; one from an argument was already UTF-8.
+fn lossy_path<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(&path.display())
+}
+
+fn lossy_paths<S: Serializer>(paths: &[PathBuf], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(paths.iter().map(|path| path.display().to_string()))
 }
 
 #[derive(Debug, Serialize)]
@@ -341,11 +353,11 @@ pub enum WriteOutcome {
     Exists,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Line {
     pub number: usize,
     pub marker: Marker,
-    pub text: String,
+    pub text: Cow<'static, str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -471,10 +483,20 @@ pub enum Omission {
     TopFiles {
         shown: usize,
     },
+    /// Over the hit cap, the busiest file's first hits are printed, so the bare total is not all
+    /// a caller sees.
+    BusiestFile {
+        shown: usize,
+        hits: usize,
+    },
+    Expanded(ExpandedHits),
+    /// The counts are files a filter rejected directly. A rejected directory is named instead,
+    /// never entered, so the files under it are counted nowhere.
     Ignored {
         gitignore: usize,
         hidden: usize,
         other: usize,
+        dirs: IgnoredDirs,
     },
     CheckSkipped {
         reason: String,
@@ -487,8 +509,11 @@ pub enum Omission {
         path: PathBuf,
     },
     Normalized,
+    /// `path` is `None` for a single-file result, where the row above already carries it.
     RegionGap {
         not_shown: Vec<(usize, usize)>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<PathBuf>,
     },
     PartialBatch {
         written: Vec<PathBuf>,
@@ -514,6 +539,7 @@ pub enum Omission {
         lines: usize,
     },
     Unreadable {
+        #[serde(serialize_with = "lossy_path")]
         path: PathBuf,
     },
     CrlfMatched,
@@ -529,9 +555,107 @@ pub enum Omission {
         pattern: String,
         read_as: String,
     },
+    /// Smart case folded the search; these hits have no case-sensitive match of the pattern.
+    CaseFolded {
+        hits: usize,
+    },
+}
+
+/// `find` hits printed with their enclosing symbol or `around` lines either side. `unparsed` of
+/// the `windows` lie in a file over `parse_max_kib`, which is never parsed for its symbols.
+/// `unexpanded` hits stayed bare once the expanded lines reached `line_cap`, and `over_limit`
+/// ones because their context would have pushed a hit line out of `limit`.
+#[derive(Debug, Serialize)]
+pub struct ExpandedHits {
+    pub symbols: usize,
+    pub windows: usize,
+    pub around: usize,
+    pub unparsed: usize,
+    pub parse_max_kib: usize,
+    pub unexpanded: usize,
+    pub line_cap: usize,
+    pub over_limit: usize,
+    pub limit: ByteLimit,
+}
+
+/// What bounds a `find` answer: `--budget`, else `--max-bytes`.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ByteLimit {
+    Budget(usize),
+    MaxBytes(usize),
+}
+
+impl fmt::Display for ByteLimit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ByteLimit::Budget(budget) => write!(f, "budget {budget}"),
+            ByteLimit::MaxBytes(bytes) => write!(f, "max-bytes {bytes}"),
+        }
+    }
+}
+
+/// A zero part is left out, as in `write_parts`.
+impl fmt::Display for ExpandedHits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let windows = match self.unparsed {
+            0 => format!("to \u{b1}{} lines", self.around),
+            unparsed => format!(
+                "to \u{b1}{} lines ({unparsed} not parsed: file over {} KiB)",
+                self.around, self.parse_max_kib
+            ),
+        };
+        let parts = [
+            (self.symbols, true, "to enclosing symbols".to_owned()),
+            (self.windows, true, windows),
+            (
+                self.unexpanded,
+                false,
+                format!("not expanded ({}-line cap)", self.line_cap),
+            ),
+            (
+                self.over_limit,
+                false,
+                format!("not expanded ({})", self.limit),
+            ),
+        ];
+        let mut open = false;
+        for (n, expanded, what) in parts {
+            if n == 0 {
+                continue;
+            }
+            if open {
+                f.write_str(" \u{b7} ")?;
+            } else if expanded {
+                f.write_str("expanded ")?;
+            }
+            write!(f, "{n} hit{} {what}", plural_suffix(n))?;
+            open = true;
+        }
+        Ok(())
+    }
+}
+
+/// Per source, because the source is what says whether `--no-ignore` or `--hidden` brings a
+/// directory back. A name is a lossy string, as a failed target's is: `serde_json` refuses a
+/// non-UTF-8 `PathBuf`.
+#[derive(Debug, Default, Serialize)]
+pub struct IgnoredDirs {
+    pub gitignore: NamedDirs,
+    pub hidden: NamedDirs,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct NamedDirs {
+    pub named: Vec<String>,
+    pub more: usize,
 }
 
 impl fmt::Display for Omission {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per omission keeps every footer phrase in one place"
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Omission::Window { shown, total } => write!(f, ":{}-{total} not shown", shown.1 + 1),
@@ -553,25 +677,40 @@ impl fmt::Display for Omission {
             Omission::TopFiles { shown } => {
                 write!(f, "top {shown} file{} shown", plural_suffix(*shown))
             },
+            Omission::BusiestFile { shown, hits } => {
+                let s = plural_suffix(*hits);
+                write!(
+                    f,
+                    "first {shown} of {hits} hit{s} in the busiest file shown"
+                )
+            },
+            Omission::Expanded(expanded) => expanded.fmt(f),
             Omission::Ignored {
                 gitignore,
                 hidden,
                 other,
-            } => write_parts(f, "ignored", [
-                ("gitignore", *gitignore),
-                ("hidden", *hidden),
-                ("other", *other),
-            ]),
+                dirs,
+            } => {
+                let files = [
+                    ("gitignore", *gitignore),
+                    ("hidden", *hidden),
+                    ("other", *other),
+                ];
+                write_ignored(f, files, dirs)
+            },
             Omission::CheckSkipped { reason } => write!(f, "check: skipped ({reason})"),
             Omission::CheckInconclusive { layer, reason } => {
                 write!(f, "check: {layer} inconclusive ({reason})")
             },
             Omission::XattrsDropped { .. } => f.write_str("xattrs dropped"),
             Omission::Normalized => f.write_str("normalized"),
-            Omission::RegionGap { not_shown } => {
+            Omission::RegionGap { not_shown, path } => {
                 for (i, (from, to)) in not_shown.iter().enumerate() {
                     if i > 0 {
                         f.write_str(" \u{b7} ")?;
+                    }
+                    if let Some(path) = path {
+                        write!(f, "{}", path.display())?;
                     }
                     write!(f, ":{from}-{to} not shown")?;
                 }
@@ -625,8 +764,63 @@ impl fmt::Display for Omission {
                 f,
                 "\u{ab}{pattern}\u{bb} had no hits, read grep-style as \u{ab}{read_as}\u{bb}"
             ),
+            Omission::CaseFolded { hits } => {
+                let matches = if *hits == 1 { "matches" } else { "match" };
+                write!(
+                    f,
+                    "{hits} hit{} {matches} only ignoring case (-s for exact case)",
+                    plural_suffix(*hits)
+                )
+            },
         }
     }
+}
+
+/// A file count of zero is left out, as a zero part is, and so is a source that pruned nothing.
+fn write_ignored(
+    f: &mut fmt::Formatter<'_>,
+    files: [(&str, usize); 3],
+    dirs: &IgnoredDirs,
+) -> fmt::Result {
+    let counted = files.iter().any(|(_, n)| *n > 0);
+    if counted {
+        write_parts(f, "ignored", files)?;
+    }
+    let sources = [("gitignore", &dirs.gitignore), ("hidden", &dirs.hidden)];
+    let mut open = false;
+    for (source, list) in sources {
+        if list.named.is_empty() && list.more == 0 {
+            continue;
+        }
+        f.write_str(match (open, counted) {
+            (true, _) => " \u{b7} ",
+            (false, true) => " \u{b7} ignored dirs (",
+            (false, false) => "ignored dirs (",
+        })?;
+        open = true;
+        f.write_str(source)?;
+        for (i, dir) in list.named.iter().enumerate() {
+            f.write_str(if i == 0 { " " } else { ", " })?;
+            write_escaped(f, dir)?;
+            f.write_str("/")?;
+        }
+        if list.more > 0 {
+            write!(f, " (+{} more)", list.more)?;
+        }
+    }
+    if open { f.write_str(")") } else { Ok(()) }
+}
+
+/// A directory name can hold a newline, which would end the one-line footer early.
+fn write_escaped(f: &mut fmt::Formatter<'_>, name: &str) -> fmt::Result {
+    for c in name.chars() {
+        if c.is_control() {
+            write!(f, "{}", c.escape_debug())?;
+        } else {
+            f.write_char(c)?;
+        }
+    }
+    Ok(())
 }
 
 /// A zero part is left out: naming a source that removed nothing reads as a narrowing.
@@ -690,16 +884,9 @@ fn error_text(message: &str, slug: &str) -> String {
 fn render_text(resp: &Response, opts: RenderOptions) -> String {
     let mut out = String::with_capacity(capacity_hint(resp));
     let width = number_width(resp);
-    let cost = resp.stats.tokens_est().map(cost_segment);
     match &resp.body {
         Body::Raw { text, .. } => out.push_str(text),
         Body::Targets(blocks) => {
-            // `show --all` ignores the budget, so the bill comes before the body.
-            if opts.cost_first
-                && let Some(cost) = &cost
-            {
-                writeln!(out, "── {cost}").unwrap();
-            }
             for block in blocks {
                 push_target_header(&mut out, block);
                 push_lines(&mut out, &block.lines, width, opts);
@@ -707,12 +894,7 @@ fn render_text(resp: &Response, opts: RenderOptions) -> String {
             if !opts.quiet {
                 push_top_files(&mut out, &resp.top_files, resp.top_files_more);
             }
-            push_footer(
-                &mut out,
-                &[&resp.footer.summary],
-                &resp.omitted,
-                cost.as_deref(),
-            );
+            push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
         },
         Body::Files(paths) => {
             if !opts.quiet {
@@ -720,28 +902,18 @@ fn render_text(resp: &Response, opts: RenderOptions) -> String {
                     writeln!(out, "{}", path.display()).unwrap();
                 }
             }
-            push_footer(
-                &mut out,
-                &[&resp.footer.summary],
-                &resp.omitted,
-                cost.as_deref(),
-            );
+            push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
         },
         Body::Counts(rows) => {
-            push_footer(
-                &mut out,
-                &[&resp.footer.summary],
-                &resp.omitted,
-                cost.as_deref(),
-            );
+            push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
             push_count_rows(&mut out, rows, opts);
         },
         Body::Edit(results) => {
-            push_edit(&mut out, resp, results, width, opts, cost.as_deref());
+            push_edit(&mut out, resp, results, width, opts);
         },
         Body::Write(result) => push_write(&mut out, result, &resp.omitted),
         Body::Transform(results) => {
-            push_transform(&mut out, resp, results, width, opts, cost.as_deref());
+            push_transform(&mut out, resp, results, width, opts);
         },
         Body::Stats(report) => push_stats(&mut out, report),
         Body::Update(check) => push_update(&mut out, check),
@@ -814,11 +986,32 @@ fn push_lines(out: &mut String, lines: &[Line], width: usize, opts: RenderOption
         } else if line.marker == Marker::Gap {
             write!(out, "{:>width$}{marker}\t{text}", "").unwrap();
         } else {
-            let number = line.number;
-            write!(out, "{number:>width$}{marker}\t{text}").unwrap();
+            push_padded(out, line.number, width);
+            out.push(marker);
+            out.push('\t');
+            out.push_str(text);
         }
         out.push('\n');
     }
+}
+
+fn push_padded(out: &mut String, n: usize, width: usize) {
+    let mut digits = [0u8; 20];
+    let mut at = digits.len();
+    let mut rest = n;
+    loop {
+        at -= 1;
+        digits[at] = b'0' + u8::try_from(rest % 10).expect("a decimal digit");
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    let len = digits.len() - at;
+    for _ in len..width {
+        out.push(' ');
+    }
+    out.push_str(std::str::from_utf8(&digits[at..]).expect("ASCII digits"));
 }
 
 fn push_count_rows(out: &mut String, rows: &[CountRow], opts: RenderOptions) {
@@ -853,7 +1046,6 @@ fn push_edit(
     results: &[EditResult],
     width: usize,
     opts: RenderOptions,
-    cost: Option<&str>,
 ) {
     if !opts.quiet {
         for result in results {
@@ -877,9 +1069,9 @@ fn push_edit(
             )
         };
         let unchanged = if only.reverted { "file unchanged" } else { "" };
-        push_footer(out, &[&check, unchanged, &sha], &resp.omitted, cost);
+        push_footer(out, &[&check, unchanged, &sha], &resp.omitted);
     } else {
-        push_footer(out, &[&resp.footer.summary], &resp.omitted, cost);
+        push_footer(out, &[&resp.footer.summary], &resp.omitted);
     }
 }
 
@@ -974,7 +1166,6 @@ fn push_transform(
     results: &[TransformResult],
     width: usize,
     opts: RenderOptions,
-    cost: Option<&str>,
 ) {
     if !opts.quiet {
         for result in results {
@@ -992,14 +1183,9 @@ fn push_transform(
             only.sha.before.as_str(),
             only.sha.after.as_str()
         );
-        push_footer(
-            out,
-            &[&resp.footer.summary, &check, &sha],
-            &resp.omitted,
-            cost,
-        );
+        push_footer(out, &[&resp.footer.summary, &check, &sha], &resp.omitted);
     } else {
-        push_footer(out, &[&resp.footer.summary], &resp.omitted, cost);
+        push_footer(out, &[&resp.footer.summary], &resp.omitted);
     }
 }
 
@@ -1068,7 +1254,7 @@ fn push_write(out: &mut String, result: &WriteResult, omitted: &[Omission]) {
             if let Some(check) = &result.check {
                 writeln!(out, "── {}", check_line(check)).unwrap();
             }
-            push_footer(out, &[], omitted, None);
+            push_footer(out, &[], omitted);
         },
     }
 }
@@ -1126,9 +1312,9 @@ fn push_stats(out: &mut String, report: &StatsReport) {
     }
 }
 
-fn push_footer(out: &mut String, lead: &[&str], omitted: &[Omission], cost: Option<&str>) {
+fn push_footer(out: &mut String, lead: &[&str], omitted: &[Omission]) {
     let lead = lead.iter().filter(|s| !s.is_empty());
-    if lead.clone().count() == 0 && omitted.is_empty() && cost.is_none() {
+    if lead.clone().count() == 0 && omitted.is_empty() {
         return;
     }
     out.push_str("── ");
@@ -1141,10 +1327,6 @@ fn push_footer(out: &mut String, lead: &[&str], omitted: &[Omission], cost: Opti
         push_segment(out, &mut first);
         write!(out, "{omission}").unwrap();
     }
-    if let Some(cost) = cost {
-        push_segment(out, &mut first);
-        out.push_str(cost);
-    }
     out.push('\n');
 }
 
@@ -1154,15 +1336,6 @@ fn push_segment(out: &mut String, first: &mut bool) {
     } else {
         out.push_str(" · ");
     }
-}
-
-/// Under 100 tokens a tenth-of-a-thousand reading rounds to `0.0k`, which states nothing.
-fn cost_segment(tokens: usize) -> String {
-    if tokens < 100 {
-        return format!("~{tokens} tokens");
-    }
-    let tenths = (tokens + 50) / 100;
-    format!("~{}.{}k tokens", tenths / 10, tenths % 10)
 }
 
 pub fn plural_suffix(n: usize) -> &'static str {
@@ -1284,7 +1457,7 @@ fn render_jsonl(resp: &Response) -> String {
         },
         Body::Files(paths) => {
             for path in paths {
-                push_json_line(&mut out, path);
+                push_json_line(&mut out, &path.display().to_string());
             }
         },
         Body::Counts(rows) => {
@@ -1367,7 +1540,6 @@ mod tests {
         RenderOptions {
             numbers: true,
             quiet: false,
-            cost_first: false,
         }
     }
 
@@ -1375,7 +1547,6 @@ mod tests {
         RenderOptions {
             numbers: true,
             quiet: true,
-            cost_first: false,
         }
     }
 
@@ -1387,7 +1558,7 @@ mod tests {
         Line {
             number,
             marker,
-            text: text.to_owned(),
+            text: text.to_owned().into(),
         }
     }
 
@@ -1539,7 +1710,6 @@ mod tests {
         let out = render(&targets(vec![b], 0), Format::Text, &RenderOptions {
             numbers: false,
             quiet: false,
-            cost_first: false,
         });
 
         assert!(out.contains("\nkept\nreplaced\n"), "{out}");
@@ -1560,46 +1730,21 @@ mod tests {
     }
 
     #[test]
-    fn footer_names_every_omission_in_push_order_then_the_cost() {
+    fn footer_names_every_omission_in_push_order() {
         let mut resp = targets(vec![], 3600);
         resp.footer.summary = "find 'onBack' · 4 hits in 2 files · searched 31 files".to_owned();
         resp.omitted = vec![Omission::HitCap { hits: 312, cap: 50 }, Omission::Ignored {
             gitignore: 9,
             hidden: 3,
             other: 0,
+            dirs: IgnoredDirs::default(),
         }];
         let out = render(&resp, Format::Text, &opts());
 
         assert_eq!(
             out,
             "── find 'onBack' · 4 hits in 2 files · searched 31 files · over the 50-hit cap · \
-             narrow the pattern or the paths, or --files · ignored 12 (gitignore 9 · hidden 3) · \
-             ~0.9k tokens\n"
-        );
-    }
-
-    #[test]
-    fn cost_first_puts_the_cost_line_before_the_first_header() {
-        let mut b = block("a.ts", 9, 10, 1234);
-        b.lines = vec![line(9, Marker::None, "kept")];
-        let out = render(&targets(vec![b], 3600), Format::Text, &RenderOptions {
-            numbers: true,
-            quiet: false,
-            cost_first: true,
-        });
-
-        assert_eq!(first_line(&out), "── ~0.9k tokens", "{out}");
-    }
-
-    #[test]
-    fn without_cost_first_the_header_stays_first() {
-        let mut b = block("a.ts", 9, 10, 1234);
-        b.lines = vec![line(9, Marker::None, "kept")];
-        let out = render(&targets(vec![b], 3600), Format::Text, &opts());
-
-        assert!(
-            first_line(&out).starts_with("── a.ts"),
-            "the header leads unless --all asked for the cost first: {out}"
+             narrow the pattern or the paths, or --files · ignored 12 (gitignore 9 · hidden 3)\n"
         );
     }
 
@@ -1612,6 +1757,7 @@ mod tests {
                 gitignore: 9,
                 hidden: 3,
                 other: 0,
+                dirs: IgnoredDirs::default(),
             },
             Omission::HitCap { hits: 312, cap: 50 },
         ];
@@ -1620,7 +1766,97 @@ mod tests {
         assert_eq!(
             out,
             "── find 'onBack' · ignored 12 (gitignore 9 · hidden 3) · over the 50-hit cap · \
-             narrow the pattern or the paths, or --files · ~0.9k tokens\n"
+             narrow the pattern or the paths, or --files\n"
+        );
+    }
+
+    fn named(names: &[&str], more: usize) -> NamedDirs {
+        NamedDirs {
+            named: names.iter().map(|name| (*name).to_owned()).collect(),
+            more,
+        }
+    }
+
+    fn ignored(files: (usize, usize), gitignore: NamedDirs, hidden: NamedDirs) -> Omission {
+        Omission::Ignored {
+            gitignore: files.0,
+            hidden: files.1,
+            other: 0,
+            dirs: IgnoredDirs { gitignore, hidden },
+        }
+    }
+
+    #[test]
+    fn ignored_directories_follow_the_file_counts_grouped_by_the_source_that_pruned_them() {
+        assert_eq!(
+            ignored((1, 2), named(&["target"], 0), named(&[".github"], 0)).to_string(),
+            "ignored 3 (gitignore 1 \u{b7} hidden 2) \u{b7} ignored dirs (gitignore target/ \u{b7} \
+             hidden .github/)"
+        );
+    }
+
+    #[test]
+    fn a_source_that_pruned_no_directory_is_not_named() {
+        assert_eq!(
+            ignored((0, 0), named(&["target", "build"], 0), named(&[], 0)).to_string(),
+            "ignored dirs (gitignore target/, build/)"
+        );
+        assert_eq!(
+            ignored((0, 0), named(&[], 0), named(&[".github"], 0)).to_string(),
+            "ignored dirs (hidden .github/)"
+        );
+    }
+
+    #[test]
+    fn ignored_files_alone_print_no_directory_list() {
+        assert_eq!(
+            ignored((1, 2), named(&[], 0), named(&[], 0)).to_string(),
+            "ignored 3 (gitignore 1 \u{b7} hidden 2)"
+        );
+    }
+
+    #[test]
+    fn each_source_counts_the_directories_it_pruned_past_the_named_ones() {
+        assert_eq!(
+            ignored((0, 0), named(&["a", "b", "c", "d"], 3), named(&[".e"], 2)).to_string(),
+            "ignored dirs (gitignore a/, b/, c/, d/ (+3 more) \u{b7} hidden .e/ (+2 more))"
+        );
+    }
+
+    #[test]
+    fn a_control_character_in_a_directory_name_is_escaped_onto_the_footer_line() {
+        let out = ignored((0, 0), named(&[], 0), named(&[".a\nb", ".c\td"], 0)).to_string();
+
+        assert_eq!(out, "ignored dirs (hidden .a\\nb/, .c\\td/)");
+        assert!(!out.contains('\n'), "{out:?}");
+    }
+
+    #[test]
+    fn a_directory_name_with_no_control_character_is_written_as_is() {
+        assert_eq!(
+            ignored((0, 0), named(&["caf\u{e9} dir"], 0), named(&[], 0)).to_string(),
+            "ignored dirs (gitignore caf\u{e9} dir/)"
+        );
+    }
+
+    #[test]
+    fn ignored_directories_reach_json_per_source_as_names_and_a_more_count() {
+        let mut resp = targets(vec![], 0);
+        resp.omitted = vec![ignored((0, 1), named(&["target"], 2), named(&[".a\nb"], 0))];
+        let value: serde_json::Value =
+            serde_json::from_str(&render(&resp, Format::Json, &opts())).expect("valid JSON");
+
+        assert_eq!(
+            value["omitted"][0]["ignored"],
+            serde_json::json!({
+                "gitignore": 0,
+                "hidden": 1,
+                "other": 0,
+                "dirs": {
+                    "gitignore": {"named": ["target"], "more": 2},
+                    "hidden": {"named": [".a\nb"], "more": 0},
+                },
+            })
         );
     }
 
@@ -1718,14 +1954,11 @@ mod tests {
         assert_eq!(resp.stats.tokens_est(), Some(450));
 
         resp.footer.summary = "showed 1 file".to_owned();
-        assert_eq!(
-            render(&resp, Format::Text, &opts()),
-            "── showed 1 file · ~0.5k tokens\n"
-        );
+        assert_eq!(render(&resp, Format::Text, &opts()), "── showed 1 file\n");
     }
 
     #[test]
-    fn the_text_cost_and_the_json_cost_come_from_one_number() {
+    fn the_json_cost_stays_and_the_text_footer_drops_it() {
         // Token estimates are bytes ÷ 4, so 3600 bytes is 900 tokens.
         let mut resp = targets(vec![block("a.ts", 1, 1, 1)], 3600);
         resp.footer.summary = "showed 1 file".to_owned();
@@ -1735,15 +1968,7 @@ mod tests {
             serde_json::from_str(&render(&resp, Format::Json, &opts())).expect("valid json");
 
         assert_eq!(json["stats"]["tokens_est"], 900);
-        assert!(text.ends_with("· ~0.9k tokens\n"), "{text}");
-        assert_eq!(cost_segment(900), "~0.9k tokens");
-    }
-
-    #[test]
-    fn cost_segment_uses_thousands_only_where_a_tenth_reads() {
-        assert_eq!(cost_segment(210), "~0.2k tokens");
-        assert_eq!(cost_segment(2600), "~2.6k tokens");
-        assert_eq!(cost_segment(99), "~99 tokens");
+        assert!(!text.contains("tokens"), "{text}");
     }
 
     #[test]
@@ -1822,7 +2047,7 @@ mod tests {
             "── .claude/plans/rt-fe-wire-and-retire-BRIEF.md\n\
              549:\t## Back navigation\n\
              550-\tThe «onBack» handler …\n\
-             ── 4 hits in 2 files · searched 31 files · ~0.9k tokens\n"
+             ── 4 hits in 2 files · searched 31 files\n"
         );
     }
 
@@ -1925,7 +2150,7 @@ mod tests {
              40 \texport function usage() {\n\
              42~\t  const cap = 20\n\
              44 \t}\n\
-             ── check: structure ok · sha:e77be77be77b→b410b410b410 · ~0.2k tokens\n"
+             ── check: structure ok · sha:e77be77be77b→b410b410b410\n"
         );
     }
 
@@ -1944,7 +2169,7 @@ mod tests {
 
         assert_eq!(
             out,
-            "── check: structure ok · sha:e77be77be77b→b410b410b410 · ~0.2k tokens\n"
+            "── check: structure ok · sha:e77be77be77b→b410b410b410\n"
         );
     }
 
@@ -2039,7 +2264,7 @@ mod tests {
             "── src/a.ts · 1 replacement · line 42\n\
              ── src/b.ts · 1 replacement · line 3\n\
              ── src/c.ts · inserted 1 line after line 1\n\
-             ── 3 files · 3 edits · all applied · checks: structure ok ×3 · ~0.4k tokens\n"
+             ── 3 files · 3 edits · all applied · checks: structure ok ×3\n"
         );
         assert!(
             !out.contains("sha:"),
@@ -2176,7 +2401,7 @@ mod tests {
             serde_json::from_str(&render(&resp, Format::Json, &opts())).expect("valid json");
 
         assert!(
-            text.contains("── check: structure ok · sha:e77be77be77b→b410b410b410 · normalized · "),
+            text.contains("── check: structure ok · sha:e77be77be77b→b410b410b410 · normalized"),
             "{text}"
         );
         assert_eq!(keys(&value), [
@@ -2848,6 +3073,14 @@ mod tests {
                     read_as: "a|b".to_owned(),
                 },
                 r"«a\|b» had no hits, read grep-style as «a|b»",
+            ),
+            (
+                Omission::CaseFolded { hits: 1 },
+                "1 hit matches only ignoring case (-s for exact case)",
+            ),
+            (
+                Omission::CaseFolded { hits: 3 },
+                "3 hits match only ignoring case (-s for exact case)",
             ),
         ];
         for (omission, expected) in cases {

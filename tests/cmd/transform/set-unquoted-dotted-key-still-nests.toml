@@ -1,4 +1,5 @@
-# The control for set-quoted-literal-key: unquoted, the dot splits, so `formatOnSave` lands inside
-# `editor` and the top-level `editor.formatOnSave` is left as it was.
+# The control for set-quoted-literal-key: unquoted, the dot still splits, and with no literal
+# `editor.formatOnSave` key to match, `formatOnSave` nests under `editor` as it always has.
+# set-unquoted-dotted-key-matches-literal-json is the case where that literal key exists instead.
 bin.name = "lets"
 args = ["transform", "c.json", "--set", "editor.formatOnSave=true"]

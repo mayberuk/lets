@@ -20,6 +20,19 @@ impl ReadFile {
 
 pub(crate) const BINARY_SNIFF_WINDOW: usize = 8192;
 
+/// A `u8` lane per byte, summed per 255-byte chunk so no lane overflows: LLVM vectorises it.
+pub fn count_byte(hay: &[u8], needle: u8) -> usize {
+    hay.chunks(255)
+        .map(|chunk| {
+            usize::from(
+                chunk
+                    .iter()
+                    .fold(0u8, |sum, byte| sum + u8::from(*byte == needle)),
+            )
+        })
+        .sum()
+}
+
 pub fn read(path: &Path, max_file_bytes: u64) -> Result<ReadFile, Error> {
     let metadata = std::fs::metadata(path).map_err(|source| io_error(path, source))?;
     // A FIFO, device or socket reports length 0 and then blocks under `std::fs::read`, so the type

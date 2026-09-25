@@ -1,2 +1,16 @@
 line 1: exactly one of "old", "insert_after" or "insert_before" is required · found old, insert_after
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
+>>>>>>>
+LETS
 ERROR_CODE=usage

@@ -1,0 +1,7 @@
+# The control for set-quoted-segments-force-nested-json: unquoted, "a.b" cannot pick between the
+# literal key and the nested path without guessing, so it is ambiguous and the file is unchanged.
+bin.name = "lets"
+args = ["transform", "c.json", "--set", "a.b=3"]
+
+[status]
+code = 2
