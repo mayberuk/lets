@@ -108,6 +108,9 @@ html:not(.js) .cmp-panel + .cmp-panel { border-top: 1px solid var(--hair); }
 .rd h1 { margin: 34px 0 0; font: 700 60px/1.02 var(--sans); letter-spacing: -.028em; font-variation-settings: 'wdth' 88; text-wrap: balance; }
 .rd .sub { margin: 18px 0 0; font-size: 19px; line-height: 1.5; color: var(--ink-2); max-width: 30em; text-wrap: pretty; }
 .rd .sub code { color: var(--ink); font-size: .95em; background: none; border: 0; padding: 0; }
+.rd .acro { margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 2px 1.3em; font: 16px/1.6 var(--mono); color: var(--ink-3); }
+.rd .acro span { white-space: nowrap; }
+.rd .acro b { color: var(--ink); }
 .rd h2 { margin: 0; padding-top: 56px; font: 700 34px/1.12 var(--sans); letter-spacing: -.02em; font-variation-settings: 'wdth' 92; text-wrap: balance; }
 .rd h2.ln { --lt: calc(56px + .5em); }
 .rd h2 code { background: none !important; border: 0 !important; padding: 0 !important; font-size: .9em; }
@@ -451,6 +454,7 @@ html.js .nojs { display: none !important; }
   .tb { display: none; }
   .rd h1 { margin-top: 20px; font-size: 40px; letter-spacing: -.025em; }
   .rd .sub { font-size: 17px; margin-top: 12px; }
+  .rd .acro { font-size: 15px; margin-top: 8px; }
   .rd h2 { padding-top: 26px; font-size: 27px; }
   .rd h2.ln { --lt: calc(26px + .45em); }
   .rd .install { margin-top: 20px; }
