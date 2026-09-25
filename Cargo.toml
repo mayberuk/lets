@@ -1,6 +1,6 @@
 [package]
 name = "lets"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 # 1.96 does not build: yamlpath's transitive `tree-sitter-iter` 1.30.1 requires rustc 1.97.0.
 rust-version = "1.97"
