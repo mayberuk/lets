@@ -17,24 +17,24 @@ ERROR_CODE=usage
 
 ```
 
-A hash shorter than a `show` header prints is refused before the file is read: a short prefix
+A hash shorter than an edit result prints is refused before the file is read: a short prefix
 can collide, and a stale-guard that collides is not a guard.
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:abc
 ? 64
-error: invalid value 'sha:abc' for [..]: --if takes sha: and 12 or more lowercase hex digits, as a show header prints it
+error: invalid value 'sha:abc' for [..]: --if takes sha: and 12 or more lowercase hex digits, as an earlier `lets edit` result prints it
 ...
 ERROR_CODE=usage
 
 ```
 
-Uppercase hex is refused too; a show header never prints it.
+Uppercase hex is refused too; an edit result never prints it.
 
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:0123456789AB
 ? 64
-error: invalid value 'sha:0123456789AB' for [..]: --if takes sha: and 12 or more lowercase hex digits, as a show header prints it
+error: invalid value 'sha:0123456789AB' for [..]: --if takes sha: and 12 or more lowercase hex digits, as an earlier `lets edit` result prints it
 ...
 ERROR_CODE=usage
 
@@ -121,7 +121,7 @@ ERROR_CODE=usage
 ```console
 $ lets transform app.json --set threads=3 --if sha:abc
 ? 64
-error: invalid value 'sha:abc' for [..]: --if takes sha: and 12 or more lowercase hex digits, as a show header prints it
+error: invalid value 'sha:abc' for [..]: --if takes sha: and 12 or more lowercase hex digits, as an earlier `lets edit` result prints it
 ...
 ERROR_CODE=usage
 

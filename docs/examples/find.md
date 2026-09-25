@@ -447,6 +447,7 @@ second call is the control: without the flag, numbers print as they do today.
 $ lets find needle small.txt --no-numbers --no-expand
 ── small.txt
 «needle» 1
+--
 «needle» 2
 ── 2 hits in 1 file · searched 1 file
 

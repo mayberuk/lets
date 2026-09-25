@@ -50,7 +50,7 @@ line 7 EDITED
 line 8 EDITED
 >>>>>>>
 EOF
-── 2 files · 2 edits · all applied · check: skipped (p.txt: no grammar for .txt) · p.txt:6-8 not shown · check: skipped (q.txt: no grammar for .txt) · q.txt:4-6 not shown
+── 2 files · 2 edits · all applied · check: skipped (p.txt: no grammar for .txt) · check: skipped (q.txt: no grammar for .txt)
 
 ```
 
@@ -380,7 +380,7 @@ $ lets edit crlf.txt --old $'beta\ngamma' --new $'BETA\nGAMMA'
 ```console
 $ lets edit usage.ts:6-7 --expect 'const cap = 10' --new '  const cap = 20'
 ? 2
-usage.ts:6-7: --expect checks line 6 only, and the range runs to line 7 · pass --expect-all (the whole range on stdin) or --if sha:<12 hex>
+usage.ts:6-7: --expect checks line 6 only, and the range runs to line 7 · pass --expect-all (the whole range on stdin) or --if sha:<12 hex> from an earlier `lets edit`
 ERROR_CODE=expect_refused
 
 ```
@@ -390,7 +390,7 @@ The control for the case above, one line off: the line number is wrong, the cont
 ```console
 $ lets edit usage.ts:7 --expect 'const cap = 10' --new '  const cap = 20'
 ? 2
-usage.ts:7: line 7 does not match --expect · it reads:   if (now > cap) return · re-read it, or confirm with --expect-all or --if sha:<12 hex>
+usage.ts:7: line 7 does not match --expect · it reads:   if (now > cap) return · re-read it, or confirm with --expect-all or --if sha:<12 hex> from an earlier `lets edit`
 ERROR_CODE=expect_refused
 
 ```
@@ -674,7 +674,7 @@ ERROR_CODE=changed
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:abc
 ? 64
-error: invalid value 'sha:abc' for '--if <IF_SHA>': --if takes sha: and 12 or more lowercase hex digits, as a show header prints it
+error: invalid value 'sha:abc' for '--if <IF_SHA>': --if takes sha: and 12 or more lowercase hex digits, as an earlier `lets edit` result prints it
 
 For more information, try '--help'.
 ERROR_CODE=usage
@@ -683,7 +683,7 @@ ERROR_CODE=usage
 
 ```console
 $ lets edit s.txt --insert-after '@'\''^line 5$'\''' --new $'new 1\nnew 2\nnew 3\nnew 4\nnew 5\nnew 6\nnew 7'
-── s.txt · inserted 7 lines after line 5 · sha:b72837628326→bcfdb5987d81 · check: skipped (no grammar for .txt) · :8-10 not shown
+── s.txt · inserted 7 lines after line 5 · sha:b72837628326→bcfdb5987d81 · check: skipped (no grammar for .txt)
 
 ```
 
@@ -747,7 +747,7 @@ ERROR_CODE=check_failed
 
 ```console
 $ lets edit block.txt --old $'line 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\nline 24\nline 25\nline 26\nline 27\nline 28\nline 29\nline 30\nline 31\nline 32\nline 33\nline 34\nline 35\nline 36\nline 37\nline 38\nline 39\nline 40\nline 41\nline 42\nline 43\nline 44\nline 45' --new $'line 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED\nline 10 EDITED\nline 11 EDITED\nline 12 EDITED\nline 13 EDITED\nline 14 EDITED\nline 15 EDITED\nline 16 EDITED\nline 17 EDITED\nline 18 EDITED\nline 19 EDITED\nline 20 EDITED\nline 21 EDITED\nline 22 EDITED\nline 23 EDITED\nline 24 EDITED\nline 25 EDITED\nline 26 EDITED\nline 27 EDITED\nline 28 EDITED\nline 29 EDITED\nline 30 EDITED\nline 31 EDITED\nline 32 EDITED\nline 33 EDITED\nline 34 EDITED\nline 35 EDITED\nline 36 EDITED\nline 37 EDITED\nline 38 EDITED\nline 39 EDITED\nline 40 EDITED\nline 41 EDITED\nline 42 EDITED\nline 43 EDITED\nline 44 EDITED\nline 45 EDITED'
-── block.txt · 1 replacement · lines 6-45 · sha:05a1c3600fc7→2ed41fefbb3a · check: skipped (no grammar for .txt) · :8-43 not shown
+── block.txt · 1 replacement · lines 6-45 · sha:05a1c3600fc7→2ed41fefbb3a · check: skipped (no grammar for .txt)
 
 ```
 
@@ -899,7 +899,10 @@ its heuristic, and `--json` carries it under the same `resolver` key.
 
 ```console
 $ lets edit 'greet.kt#limit' --old 20 --new 30
-── greet.kt · 1 replacement · line 8 · sha:28d97b9d9e49→d160887527f5 · check: skipped (no grammar for .kt)
+── greet.kt · 1 replacement · line 8 · exact · span guessed (plaintext heuristic)
+7 	
+8~	val limit = 30
+── sha:28d97b9d9e49→d160887527f5 · check: skipped (no grammar for .kt)
 
 $ lets edit 'greet.kt#limit' --old 30 --new 40 --json
 {"path":"greet.kt","replacements":1,"lines":[8],"match":"exact","resolver":"span guessed (plaintext heuristic)",[..]}
@@ -908,13 +911,13 @@ $ lets edit 'greet.kt#limit' --old 30 --new 40 --json
 
 ```console
 $ lets edit usage.ts --old 'usageCap' --new 'usageLimit' --all
-── usage.ts · 2 replacements · lines 1, 8 · check: structure ok · sha:c5525cc20b61→0e1115009972 · :3-6 not shown
+── usage.ts · 2 replacements · lines 1, 8 · check: structure ok · sha:c5525cc20b61→0e1115009972
 
 ```
 
 ```console
 $ lets edit s.txt --old $'line 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10' --new $'line 4 EDITED\nline 5 EDITED\nline 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED\nline 10 EDITED'
-── s.txt · 1 replacement · lines 4-10 · sha:b72837628326→a57bcaac3450 · check: skipped (no grammar for .txt) · :6-8 not shown
+── s.txt · 1 replacement · lines 4-10 · sha:b72837628326→a57bcaac3450 · check: skipped (no grammar for .txt)
 
 ```
 
