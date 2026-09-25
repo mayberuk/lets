@@ -1,0 +1,28 @@
+---
+import WindowControls from '../shell/WindowControls.astro';
+---
+<section class="win sheet-win drag-ok" data-win="sheet" data-title="trial-results.ods" data-icon="i-sheet" aria-labelledby="sheet-t">
+          <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-sheet"/></svg></span><h3 class="t" id="sheet-t">trial-results.ods <span>— Spreadsheet</span></h3><WindowControls /></div>
+          <div class="wb">
+            <div class="fx" data-js><span class="ref" id="fx-ref">B3</span><span class="fn" aria-hidden="true">fx</span><output id="fx-val" for="calc">=64.6/76.5-1</output></div>
+            <div class="grid-wrap">
+              <table class="calc" id="calc">
+                <caption class="vh">Large-repo trial, with lets against stock</caption>
+                <thead>
+                  <tr class="hdr" aria-hidden="true"><th></th><th>A</th><th>B</th><th>C</th></tr>
+                  <tr><th class="rn" aria-hidden="true">1</th><th scope="col">With lets, against stock</th><th scope="col">Sonnet 5</th><th scope="col">Opus 5.5</th></tr>
+                </thead>
+                <tbody>
+                  <tr><th class="rn" aria-hidden="true">2</th><th scope="row">Sessions</th><td data-fx="9 with lets, 6 stock"><span class="s">9 with lets, 6 stock</span></td><td data-fx="6 with lets, 6 stock"><span class="s">6 with lets, 6 stock</span></td></tr>
+                  <tr><th class="rn" aria-hidden="true">3</th><th scope="row">Tool calls</th><td class="good" data-fx="=64.6/76.5-1"><span class="v">−16%</span><span class="s">64.6 vs 76.5</span></td><td class="good" data-fx="−16%"><span class="v">−16%</span></td></tr>
+                  <tr><th class="rn" aria-hidden="true">4</th><th scope="row">Wall time</th><td class="good" data-fx="=403/451-1"><span class="v">−11%</span><span class="s">403 s vs 451 s</span></td><td class="good" data-fx="−12%"><span class="v">−12%</span></td></tr>
+                  <tr><th class="rn" aria-hidden="true">5</th><th scope="row">Checks passed</th><td class="good" data-fx="99.1% with lets, 97.8% stock"><span class="v">99.1%</span><span class="s">vs 97.8%</span></td><td data-fx="100% in both arms"><span class="v">100%</span><span class="s">both</span></td></tr>
+                  <tr><th class="rn" aria-hidden="true">6</th><th scope="row">Cost</th><td data-fx="−0.5%: cost-neutral"><span class="v">−0.5%</span><span class="s">cost-neutral</span></td><td data-fx="+8% mean, +4% median"><span class="v">+8%</span><span class="s">mean; +4% median</span></td></tr>
+                  <tr class="note-row"><th class="rn" aria-hidden="true">7</th><td colspan="3" data-fx="Small samples: 3–9 sessions per arm.">Small samples: 3–9 sessions per arm. Read the method before you quote it.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="tabs"><span class="cur">Large repo</span><a href="https://github.com/mayberuk/lets/blob/main/docs/benchmarks.md">Method<svg viewBox="0 0 16 16" aria-hidden="true"><use href="#g-ext"/></svg></a></div>
+          </div>
+        </section>
+        <p class="min-note" data-js><span>trial-results.ods is minimised.</span><button type="button" class="key" data-restore="sheet">Restore</button></p>

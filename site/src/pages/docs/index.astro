@@ -1,0 +1,65 @@
+---
+import { getCollection, type CollectionEntry } from 'astro:content';
+import Desktop from '../../layouts/Desktop.astro';
+import Manual from '../../components/manual/Manual.astro';
+import '../../styles/manual.css';
+
+const docs = (await getCollection('docs')).sort((a, b) => a.data.order - b.data.order);
+const groups = new Map<string, CollectionEntry<'docs'>[]>();
+for (const e of docs) groups.set(e.data.group, [...(groups.get(e.data.group) ?? []), e]);
+const slug = (group: string) => group.toLowerCase();
+---
+<Desktop
+  title="lets Manual"
+  description="The lets reference: every verb, flag, exit code and JSON shape, one page per command, each also served as markdown for agents."
+  path="/docs/"
+  markdownTwin="/llms.txt"
+  kind="doc"
+>
+<div class="desk">
+  <Manual docs={docs} subtitle="Overview" markdown="/llms.txt" install={false}>
+    <article class="prose">
+      <h1>lets Manual</h1>
+      <p>Every verb, flag, exit code and JSON shape, one page per command. Each page is also plain markdown at the same address with <code>.md</code> on the end.</p>
+
+      <h2 id="install">Install</h2>
+      <div class="install">
+        <ol class="steps" aria-label="Install in two steps">
+          <li><span class="step-n" aria-hidden="true">1</span><pre class="cmd"><code>curl -fsSL https://raw.<wbr>githubusercontent.com/<wbr>mayberuk/lets/main/<wbr><span class="nb">install.sh | sh</span></code></pre></li>
+          <li><span class="step-n" aria-hidden="true">2</span><pre class="cmd"><code>lets hooks install claude-code</code></pre></li>
+        </ol>
+        <button type="button" class="key key-blue key-copy" data-copy-install hidden><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><use href="#g-copy"/></svg><svg class="tick" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5"/></svg><span class="k-label">Copy both commands</span></button>
+        <p class="fine">Linux and macOS · Codex: <code>lets hooks install codex</code> · updating and flags: <a href="/docs/install/">Install and update</a></p>
+      </div>
+
+      {[...groups].map(([group, entries]) => (
+        <>
+          <h2 id={slug(group)}>{group}</h2>
+          <dl class="pages">
+            {entries.map((e) => (
+              <>
+                <dt><a href={`/docs/${e.id}/`}>{e.data.title}</a> <a class="md" href={`/docs/${e.id}.md`} aria-label={`${e.data.title} as markdown`}>.md</a></dt>
+                <dd>{e.data.description}</dd>
+              </>
+            ))}
+          </dl>
+        </>
+      ))}
+    </article>
+  </Manual>
+
+  <footer class="foot">
+    <p class="o">── /docs/ · the manual's front page: install, then {docs.length} pages in {groups.size} groups
+── for agents: <a href="/llms.txt">/llms.txt</a> indexes every page · <a href="/llms-full.txt">/llms-full.txt</a> holds them all in one file</p>
+    <div class="meta"><span>lets 0.0.1 · MIT or Apache-2.0</span><a href="/">Home</a><a href="https://github.com/mayberuk/lets">github.com/mayberuk/lets</a></div>
+  </footer>
+</div>
+</Desktop>
+
+<script>
+  import { initDesktop } from '../../scripts/desktop';
+  import { initManual } from '../../scripts/manual';
+
+  initDesktop();
+  initManual();
+</script>

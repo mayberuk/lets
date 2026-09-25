@@ -1,0 +1,98 @@
+---
+interface Props {
+  title: string;
+  description: string;
+  path: string;
+  kind: 'home' | 'doc' | 'page';
+  faq?: { q: string; a: string }[];
+  breadcrumbTitle?: string;
+  noindex?: boolean;
+}
+
+const { title, description, path, kind, faq, breadcrumbTitle, noindex = false } = Astro.props;
+
+const site = 'https://lets.mayberuk.com';
+const canonical = new URL(path, site).toString();
+const ogImage = `${site}/og.png`;
+// Matches the Graphite panel gradient's top stop (--hb1 in base.css); Graphite is the default wall.
+const themeColor = '#393A40';
+const ogType = kind === 'doc' ? 'article' : 'website';
+
+const graph: Record<string, unknown>[] = [
+  {
+    '@type': 'WebSite',
+    '@id': `${site}/#website`,
+    url: `${site}/`,
+    name: 'lets',
+    description: 'A file-operations CLI for coding agents: Locate, Edit, Transform, Show.',
+  },
+];
+
+if (kind === 'home') {
+  graph.push({
+    '@type': 'SoftwareApplication',
+    '@id': `${canonical}#software`,
+    name: 'lets',
+    description,
+    url: canonical,
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'Linux, macOS',
+    softwareVersion: '0.0.1',
+    license: ['https://opensource.org/licenses/MIT', 'https://www.apache.org/licenses/LICENSE-2.0'],
+    codeRepository: 'https://github.com/mayberuk/lets',
+    sameAs: 'https://github.com/mayberuk/lets',
+    downloadUrl: 'https://raw.githubusercontent.com/mayberuk/lets/main/install.sh',
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  });
+  if (faq && faq.length) {
+    graph.push({
+      '@type': 'FAQPage',
+      mainEntity: faq.map((f) => ({
+        '@type': 'Question',
+        name: f.q,
+        acceptedAnswer: { '@type': 'Answer', text: f.a },
+      })),
+    });
+  }
+}
+
+if (kind === 'doc') {
+  // Routes are fixed as /docs/<slug>/ (astro.config.mjs trailingSlash), so the slug is the
+  // breadcrumb leaf without needing a prop beyond the frozen Desktop layout contract.
+  const slug = path.replace(/^\/docs\//, '').replace(/\/$/, '');
+  graph.push({
+    '@type': 'TechArticle',
+    headline: title,
+    description,
+    url: canonical,
+    mainEntityOfPage: canonical,
+  });
+  const breadcrumbs = [
+    { '@type': 'ListItem', position: 1, name: 'lets', item: `${site}/` },
+    { '@type': 'ListItem', position: 2, name: 'Manual', item: `${site}/docs/` },
+  ];
+  // slug is empty for /docs/ itself (the Manual's front page), which is only two levels deep.
+  if (slug) breadcrumbs.push({ '@type': 'ListItem', position: 3, name: breadcrumbTitle ?? slug, item: canonical });
+  graph.push({
+    '@type': 'BreadcrumbList',
+    itemListElement: breadcrumbs,
+  });
+}
+
+const jsonLd = JSON.stringify({ '@context': 'https://schema.org', '@graph': graph }).replace(/</g, '\\u003c');
+---
+{noindex ? <meta name="robots" content="noindex"> : <link rel="canonical" href={canonical}>}
+<meta property="og:type" content={ogType}>
+<meta property="og:title" content={title}>
+<meta property="og:description" content={description}>
+{!noindex && <meta property="og:url" content={canonical}>}
+<meta property="og:site_name" content="lets">
+<meta property="og:image" content={ogImage}>
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content={title}>
+<meta name="twitter:description" content={description}>
+<meta name="twitter:image" content={ogImage}>
+<meta name="theme-color" content={themeColor}>
+<script type="application/ld+json" set:html={jsonLd}></script>

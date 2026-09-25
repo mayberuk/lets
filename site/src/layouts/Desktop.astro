@@ -1,0 +1,62 @@
+---
+import '../styles/base.css';
+import '../styles/wall.css';
+import Sprite from '../components/shell/Sprite.astro';
+import Panel from '../components/shell/Panel.astro';
+import DesktopIcons from '../components/shell/DesktopIcons.astro';
+import Seo from '../components/Seo.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  path: string;
+  markdownTwin?: string;
+  kind?: 'home' | 'doc' | 'page';
+  faq?: { q: string; a: string }[];
+  breadcrumbTitle?: string;
+  noindex?: boolean;
+}
+
+const { title, description, path, markdownTwin, kind = 'page', faq, breadcrumbTitle, noindex } = Astro.props;
+const home = kind === 'home';
+const skip = { home: 'Skip to the README', doc: 'Skip to the manual', page: 'Skip to the content' }[kind];
+---
+<!doctype html>
+<html lang="en" data-wall="graphite">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<meta name="description" content={description}>
+{markdownTwin && <link rel="alternate" type="text/markdown" href={markdownTwin} title="This page as markdown">}
+<Seo title={title} description={description} path={path} kind={kind} faq={faq} breadcrumbTitle={breadcrumbTitle} noindex={noindex} />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Sans:ital,wdth,wght@0,75..100,100..800;1,75..100,100..800&family=Ubuntu+Sans+Mono:wght@400..700&display=swap">
+<script is:inline>
+document.documentElement.classList.add('js');
+try { var w = localStorage.getItem('lets-wall'); if (w && /^(pistachio|apricot|lagoon|graphite)$/.test(w)) document.documentElement.dataset.wall = w; } catch (e) {}
+</script>
+</head>
+<body>
+<a class="skip" href="#main">{skip}</a>
+<div class="wall" aria-hidden="true"><i></i><i></i><i></i></div>
+<Sprite />
+
+<Panel home={home} path={path} />
+
+<DesktopIcons home={home} path={path} />
+
+<slot />
+
+{home && <div class="taskbar" id="taskbar" role="toolbar" aria-label="Open windows"></div>}
+
+<div class="toast" id="toast" role="status" aria-hidden="true">
+  <svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-check"/></svg>
+  <div><b id="toast-b">Copied 2 commands</b><span id="toast-s">Paste them in a terminal.</span></div>
+  <button type="button" id="toast-x" aria-label="Dismiss" tabindex="-1"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#g-close"/></svg></button>
+</div>
+<p class="vh" id="live" aria-live="polite"></p>
+</body>
+</html>

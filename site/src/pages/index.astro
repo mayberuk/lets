@@ -1,0 +1,176 @@
+---
+import Desktop from '../layouts/Desktop.astro';
+import Readme from '../components/home/Readme.astro';
+import Anatomy from '../components/home/Anatomy.astro';
+import Switch from '../components/home/Switch.astro';
+import Terminal from '../components/home/Terminal.astro';
+import Compare from '../components/home/Compare.astro';
+import Sheet from '../components/home/Sheet.astro';
+import Hook from '../components/home/Hook.astro';
+import Trash from '../components/home/Trash.astro';
+import Files from '../components/home/Files.astro';
+import LlmsTxt from '../components/home/LlmsTxt.astro';
+import Faq from '../components/home/Faq.astro';
+import { faq } from '../data/faq';
+import '../styles/home.css';
+---
+<Desktop
+  title="lets · one call instead of three"
+  description="lets is a file-operations CLI for coding agents: one shell call reads, edits and checks several files, and every answer names what it left out."
+  path="/"
+  markdownTwin="/index.md"
+  kind="home"
+  faq={faq}
+>
+<div class="desk" id="top">
+<div class="doc">
+  <div class="readme-bg win" data-win="readme" data-title="README.md" aria-hidden="true"></div>
+  <main id="main">
+
+    <section class="row" aria-labelledby="promise">
+      <Readme />
+      <div class="side">
+        <Anatomy />
+      </div>
+    </section>
+
+    <section class="row lay-over" aria-labelledby="two-h">
+      <div class="rd">
+        <h2 id="two-h" class="ln">Seven turns become two.</h2>
+        <p class="ln">The same rename, run by an agent with and without <code>lets</code>. Flip the switch.</p>
+      </div>
+      <div class="side">
+        <Switch />
+      </div>
+      <div class="rd after-over">
+        <p class="ln dim">Without it, the agent finds, reads, edits and re-reads one file at a time. With it, one search and one checked batch edit.</p>
+      </div>
+    </section>
+
+    <section class="row" id="try" aria-labelledby="try-h">
+      <div class="rd">
+        <h2 id="try-h" class="ln">Try it on a two-file project.</h2>
+        <p class="ln">Run one of these in the terminal beside, or type your own. Each answer is output recorded from <code>lets</code> 0.0.1 on a demo project, replayed here.</p>
+        <ul class="try-list ln" style="--n:6">
+          <li><code data-cmd="lets show src/usage.ts#usage">lets show src/usage.ts#usage</code><span>one function, found by parsing</span></li>
+          <li><code data-cmd="lets find usageCap">lets find usageCap</code><span>every hit, grouped by file</span></li>
+          <li><code data-cmd="lets edit src/usage.ts --old 'const cap = 10' --new 'const cap = 20'">lets edit src/usage.ts --old 'const cap = 10' --new 'const cap = 20'</code><span>an edit, checked, with its proof</span></li>
+          <li><code data-cmd="lets edit src/usage.ts --old 'const cap = 15' --new 'const cap = 20'">lets edit src/usage.ts --old 'const cap = 15' …</code><span>a miss names the nearest line</span></li>
+          <li><code data-cmd="lets edit src/usage.ts --old 'return total(id, now)' --new 'return total(id, now))'">lets edit … --new 'return total(id, now))'</code><span>a broken edit puts itself back</span></li>
+        </ul>
+        <p class="ln dim">Run the edit twice: the second time the text has changed, so <code>lets</code> reports the nearest line instead of guessing. <code>reset</code> puts the project back.</p>
+      </div>
+      <div class="side">
+        <Terminal />
+      </div>
+    </section>
+
+    <section class="row lay-wide" id="pairs" aria-labelledby="pairs-h">
+      <div class="rd">
+        <h2 id="pairs-h" class="ln">Each answer arrives whole.</h2>
+        <p class="ln">Seven everyday jobs, compared: the turns an agent takes today on the left, the one <code>lets</code> call that replaces them on the right. Every right-hand pane is real output.</p>
+      </div>
+      <div class="side">
+        <Compare />
+      </div>
+    </section>
+
+    <section class="row" id="trial" aria-labelledby="trial-h">
+      <div class="rd">
+        <h2 id="trial-h" class="ln">Fewer calls, faster, same or better accuracy.</h2>
+        <p class="ln">Five tasks on a private 17.7k-file Go monorepo: a stock Claude Code session against one with the <code>lets</code> hook, nothing else changed.</p>
+        <h3 class="ln">If the footer doesn’t name a cut, nothing was cut.</h3>
+        <p class="ln">Hidden lines, capped hits and skipped checks are named on the last line, so your agent can trust the answer and skip the follow-up read.</p>
+<pre class="o ln" style="--n:12"><code><span class="after">$ lets edit usage.ts --old 'usageCap' --new 'usageLimit' --all</span>
+<span class="rl">── usage.ts · 2 replacements · lines 1, 8 · exact</span>
+<span class="chg"> 1~&#9;import &#123; usageLimit &#125; from './config'</span>
+ 2 &#9;import &#123; clock &#125; from './clock'
+ 3 &#9;export function usage(id: string) &#123;
+  ·&#9;<mark>:4-5 not shown</mark>
+ 6 &#9;  const cap = 10
+ 7 &#9;  if (now &gt; cap) return
+<span class="chg"> 8~&#9;  const total = usageLimit + id.length</span>
+ 9 &#9;  return total
+10 &#9;&#125;
+<span class="rl">── check: structure ok · sha:c5525cc20b61→0e1115009972 · <mark>:4-5 not shown</mark></span></code></pre>
+      </div>
+      <div class="side">
+        <Sheet />
+      </div>
+    </section>
+
+    <section class="row" id="hook" aria-labelledby="hook-h">
+      <div class="rd">
+        <h2 id="hook-h" class="ln">Reach for <code>cat</code>, get handed <code>lets</code>.</h2>
+        <p class="ln"><code>lets hooks install claude-code</code> checks each shell command before it runs. A bare <code>cat</code>, <code>sed -n</code> or <code>grep</code> on a repo file is blocked and handed the <code>lets</code> command instead.</p>
+        <p class="ln dim">If <code>lets</code> is missing or crashes, the hook lets the command through, so it can never wedge your agent. The old habits are in the Trash.</p>
+        <details class="ln">
+          <summary>What else it installs, and why a hook</summary>
+          <ul>
+            <li>A short note at session start, printed again after every compaction and to every subagent.</li>
+            <li>Untouched: output piped into another program, a heredoc sent to a program’s stdin, files outside the repo.</li>
+            <li>Prose rules in CLAUDE.md get roughly 55% compliance. Replaying 1,502 sessions, the hook would block 28% of shell calls, carrying 45% of shell output bytes.</li>
+            <li>For Codex: <code>lets hooks install codex</code>.</li>
+          </ul>
+        </details>
+      </div>
+      <div class="side">
+        <Hook />
+
+        <Trash />
+      </div>
+    </section>
+
+    <section class="row lay-right" id="verbs" aria-labelledby="verbs-h">
+      <div class="rd">
+        <h2 id="verbs-h" class="ln">Five verbs in one small binary.</h2>
+        <p class="ln">Each takes several files or ranges per call. No index, no daemon, no config file.</p>
+        <p class="ln dim">Every flag and exit code is in the <a href="/docs/edit/">manual</a>.</p>
+      </div>
+      <div class="side">
+        <Files />
+      </div>
+    </section>
+
+    <section class="row" id="faq" aria-labelledby="faq-h">
+      <div class="rd">
+        <h2 id="faq-h" class="ln">Questions, answered once.</h2>
+        <p class="ln">The same answers your agent gets when it reads this page as markdown.</p>
+      </div>
+      <div class="side">
+        <Faq faq={faq} />
+      </div>
+    </section>
+
+    <section class="row" id="end" aria-labelledby="end-h">
+      <div class="rd">
+        <h2 id="end-h" class="ln">Two commands, and your agent has it.</h2>
+        <div class="install ln" style="--n:3">
+          <ol class="steps" aria-label="Install in two steps">
+            <li><span class="step-n" aria-hidden="true">1</span><pre class="cmd"><code>curl -fsSL https://raw.<wbr>githubusercontent.com/<wbr>mayberuk/lets/main/<wbr><span class="nb">install.sh | sh</span></code></pre></li>
+            <li><span class="step-n" aria-hidden="true">2</span><pre class="cmd"><code>lets hooks install claude-code</code></pre></li>
+          </ol>
+          <button type="button" class="key key-blue key-copy" data-copy hidden><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><use href="#g-copy"/></svg><svg class="tick" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5"/></svg><span class="k-label">Copy both commands</span></button>
+          <p class="fine">Linux and macOS · MIT or Apache-2.0 · Codex: <code>lets hooks install codex</code> · <a href="/docs/edit/">Docs</a> · <a href="https://github.com/mayberuk/lets">Source on GitHub</a></p>
+        </div>
+      </div>
+      <div class="side">
+        <LlmsTxt />
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p class="o">── index.html · the promise, the anatomy of one edit, one task with and without lets, a terminal to try it, 7 before/after pairs, the trial, the hook, the trash, the five verbs, 6 questions, llms.txt
+── not shown here: every flag and exit code · they are in <a href="/docs/edit/">docs</a>, <a href="/docs/edit.md">/docs/*.md</a> and <a href="/llms-full.txt">/llms-full.txt</a></p>
+    <div class="meta"><span>lets 0.0.1 · MIT or Apache-2.0</span><a href="https://github.com/mayberuk/lets">github.com/mayberuk/lets</a><a href="/docs/">the lets Manual</a></div>
+  </footer>
+</div>
+</div>
+</Desktop>
+
+<script>
+  import { initHome } from '../scripts/home';
+
+  initHome();
+</script>

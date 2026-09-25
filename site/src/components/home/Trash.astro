@@ -1,0 +1,19 @@
+<section class="win trash-win" id="trash" data-win="trash" data-title="Trash" data-icon="i-trash" role="region" aria-labelledby="trash-t" tabindex="-1">
+          <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-trash"/></svg></span><h3 class="t" id="trash-t">Trash</h3><span class="ctl keep" data-js><button type="button" data-close-trash aria-label="Close the Trash"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#g-close"/></svg></button></span></div>
+          <div class="wb pad">
+            <h4 class="vh">Habits your agent no longer needs</h4>
+            <p class="lead-p" aria-hidden="true" style="font-weight:700;color:var(--ink);font-size:16px;margin:0 0 2px">Habits your agent no longer needs</p>
+            <p class="lead-p">Each one, with the command the hook hands back instead.</p>
+            <ul class="files" id="trash-files">
+              <li><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg><span><span class="was">cat src/usage.ts</span><span class="now">lets show src/usage.ts</span></span></li>
+              <li><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg><span><span class="was">sed -n '3,9p' src/usage.ts</span><span class="now">lets show src/usage.ts:3-9</span></span></li>
+              <li><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg><span><span class="was">grep -rn usageCap src</span><span class="now">lets find 'usageCap' src</span></span></li>
+            </ul>
+            <div class="empty" role="status"><p class="big-note">The Trash is empty.</p><p>The hook catches these for you.</p></div>
+            <div class="dlg-keys" style="padding:14px 0 0" data-js>
+              <span class="cnt" id="trash-count">3 items</span>
+              <button type="button" class="key" data-putback>Put them back</button>
+              <button type="button" class="key key-red" data-empty>Empty Trash</button>
+            </div>
+          </div>
+        </section>

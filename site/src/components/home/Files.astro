@@ -1,0 +1,23 @@
+---
+import WindowControls from '../shell/WindowControls.astro';
+---
+<section class="win fm-win drag-ok" data-win="fm" data-title="lets — Files" data-icon="i-folder" aria-labelledby="fm-t">
+          <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-folder"/></svg></span><h3 class="t" id="fm-t">verbs <span>— Files</span></h3><WindowControls /></div>
+          <div class="wb">
+            <div class="pathbar" aria-hidden="true"><span>lets</span>›<span>verbs</span></div>
+            <div class="grid-wrap">
+            <table class="list">
+              <thead><tr><th scope="col">Name</th><th scope="col">Replaces</th><th scope="col">Does</th></tr></thead>
+              <tbody>
+                <tr><td><a href="/docs/show/"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg>show</a></td><td><code>cat</code>, <code>sed -n</code>, Read</td><td>Files, line ranges, a function by name, a markdown section, or lines around a match.</td></tr>
+                <tr><td><a href="/docs/find/"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg>find</a></td><td><code>grep -rn</code>, <code>rg</code></td><td>Hits numbered and grouped by file, capped at 50, and says when it hit the cap.</td></tr>
+                <tr><td><a href="/docs/edit/"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-book-s"/></svg>edit</a></td><td>Edit, <code>sed -i</code></td><td>Replaces text that occurs exactly once, or inserts at an anchor. Batches across files; a failed check reverts.</td></tr>
+                <tr><td><a href="/docs/transform/"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg>transform</a></td><td><code>jq</code>, <code>yq</code></td><td>Sets, appends or deletes keys in JSON, YAML, TOML or frontmatter, keeping comments.</td></tr>
+                <tr><td><a href="/docs/write/"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg>write</a></td><td><code>cat &gt; file</code></td><td>Creates a file from stdin, checked, and never overwrites one without <code>--force</code>.</td></tr>
+              </tbody>
+            </table>
+            </div>
+            <div class="status"><span>5 items</span><span>one static binary per OS and arch</span></div>
+          </div>
+        </section>
+        <p class="min-note" data-js><span>verbs is minimised.</span><button type="button" class="key" data-restore="fm">Restore</button></p>

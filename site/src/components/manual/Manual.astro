@@ -1,0 +1,40 @@
+---
+import type { CollectionEntry } from 'astro:content';
+import type { MarkdownHeading } from 'astro';
+import Tree from './Tree.astro';
+import InstallMini from './InstallMini.astro';
+
+interface Props {
+  docs: CollectionEntry<'docs'>[];
+  subtitle: string;
+  markdown: string;
+  current?: string;
+  toc?: MarkdownHeading[];
+  install?: boolean;
+}
+
+const { docs, subtitle, markdown, current, toc = [], install = true } = Astro.props;
+---
+<div class="win manual is-focus" data-win="man" data-title="lets Manual">
+  <div class="hb">
+    <span class="lead"><a class="key" href={markdown}><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-doc-s"/></svg>View as markdown</a></span>
+    <p class="t">lets Manual <span>— {subtitle}</span></p>
+    <span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-manual"/></svg></span>
+  </div>
+  <div class="split">
+    <aside class="navp" aria-label={install ? 'Manual contents and install' : 'Manual contents'}>
+      <div class="navp-in">
+        {install && <InstallMini />}
+        <details class="toc" id="toc" open>
+          <summary>Contents</summary>
+          <nav aria-label="Manual pages">
+            <Tree docs={docs} current={current} toc={toc} />
+          </nav>
+        </details>
+      </div>
+    </aside>
+    <main id="main">
+      <slot />
+    </main>
+  </div>
+</div>

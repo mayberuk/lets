@@ -9,6 +9,12 @@
 !tests/**
 !scripts/
 !scripts/**
+!site/
+!site/**
+
+/site/node_modules/
+/site/dist/
+/site/.astro/
 
 # Public files a later phase adds.
 !LICENSE-*

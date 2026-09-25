@@ -1,0 +1,58 @@
+---
+import Desktop from '../layouts/Desktop.astro';
+import WindowControls from '../components/shell/WindowControls.astro';
+---
+<Desktop
+  title="File not found · lets"
+  description="This page doesn't exist on lets.mayberuk.com. Find the install steps and the manual from the home page."
+  path="/404.html"
+  kind="page"
+  noindex
+>
+<div class="nf-wrap">
+  <main id="main">
+    <section class="win nf-win drag-ok" data-win="nf" data-title="File not found" data-icon="i-txt" aria-labelledby="nf-t">
+      <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-txt"/></svg></span><h3 class="t" id="nf-t">File not found</h3><WindowControls /></div>
+      <div class="wb pad">
+        <h1 class="nf-h">404</h1>
+        <p>lets.mayberuk.com doesn't have this file.</p>
+        <p><a href="/">Go to the home page</a> · <a href="/docs/">Open the manual</a></p>
+      </div>
+    </section>
+    <p class="min-note" data-js><span>File not found is minimised.</span><button type="button" class="key" data-restore="nf">Restore</button></p>
+  </main>
+</div>
+</Desktop>
+
+<script>
+  import { initDesktop } from '../scripts/desktop';
+
+  initDesktop();
+</script>
+
+<style>
+  .nf-wrap { padding: calc(var(--panel-h) + 18px) 16px 40px 120px; display: flex; justify-content: center; }
+  .nf-win { width: min(420px, 100%); margin-top: 10vh; }
+  .nf-h { margin: 0; font: 700 44px/1 var(--sans); letter-spacing: -.02em; }
+  .nf-win .wb.pad p { margin: 14px 0 0; color: var(--ink-2); }
+  .nf-win .wb.pad a { color: var(--link); }
+  @media (max-width: 1099px) {
+    .nf-wrap { padding: 4px 10px 30px; }
+    .nf-win { margin-top: 6vh; }
+  }
+</style>
+<style is:global>
+  /* base.css defines .win.is-min/.is-shut but leaves the sibling .min-note's default display
+     to the page stylesheet (home.css, manual.css); 404 has neither, so it is repeated here. */
+  .min-note { display: none; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 14px; border-radius: 10px; border: 1px dashed color-mix(in srgb, var(--ink) 35%, transparent); background: var(--label-bg); color: var(--label); font-size: 14px; }
+  .win.is-min + .min-note, .win.is-shut + .min-note { display: flex; }
+
+  /* .icons is fixed-left in base.css; every other page reflows it to a horizontal bar below
+     this width (home.css, manual.css) so this page-specific 404 window matches. */
+  @media (max-width: 1099px) {
+    .icons { position: static; width: auto; flex-direction: row; gap: 2px; overflow-x: auto; margin: calc(var(--panel-h) + 6px) 0 0; padding: 6px 10px 8px; }
+    .icon { flex: none; width: 76px; padding: 4px 2px 5px; }
+    .icon svg { width: 40px; height: 40px; }
+    .icon span { font-size: 12px; }
+  }
+</style>

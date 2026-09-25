@@ -11,3 +11,5 @@
   shape, the footer contract, how discovery delivers this file's own existence to an agent.
 - [Examples](../docs/examples/): generated, passing command transcripts, one file per verb.
 - [README](../README.md): installation and a quickstart.
+- [Site llms.txt](https://lets.mayberuk.com/llms.txt): the same reference, plus the rendered
+  Manual at [lets.mayberuk.com/docs/](https://lets.mayberuk.com/docs/).

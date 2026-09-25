@@ -28,6 +28,16 @@ docs:
 docs-check: docs
     git diff --exit-code docs/examples
 
+site:
+    bun install --cwd site --frozen-lockfile
+    bun run --cwd site build
+
+site-check: site
+    bun run --cwd site check
+
+site-dev:
+    bun run --cwd site dev
+
 shellcheck:
     shellcheck install.sh scripts/*.sh .githooks/pre-commit
 

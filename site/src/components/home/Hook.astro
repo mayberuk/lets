@@ -1,0 +1,39 @@
+---
+import WindowControls from '../shell/WindowControls.astro';
+---
+<section class="win hook-win drag-ok" data-win="hook" data-title="lets hook" data-icon="i-shield" aria-labelledby="hook-t">
+          <div class="hb"><span class="lead"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-shield"/></svg></span><h3 class="t" id="hook-t">lets hook</h3><WindowControls /></div>
+          <div class="wb">
+            <div class="dlg">
+              <svg viewBox="0 0 48 48" aria-hidden="true"><use href="#i-shield"/></svg>
+              <div>
+                <ol class="blocks" id="blocks">
+                  <li class="cur">
+                    <h4>A command was handed back</h4>
+                    <p class="ran">Your agent ran <code>cat src/usage.ts</code></p>
+                    <p class="say">lets show reads several files and ranges in one call.</p>
+                    <pre class="run">run: lets show src/usage.ts</pre>
+                  </li>
+                  <li>
+                    <h4>A command was handed back</h4>
+                    <p class="ran">Your agent ran <code>sed -n '3,9p' src/usage.ts</code></p>
+                    <p class="say">lets show reads several files and ranges in one call.</p>
+                    <pre class="run">run: lets show src/usage.ts:3-9</pre>
+                  </li>
+                  <li>
+                    <h4>A command was handed back</h4>
+                    <p class="ran">Your agent ran <code>grep -rn usageCap src</code></p>
+                    <p class="say">lets find returns every hit numbered and grouped by file.</p>
+                    <pre class="run">run: lets find 'usageCap' src</pre>
+                  </li>
+                </ol>
+              </div>
+            </div>
+            <div class="dlg-keys" data-js>
+              <span class="cnt" id="block-count" aria-live="polite">1 of 3</span>
+              <button type="button" class="key" id="open-trash" aria-controls="trash">Open the Trash</button>
+              <button type="button" class="key key-blue" id="block-next">Show another</button>
+            </div>
+          </div>
+        </section>
+        <p class="min-note" data-js><span>lets hook is minimised.</span><button type="button" class="key" data-restore="hook">Restore</button></p>

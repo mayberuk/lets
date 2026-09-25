@@ -1,0 +1,82 @@
+{
+ "A|lets show src/usage.ts#usage": {
+  "out": "\u2500\u2500 src/usage.ts#usage  (3-9 of 13 \u00b7 via tree-sitter) \u00b7 sha:6fae9e67700e\n3 \texport function usage(id: string) {\n4 \t  const now = Date.now()\n5 \t  const cap = 10\n6 \t  if (!id) return\n7 \t  if (count(id) > cap) return\n8 \t  return total(id, now)\n9 \t}\n\u2500\u2500 showed 1 target \u00b7 7 lines \u00b7 ~38 tokens\n",
+  "code": 0,
+  "next": "A"
+ },
+ "A|lets show src/usage.ts src/config.ts": {
+  "out": "\u2500\u2500 src/usage.ts  (1-13 of 13) \u00b7 sha:6fae9e67700e\n 1 \timport { usageCap } from './config'\n 2 \t\n 3 \texport function usage(id: string) {\n 4 \t  const now = Date.now()\n 5 \t  const cap = 10\n 6 \t  if (!id) return\n 7 \t  if (count(id) > cap) return\n 8 \t  return total(id, now)\n 9 \t}\n10 \t\n11 \tfunction total(id: string, now: number) {\n12 \t  return now - count(id)\n13 \t}\n\u2500\u2500 src/config.ts  (1-2 of 2) \u00b7 sha:4f49d457dfea\n 1 \texport const usageCap = 10\n 2 \texport const retries = 3\n\u2500\u2500 showed 2 targets \u00b7 15 lines \u00b7 ~77 tokens\n",
+  "code": 0,
+  "next": "A"
+ },
+ "A|lets find usageCap": {
+  "out": "\u2500\u2500 src/config.ts\n1:\texport const \u00abusageCap\u00bb = 10\n\u2500\u2500 src/usage.ts\n1:\timport { \u00abusageCap\u00bb } from './config'\n\u2500\u2500 2 hits in 2 files \u00b7 searched 2 files \u00b7 ~17 tokens\n",
+  "code": 0,
+  "next": "A"
+ },
+ "A|lets find cap src": {
+  "out": "\u2500\u2500 src/usage.ts\n5:\t  const \u00abcap\u00bb = 10\n7:\t  if (count(id) > \u00abcap\u00bb) return\n\u2500\u2500 2 hits in 1 file \u00b7 searched 2 files \u00b7 ~13 tokens\n",
+  "code": 0,
+  "next": "A"
+ },
+ "A|lets edit src/usage.ts --old 'const cap = 10' --new 'const cap = 20'": {
+  "out": "\u2500\u2500 src/usage.ts \u00b7 1 replacement \u00b7 line 5 \u00b7 exact\n3 \texport function usage(id: string) {\n4 \t  const now = Date.now()\n5~\t  const cap = 20\n6 \t  if (!id) return\n7 \t  if (count(id) > cap) return\n\u2500\u2500 check: structure ok \u00b7 sha:6fae9e67700e\u219206aa54dff860 \u00b7 ~45 tokens\n",
+  "code": 0,
+  "next": "B"
+ },
+ "A|lets edit src/usage.ts --old 'const cap = 15' --new 'const cap = 20'": {
+  "out": "--old not found in src/usage.ts\n  nearest: line 5\t  const cap = 10\nERROR_CODE=not_found\n",
+  "code": 1,
+  "next": "A"
+ },
+ "A|lets edit src/usage.ts --old 'return total(id, now)' --new 'return total(id, now))'": {
+  "out": "\u2500\u2500 src/usage.ts \u00b7 1 replacement \u00b7 line 8 \u00b7 REVERTED\n 6 \t  if (!id) return\n 7 \t  if (count(id) > cap) return\n 8~\t  return total(id, now))          \u2190 parse error\n 9 \t}\n10 \t\n\u2500\u2500 check: failed \u2192 reverted \u00b7 file unchanged \u00b7 sha:6fae9e67700e \u00b7 ~40 tokens\nstructure check failed for src/usage.ts: failed\nERROR_CODE=check_failed\n",
+  "code": 3,
+  "next": "A"
+ },
+ "A|lets edit src/usage.ts --old 'return' --new 'return undefined'": {
+  "out": "src/usage.ts is ambiguous (4 candidates)\n  src/usage.ts:6\t  if (!id) return\n  src/usage.ts:7\t  if (count(id) > cap) return\n  src/usage.ts:8\t  return total(id, now)\n  src/usage.ts:12\t  return now - count(id)\nERROR_CODE=ambiguous\n",
+  "code": 2,
+  "next": "A"
+ },
+ "B|lets show src/usage.ts#usage": {
+  "out": "\u2500\u2500 src/usage.ts#usage  (3-9 of 13 \u00b7 via tree-sitter) \u00b7 sha:06aa54dff860\n3 \texport function usage(id: string) {\n4 \t  const now = Date.now()\n5 \t  const cap = 20\n6 \t  if (!id) return\n7 \t  if (count(id) > cap) return\n8 \t  return total(id, now)\n9 \t}\n\u2500\u2500 showed 1 target \u00b7 7 lines \u00b7 ~38 tokens\n",
+  "code": 0,
+  "next": "B"
+ },
+ "B|lets show src/usage.ts src/config.ts": {
+  "out": "\u2500\u2500 src/usage.ts  (1-13 of 13) \u00b7 sha:06aa54dff860\n 1 \timport { usageCap } from './config'\n 2 \t\n 3 \texport function usage(id: string) {\n 4 \t  const now = Date.now()\n 5 \t  const cap = 20\n 6 \t  if (!id) return\n 7 \t  if (count(id) > cap) return\n 8 \t  return total(id, now)\n 9 \t}\n10 \t\n11 \tfunction total(id: string, now: number) {\n12 \t  return now - count(id)\n13 \t}\n\u2500\u2500 src/config.ts  (1-2 of 2) \u00b7 sha:4f49d457dfea\n 1 \texport const usageCap = 10\n 2 \texport const retries = 3\n\u2500\u2500 showed 2 targets \u00b7 15 lines \u00b7 ~77 tokens\n",
+  "code": 0,
+  "next": "B"
+ },
+ "B|lets find usageCap": {
+  "out": "\u2500\u2500 src/config.ts\n1:\texport const \u00abusageCap\u00bb = 10\n\u2500\u2500 src/usage.ts\n1:\timport { \u00abusageCap\u00bb } from './config'\n\u2500\u2500 2 hits in 2 files \u00b7 searched 2 files \u00b7 ~17 tokens\n",
+  "code": 0,
+  "next": "B"
+ },
+ "B|lets find cap src": {
+  "out": "\u2500\u2500 src/usage.ts\n5:\t  const \u00abcap\u00bb = 20\n7:\t  if (count(id) > \u00abcap\u00bb) return\n\u2500\u2500 2 hits in 1 file \u00b7 searched 2 files \u00b7 ~13 tokens\n",
+  "code": 0,
+  "next": "B"
+ },
+ "B|lets edit src/usage.ts --old 'const cap = 10' --new 'const cap = 20'": {
+  "out": "--old not found in src/usage.ts\n  nearest: line 5\t  const cap = 20\nERROR_CODE=not_found\n",
+  "code": 1,
+  "next": "B"
+ },
+ "B|lets edit src/usage.ts --old 'const cap = 15' --new 'const cap = 20'": {
+  "out": "--old not found in src/usage.ts\n  nearest: line 5\t  const cap = 20\nERROR_CODE=not_found\n",
+  "code": 1,
+  "next": "B"
+ },
+ "B|lets edit src/usage.ts --old 'return total(id, now)' --new 'return total(id, now))'": {
+  "out": "\u2500\u2500 src/usage.ts \u00b7 1 replacement \u00b7 line 8 \u00b7 REVERTED\n 6 \t  if (!id) return\n 7 \t  if (count(id) > cap) return\n 8~\t  return total(id, now))          \u2190 parse error\n 9 \t}\n10 \t\n\u2500\u2500 check: failed \u2192 reverted \u00b7 file unchanged \u00b7 sha:06aa54dff860 \u00b7 ~40 tokens\nstructure check failed for src/usage.ts: failed\nERROR_CODE=check_failed\n",
+  "code": 3,
+  "next": "B"
+ },
+ "B|lets edit src/usage.ts --old 'return' --new 'return undefined'": {
+  "out": "src/usage.ts is ambiguous (4 candidates)\n  src/usage.ts:6\t  if (!id) return\n  src/usage.ts:7\t  if (count(id) > cap) return\n  src/usage.ts:8\t  return total(id, now)\n  src/usage.ts:12\t  return now - count(id)\nERROR_CODE=ambiguous\n",
+  "code": 2,
+  "next": "B"
+ }
+}
