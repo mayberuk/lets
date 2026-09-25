@@ -99,6 +99,15 @@ change:
 | Sonnet 5 | 9 vs 6 | −16% (64.6 vs 76.5) | −11% (403 s vs 451 s) | 99.1% vs 97.8% (339/342 vs 223/228) | −0.5% ($1.349 vs $1.356), cost-neutral |
 | Opus 5.5 | 6 vs 6 | −16% | −12% | 100% both arms | +8% mean ($1.003 vs $0.929; +4% median) |
 
+A second trial ran a five-turn task on a pinned kubernetes/kubernetes checkout with Opus 5.5,
+16 sessions of 0.0.2 against 8 without `lets`, interleaved in one batch. 0.0.2 cost 10% more
+per session ($0.504 vs $0.457; 95% interval +5% to +16%), made one fewer request (19.5 vs 20.5)
+and passed the same checks (16.1 vs 15.9 of 18); the wall-time difference (143 s vs 149 s) is
+inside the noise. 0.0.1 cost 15% more than no `lets` on the same task. The extra cost is
+context: numbered output, footers and edit echoes leave the session about 4,400 tokens longer,
+and on Opus each cached token costs more than the request it saves. So on this task `lets`
+saves requests, not money.
+
 Local latency, median p50 across three `just bench-gate` wall-clock passes against the generated
 fixture corpus, on an 8-core/16-thread AMD Ryzen 7 5700X3D (kernel 6.17.4-76061704-generic):
 `guide` 0.8 ms, `hook classify` 1.1 ms (1.17× `bash -n`), `show` on 200 lines 0.9 ms (1.64×
