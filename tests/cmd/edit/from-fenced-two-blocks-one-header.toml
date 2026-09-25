@@ -1,0 +1,4 @@
+# Two `<<<<<<< old` … `>>>>>>>` blocks under one `@@ a.ts` header: 16 of 16 paid-trial sessions
+# wrote a batch shaped like this on their first try, and it used to fail.
+bin.name = "lets"
+args = ["edit", "--from", "-"]

@@ -1,4 +1,4 @@
-line 1: "new" must be a string
+expected a JSON object (`{`) or a `@@ <path>` block
 
 lets edit --from - <<'LETS'
 @@ a.ts

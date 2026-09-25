@@ -1,0 +1,7 @@
+# A block that never sees a `@@` header: the file it would touch is unknown, so this is a usage
+# error, not a match failure.
+bin.name = "lets"
+args = ["edit", "--from", "-"]
+
+[status]
+code = 64

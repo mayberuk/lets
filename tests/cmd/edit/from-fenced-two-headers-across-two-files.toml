@@ -1,0 +1,4 @@
+# A header with two blocks, then a second header with one, across two files: each header still
+# covers only the blocks under it.
+bin.name = "lets"
+args = ["edit", "--from", "-"]

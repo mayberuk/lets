@@ -114,6 +114,11 @@ system prompt any more.
 > ======= new
 > cap = 20
 > >>>>>>>
+> <<<<<<< old
+> floor = 1
+> ======= new
+> floor = 2
+> >>>>>>>
 > LETS
 > ```
 >
@@ -178,6 +183,11 @@ Discovery) arrives instead as SubagentStart `additionalContext`:
 > cap = 10
 > ======= new
 > cap = 20
+> >>>>>>>
+> <<<<<<< old
+> floor = 1
+> ======= new
+> floor = 2
 > >>>>>>>
 > LETS
 > ```

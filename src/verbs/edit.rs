@@ -1729,6 +1729,11 @@ cap = 10\n\
 ======= new\n\
 cap = 20\n\
 >>>>>>>\n\
+<<<<<<< old\n\
+floor = 1\n\
+======= new\n\
+floor = 2\n\
+>>>>>>>\n\
 LETS";
 
 fn stdin_text(flag: &str) -> Result<String, Error> {
@@ -2096,17 +2101,22 @@ enum Section {
 /// The `@@` line's number, its file, and its insert anchor when the block inserts.
 type FenceHeader = (usize, String, Option<(AnchorSide, String)>);
 
+/// A header stays active across every block that follows it until the next `@@` line or the end
+/// of the input, so `blocks_under_header` (not `header` itself) is what a completed batch checks.
 fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
     let mut specs = Vec::new();
     let mut errors = Vec::new();
     let mut header: Option<FenceHeader> = None;
+    let mut blocks_under_header: usize = 0;
     let mut old: Option<Vec<&str>> = None;
     let mut new: Option<Vec<&str>> = None;
     let mut section = Section::Outside;
     for (index, line) in text.lines().enumerate() {
         let number = index + 1;
         if let Some(rest) = line.strip_prefix("@@ ") {
-            if let Some((header_line, ..)) = &header {
+            if let Some((header_line, ..)) = &header
+                && (section != Section::Outside || blocks_under_header == 0)
+            {
                 errors.push(usage(format!(
                     "line {header_line}: unterminated `@@` block \u{b7} a new one opens at line \
                      {number}"
@@ -2114,6 +2124,7 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
             }
             let (file, anchor) = fence_header(rest);
             header = Some((number, file, anchor));
+            blocks_under_header = 0;
             old = None;
             new = None;
             section = Section::Outside;
@@ -2130,9 +2141,21 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
             new = Some(Vec::new());
             section = Section::New;
         } else if line.trim_end() == ">>>>>>>" {
-            match header.take() {
+            match &header {
                 Some((header_line, file, anchor)) => {
-                    match fenced_spec(header_line, &file, anchor, old.take(), new.take()) {
+                    blocks_under_header += 1;
+                    // Two inserts under one anchor race for "right after it": the second landed
+                    // adjoins the anchor too, ahead of the first, not after it as written.
+                    if blocks_under_header > 1
+                        && let Some((side, at)) = anchor
+                    {
+                        errors.push(usage(format!(
+                            "line {number}: `@@ {file} insert-{side} {at}` already opened one \
+                             insert block \u{b7} a second block under the same header is \
+                             ambiguous \u{b7} repeat `@@ {file} insert-{side} {at}` before it"
+                        )));
+                    }
+                    match fenced_spec(*header_line, file, anchor.clone(), old.take(), new.take()) {
                         Ok(spec) => specs.push(spec),
                         Err(error) => errors.push(error),
                     }
@@ -2155,7 +2178,9 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
             }
         }
     }
-    if let Some((header_line, ..)) = header {
+    if let Some((header_line, ..)) = &header
+        && (section != Section::Outside || blocks_under_header == 0)
+    {
         errors.push(usage(format!(
             "line {header_line}: unterminated `@@` block"
         )));
@@ -3383,6 +3408,68 @@ mod tests {
             error.to_string().contains("unterminated `@@` block"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn one_header_covers_three_blocks_under_it() {
+        let specs = parse_batch(
+            "@@ a.ts\n\
+             <<<<<<< old\n\
+             one\n\
+             ======= new\n\
+             1\n\
+             >>>>>>>\n\
+             <<<<<<< old\n\
+             two\n\
+             ======= new\n\
+             2\n\
+             >>>>>>>\n\
+             <<<<<<< old\n\
+             three\n\
+             ======= new\n\
+             3\n\
+             >>>>>>>\n",
+        )
+        .expect("three blocks under one header parse");
+
+        assert_eq!(specs.len(), 3);
+        assert!(specs.iter().all(|spec| spec.file == Path::new("a.ts")));
+    }
+
+    #[test]
+    fn blank_lines_between_a_header_and_its_first_block_are_ignored() {
+        let specs = parse_batch(
+            "@@ a.ts\n\
+             \n\
+             \n\
+             <<<<<<< old\n\
+             cap = 10\n\
+             ======= new\n\
+             cap = 20\n\
+             >>>>>>>\n",
+        )
+        .expect("blank lines before the first block parse");
+
+        assert_eq!(specs.len(), 1);
+    }
+
+    // A second insert-after under one header would race the first for "right after the anchor":
+    // whichever the matcher runs second lands closer to it, reversing the written order.
+    #[test]
+    fn a_second_block_under_one_insert_header_is_refused_as_ambiguous() {
+        let error = parse_batch(
+            "@@ c.ts insert-after @'^import'\n\
+             ======= new\n\
+             import a\n\
+             >>>>>>>\n\
+             ======= new\n\
+             import b\n\
+             >>>>>>>\n",
+        )
+        .unwrap_err();
+
+        assert_eq!(error.slug(), "usage");
+        assert!(error.to_string().contains("ambiguous"), "{error}");
     }
 
     #[test]

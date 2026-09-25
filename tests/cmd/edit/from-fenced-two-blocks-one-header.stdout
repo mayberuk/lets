@@ -1,0 +1,7 @@
+── a.ts · 1 replacement · line 1 · exact
+1~	const cap = 20
+2 	const floor = 1
+── a.ts · 1 replacement · line 2 · exact
+1 	const cap = 20
+2~	const floor = 2
+── 1 file · 2 edits · all applied · checks: structure ok ×2

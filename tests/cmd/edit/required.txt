@@ -163,3 +163,10 @@ toml-insert-after-before-comment.out
 batch-truncated-spans-name-their-files.toml
 batch-truncated-spans-name-their-files.out
 from-batch-malformed-shows-a-runnable-example.toml
+from-fenced-two-blocks-one-header.toml
+from-fenced-two-blocks-one-header.out
+from-fenced-second-block-not-found-reverts-both.toml
+from-fenced-second-block-not-found-reverts-both.out
+from-fenced-two-headers-across-two-files.toml
+from-fenced-two-headers-across-two-files.out
+from-fenced-block-with-no-header.toml

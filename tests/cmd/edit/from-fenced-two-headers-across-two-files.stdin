@@ -1,0 +1,17 @@
+@@ a.ts
+<<<<<<< old
+const cap = 10
+======= new
+const cap = 20
+>>>>>>>
+<<<<<<< old
+const floor = 1
+======= new
+const floor = 2
+>>>>>>>
+@@ b.ts
+<<<<<<< old
+const top = 9
+======= new
+const top = 90
+>>>>>>>

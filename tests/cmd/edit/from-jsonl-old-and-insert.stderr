@@ -7,5 +7,10 @@ cap = 10
 ======= new
 cap = 20
 >>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
+>>>>>>>
 LETS
 ERROR_CODE=usage

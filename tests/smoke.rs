@@ -209,6 +209,11 @@ fn agents_md_quotes_its_own_discovery_paragraph_verbatim() {
 > ======= new
 > cap = 20
 > >>>>>>>
+> <<<<<<< old
+> floor = 1
+> ======= new
+> floor = 2
+> >>>>>>>
 > LETS
 > ```
 >

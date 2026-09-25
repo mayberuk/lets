@@ -1,0 +1,7 @@
+# The first block under the header would match; the second's `old` does not. Batch semantics are
+# all-or-nothing, so the file must come back byte-identical, not half edited.
+bin.name = "lets"
+args = ["edit", "--from", "-"]
+
+[status]
+code = 1

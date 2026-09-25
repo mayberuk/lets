@@ -520,6 +520,39 @@ cap = 10
 ======= new
 cap = 20
 >>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
+>>>>>>>
+LETS
+ERROR_CODE=usage
+
+```
+
+```console
+$ lets edit --from - <<'EOF'
+<<<<<<< old
+const cap = 10
+======= new
+const cap = 20
+>>>>>>>
+EOF
+? 64
+expected a JSON object (`{`) or a `@@ <path>` block
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
+>>>>>>>
 LETS
 ERROR_CODE=usage
 
@@ -542,8 +575,91 @@ cap = 10
 ======= new
 cap = 20
 >>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
+>>>>>>>
 LETS
 ERROR_CODE=usage
+
+```
+
+```console
+$ lets edit --from - <<'EOF'
+@@ a.ts
+<<<<<<< old
+const cap = 10
+======= new
+const cap = 20
+>>>>>>>
+<<<<<<< old
+const floor = 1
+======= new
+const floor = 2
+>>>>>>>
+EOF
+? 1
+── 0 of 2 applied · nothing written · fix a.ts and re-run
+--old not found in a.ts
+  nearest: line 1	const cap = 20
+ERROR_CODE=not_found
+
+```
+
+```console
+$ lets edit --from - <<'EOF'
+@@ a.ts
+<<<<<<< old
+const cap = 10
+======= new
+const cap = 20
+>>>>>>>
+<<<<<<< old
+const floor = 1
+======= new
+const floor = 2
+>>>>>>>
+EOF
+── a.ts · 1 replacement · line 1 · exact
+1~	const cap = 20
+2 	const floor = 1
+── a.ts · 1 replacement · line 2 · exact
+1 	const cap = 20
+2~	const floor = 2
+── 1 file · 2 edits · all applied · checks: structure ok ×2
+
+```
+
+```console
+$ lets edit --from - <<'EOF'
+@@ a.ts
+<<<<<<< old
+const cap = 10
+======= new
+const cap = 20
+>>>>>>>
+<<<<<<< old
+const floor = 1
+======= new
+const floor = 2
+>>>>>>>
+@@ b.ts
+<<<<<<< old
+const top = 9
+======= new
+const top = 90
+>>>>>>>
+EOF
+── a.ts · 1 replacement · line 1 · exact
+1~	const cap = 20
+2 	const floor = 1
+── a.ts · 1 replacement · line 2 · exact
+1 	const cap = 20
+2~	const floor = 2
+── b.ts · 1 replacement · line 1 · exact
+1~	const top = 90
+── 2 files · 3 edits · all applied · checks: structure ok ×3
 
 ```
 
@@ -561,6 +677,11 @@ lets edit --from - <<'LETS'
 cap = 10
 ======= new
 cap = 20
+>>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
 >>>>>>>
 LETS
 ERROR_CODE=usage
@@ -581,6 +702,11 @@ cap = 10
 ======= new
 cap = 20
 >>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
+>>>>>>>
 LETS
 ERROR_CODE=usage
 
@@ -599,6 +725,11 @@ lets edit --from - <<'LETS'
 cap = 10
 ======= new
 cap = 20
+>>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
 >>>>>>>
 LETS
 ERROR_CODE=usage
