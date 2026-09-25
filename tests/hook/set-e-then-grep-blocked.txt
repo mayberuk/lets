@@ -1,0 +1,9 @@
+COMMAND
+set -e; grep -n 'leader' pkg/x/metrics.go
+===END===
+VERDICT block
+REASON lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: set -e; lets find -s 'leader' pkg/x/metrics.go
+===END===
+COMPARE search

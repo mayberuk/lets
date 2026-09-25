@@ -1,0 +1,9 @@
+COMMAND
+grep -n Bar src/c.ts
+===END===
+VERDICT rewrite
+REASON lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: lets find 'Bar' src/c.ts
+===END===
+COMPARE search

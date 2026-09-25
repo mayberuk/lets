@@ -1,0 +1,9 @@
+COMMAND
+rg foo src/c.ts; rg foo src/e.ts
+===END===
+VERDICT rewrite
+REASON `rg foo src/c.ts` ran as `lets find -s 'foo' src/c.ts`; `rg foo src/e.ts` ran as `lets find -s 'foo' src/e.ts`; lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: lets find -s 'foo' src/c.ts; lets find -s 'foo' src/e.ts
+===END===
+COMPARE search

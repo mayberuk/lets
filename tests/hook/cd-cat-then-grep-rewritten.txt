@@ -1,0 +1,9 @@
+COMMAND
+cd pkg/x && cat metrics.go && grep -n 'foo' metrics.go
+===END===
+VERDICT rewrite
+REASON `cat metrics.go` ran as `lets show metrics.go --all`; `grep -n 'foo' metrics.go` ran as `lets find -s 'foo' metrics.go`; the rest ran as written; lets show reads several files and ranges in one call; lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: cd pkg/x && lets show metrics.go --all && lets find -s 'foo' metrics.go
+===END===
+COMPARE search

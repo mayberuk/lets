@@ -343,11 +343,11 @@ fn codex_still_denies(tree: &Sandbox, command: &str) -> Vec<String> {
         Ok(reason)
             if reason
                 .lines()
-                .any(|line| line.starts_with("run: ") && line.contains("lets show ")) =>
+                .any(|line| line.starts_with("run: ") && line.contains("lets ")) =>
         {
             Vec::new()
         },
-        Ok(reason) => vec![format!("a deny with no `lets show` run line:\n{reason}")],
+        Ok(reason) => vec![format!("a deny with no `lets` run line:\n{reason}")],
         Err(failure) => vec![failure],
     }
 }
@@ -738,9 +738,9 @@ const SHOW_A: &str = "COMMAND\ncat src/a.ts\n===END===\nVERDICT rewrite\nREASON 
                       several files and ranges in one call.\nREPLACEMENT\nrun: lets show \
                       src/a.ts --all\n===END===\nCOMPARE read\n";
 
-const FIND_FOO: &str = "COMMAND\nrg foo src/e.ts\n===END===\nVERDICT block\nREASON lets find \
-                        returns every hit numbered and grouped by file.\nREPLACEMENT\nrun: lets \
-                        find -s 'foo' src/e.ts\n===END===\nCOMPARE search\n";
+const FIND_FOO: &str = "COMMAND\nrg foo src/e.ts && ls\n===END===\nVERDICT block\nREASON lets \
+                        find returns every hit numbered and grouped by file.\nREPLACEMENT\nrun: \
+                        lets find -s 'foo' src/e.ts && ls\n===END===\nCOMPARE search\n";
 
 /// A stale xfail marker would hide the day a case starts passing.
 #[test]
@@ -1021,18 +1021,18 @@ const PATTERN_ALPHABET: [char; 17] = [
 ];
 
 #[test]
-fn a_blocked_plain_grep_finds_exactly_what_grep_finds() {
-    blocked_grep_agrees_with_grep("");
+fn a_replaced_plain_grep_finds_exactly_what_grep_finds() {
+    replaced_grep_agrees_with_grep("");
 }
 
 #[test]
-fn a_blocked_extended_grep_finds_exactly_what_grep_finds() {
-    blocked_grep_agrees_with_grep("-E ");
+fn a_replaced_extended_grep_finds_exactly_what_grep_finds() {
+    replaced_grep_agrees_with_grep("-E ");
 }
 
 /// grep is the oracle: a pattern it rejects (exit 2) must be allowed, and one it accepts must
-/// block with a search hitting the same lines, or be allowed.
-fn blocked_grep_agrees_with_grep(dialect: &str) {
+/// be rewritten or blocked with a search hitting the same lines, or be allowed.
+fn replaced_grep_agrees_with_grep(dialect: &str) {
     let tree = hook_tree();
     let patterns =
         proptest::collection::vec(proptest::sample::select(&PATTERN_ALPHABET[..]), 1..=6)
@@ -1055,16 +1055,16 @@ fn blocked_grep_agrees_with_grep(dialect: &str) {
 /// `\|` and `\?` match nothing as a hook literal, but `find`'s grep-style fallback reads them
 /// as grep operators.
 #[test]
-fn a_blocked_grep_whose_literal_matches_nothing_finds_nothing_too() {
+fn a_replaced_grep_whose_literal_matches_nothing_finds_nothing_too() {
     let tree = hook_tree();
     for (dialect, pattern) in [("", "||2"), ("-E ", r"2\?a")] {
         let command = format!("grep {dialect}'{pattern}' src/grep.txt");
         assert!(
             matches!(
                 hook::classify(&event(tree.path(), &command)),
-                Verdict::Block { .. }
+                Verdict::Rewrite { .. }
             ),
-            "{command} is blocked, so its replacement is what runs"
+            "{command} is rewritten, so its replacement is what runs"
         );
         if let Err(failure) = agrees_with_grep(&tree, dialect, pattern) {
             panic!("{failure}");
@@ -1074,23 +1074,27 @@ fn a_blocked_grep_whose_literal_matches_nothing_finds_nothing_too() {
 
 fn agrees_with_grep(tree: &Sandbox, dialect: &str, pattern: &str) -> Result<(), TestCaseError> {
     let command = format!("grep {dialect}'{pattern}' src/grep.txt");
-    let Verdict::Block { reason } = hook::classify(&event(tree.path(), &command)) else {
-        return Ok(());
-    };
-    let runs: Vec<&str> = reason
-        .lines()
-        .filter_map(|line| line.strip_prefix("run: "))
-        .collect();
-    let [replacement] = runs.as_slice() else {
-        return Err(TestCaseError::fail(format!(
-            "{command}: expected one run line\n{reason}"
-        )));
+    let replacement = match hook::classify(&event(tree.path(), &command)) {
+        Verdict::Allow => return Ok(()),
+        Verdict::Rewrite { command, .. } => command,
+        Verdict::Block { reason } => {
+            let runs: Vec<&str> = reason
+                .lines()
+                .filter_map(|line| line.strip_prefix("run: "))
+                .collect();
+            let [run] = runs.as_slice() else {
+                return Err(TestCaseError::fail(format!(
+                    "{command}: expected one run line\n{reason}"
+                )));
+            };
+            (*run).to_owned()
+        },
     };
     let grep = tree.bash(&format!("grep -Hn {dialect}'{pattern}' src/grep.txt"));
-    let found = tree.bash(replacement);
+    let found = tree.bash(&replacement);
     prop_assert!(
         matches!(grep.code, 0 | 1),
-        "{command} blocked, but grep rejects the pattern (exit {}): {}",
+        "{command} replaced, but grep rejects the pattern (exit {}): {}",
         grep.code,
         grep.err
     );

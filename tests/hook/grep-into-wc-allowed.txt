@@ -1,0 +1,4 @@
+COMMAND
+grep -n 'leader' pkg/x/metrics.go | wc -l
+===END===
+VERDICT allow

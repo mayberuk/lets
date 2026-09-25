@@ -169,20 +169,21 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
     }
     // Codex keeps today's lines unless they would drop a statement.
     let drops = segments.iter().any(|segment| segment.findings.is_empty());
-    let replacements = (segments.len() > 1 && (claude_code.is_some() || drops))
-        .then(|| replacements(&segments, &findings, dirs))
+    let judged = operators.as_deref().filter(|_| claude_code.is_some());
+    let unread = unread_statuses(&segments, judged, &findings, root, command);
+    let replacements = (claude_code.is_some() || segments.len() > 1 && drops)
+        .then(|| replacements(&segments, &findings, dirs, &unread))
         .flatten();
-    if claude_code.is_some()
-        && operators.is_some()
+    if judged.is_some()
         && let Some(verdict) = replacements
             .as_deref()
-            .and_then(|replacements| splice_rewrite(command, replacements))
+            .and_then(|replacements| splice_rewrite(command, replacements, segments.len(), &notes))
     {
         return verdict;
     }
     // A `run:` line is one line.
     let spliced = replacements
-        .filter(|_| !command.contains('\n'))
+        .filter(|_| segments.len() > 1 && !command.contains('\n'))
         .and_then(|replacements| splice(command, &replacements));
     match reason(&findings, &notes, &prefix, spliced.as_deref()) {
         Some(reason) => Verdict::Block { reason },
@@ -205,9 +206,54 @@ fn notes(cd: Option<String>, findings: &[Finding]) -> (Vec<String>, String) {
             ..
         })
     }) {
-        notes.push("grep pattern translated to lets regex".to_owned());
+        notes.push(TRANSLATED_NOTE.to_owned());
     }
     (notes, prefix)
+}
+
+const TRANSLATED_NOTE: &str = "grep pattern translated to lets regex";
+
+/// Per statement, true when no operator after it and no `set -e` or `ERR` trap reads its exit
+/// status. `lets find` exits 1 over its hit cap and when every hit is in a file it skips, where
+/// grep exits 0, so a search is rewritten only where that difference changes nothing that runs.
+/// `operators` is `None` when nothing may be rewritten: for Codex, or across a join a splice
+/// cannot keep.
+fn unread_statuses(
+    segments: &[Segment],
+    operators: Option<&[&str]>,
+    findings: &[Finding],
+    root: Node,
+    src: &str,
+) -> Vec<bool> {
+    let searches = findings
+        .iter()
+        .any(|finding| matches!(finding, Finding::Find { .. }));
+    let Some(operators) = operators.filter(|_| searches && !acts_on_status(root, src)) else {
+        return vec![false; segments.len()];
+    };
+    (0..segments.len())
+        .map(|at| {
+            operators
+                .get(at)
+                .is_none_or(|operator| !matches!(*operator, "&&" | "||"))
+        })
+        .collect()
+}
+
+/// `set` and `trap` anywhere, even inside a body the walk never classifies: `{ set -e; }` still
+/// binds the statements after it.
+fn acts_on_status(node: Node, src: &str) -> bool {
+    if node.kind() == "command"
+        && matches!(
+            node.child_by_field_name("name").and_then(|n| text(n, src)),
+            Some("set" | "trap")
+        )
+    {
+        return true;
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(|child| acts_on_status(child, src))
 }
 
 /// A top-level statement: its bytes in the command, and the findings classifying it added.
@@ -218,22 +264,25 @@ struct Segment {
 }
 
 /// The `lets` command standing in for one statement; `exact` when it is that statement's rewrite,
-/// printing every line the statement would.
+/// printing every line or hit the statement would. `clause` and `translated` describe an exact one.
 struct Replacement {
     span: Range<usize>,
     command: String,
     exact: bool,
+    clause: &'static str,
+    translated: bool,
 }
 
 /// One per statement with findings, or `None` when one needs more than a one-line command: a
-/// heredoc write, whose `lets write` takes the heredoc on stdin.
+/// heredoc write, whose `lets write` takes the heredoc on stdin. `unread` is `unread_statuses`.
 fn replacements(
     segments: &[Segment],
     findings: &[Finding],
     dirs: Dirs,
+    unread: &[bool],
 ) -> Option<Vec<Replacement>> {
     let mut replacements = Vec::new();
-    for segment in segments {
+    for (at, segment) in segments.iter().enumerate() {
         let found = findings.get(segment.findings.clone())?;
         if found.is_empty() {
             continue;
@@ -244,48 +293,116 @@ fn replacements(
         {
             return None;
         }
-        let exact = if segment.replaced {
-            rewrite(found, "", dirs)
+        let (lines, _) = run_lines(found);
+        let [line] = <[String; 1]>::try_from(lines).ok()?;
+        let (command, exact, clause, translated) = if let [
+            Finding::Find {
+                operands,
+                translated,
+                ..
+            },
+        ] = found
+        {
+            let exact = segment.replaced
+                && unread.get(at).copied().unwrap_or(false)
+                && searches_in_tree(operands, dirs);
+            (line, exact, FIND_CLAUSE, *translated)
         } else {
-            None
-        };
-        let is_exact = exact.is_some();
-        let command = if let Some(command) = exact {
-            command
-        } else {
-            let (lines, _) = run_lines(found);
-            let [command] = <[String; 1]>::try_from(lines).ok()?;
-            command
+            match segment.replaced.then(|| rewrite(found, "", dirs)).flatten() {
+                Some(command) => (command, true, SHOW_CLAUSE, false),
+                None => (line, false, SHOW_CLAUSE, false),
+            }
         };
         replacements.push(Replacement {
             span: segment.span.clone(),
             command,
-            exact: is_exact,
+            exact,
+            clause,
+            translated,
         });
     }
     Some(replacements)
 }
 
-/// A rewrite only when every statement with findings is an exact read; the operators joining them
-/// must already have been checked.
-fn splice_rewrite(command: &str, replacements: &[Replacement]) -> Option<Verdict> {
+/// Every path a search names, or the directory it searches when it names none, is inside the tree
+/// and not a dotfile, key or credential, judged as `shows_every_line` judges a read's.
+fn searches_in_tree(operands: &[Word], dirs: Dirs) -> bool {
+    let Ok(real_root) = std::fs::canonicalize(dirs.root) else {
+        return false;
+    };
+    let inside = |path: &Path| {
+        std::fs::canonicalize(path).is_ok_and(|real| {
+            real.strip_prefix(&real_root)
+                .is_ok_and(|inside| !is_sensitive(inside))
+        })
+    };
+    if operands.is_empty() {
+        return inside(dirs.base);
+    }
+    operands
+        .iter()
+        .all(|operand| rewritable(operand, dirs) && inside(&dirs.base.join(&operand.text)))
+}
+
+/// A rewrite only when every statement with findings is exact; the operators joining them must
+/// already have been checked. A command that is one search alone reads as a one-read rewrite does.
+fn splice_rewrite(
+    command: &str,
+    replacements: &[Replacement],
+    statements: usize,
+    notes: &[String],
+) -> Option<Verdict> {
     if !replacements.iter().all(|replacement| replacement.exact) {
         return None;
     }
     let spliced = splice(command, replacements)?;
-    let mut summary = replacements
-        .iter()
-        .map(|replacement| {
-            let read = command.get(replacement.span.clone())?;
-            Some(format!("`{read}` ran as `{}`", replacement.command))
-        })
-        .collect::<Option<Vec<String>>>()?;
-    summary.push("the rest ran as written".to_owned());
-    summary.push(SHOW_CLAUSE.to_owned());
+    let mut clauses = Vec::new();
+    for replacement in replacements {
+        add_clause(&mut clauses, replacement.clause);
+    }
+    let mut summary = if replacements.len() == 1 && statements == 1 {
+        notes.to_vec()
+    } else {
+        let mut summary = replacements
+            .iter()
+            .map(|replacement| {
+                let read = command.get(replacement.span.clone())?;
+                Some(format!("`{read}` ran as `{}`", replacement.command))
+            })
+            .collect::<Option<Vec<String>>>()?;
+        if kept_more_than_operators(command, replacements) {
+            summary.push("the rest ran as written".to_owned());
+        }
+        if replacements
+            .iter()
+            .any(|replacement| replacement.translated)
+        {
+            summary.push(TRANSLATED_NOTE.to_owned());
+        }
+        summary
+    };
+    summary.extend(clauses.into_iter().map(str::to_owned));
     Some(Verdict::Rewrite {
         reason: format!("{}.\nran instead: {spliced}", summary.join("; ")),
         command: spliced,
     })
+}
+
+fn kept_more_than_operators(src: &str, replacements: &[Replacement]) -> bool {
+    let holds_a_statement = |gap: Option<&str>| {
+        gap.is_none_or(|gap| {
+            gap.chars()
+                .any(|c| !c.is_whitespace() && !matches!(c, ';' | '&' | '|'))
+        })
+    };
+    let mut at = 0;
+    for replacement in replacements {
+        if holds_a_statement(src.get(at..replacement.span.start)) {
+            return true;
+        }
+        at = replacement.span.end;
+    }
+    holds_a_statement(src.get(at..))
 }
 
 /// Every byte outside the replaced spans stays as written, operators and a leading `cd` included.
@@ -2116,8 +2233,8 @@ mod tests {
             ),
             ("sed -n '9,99p' src/a.ts; ls", "lets show src/a.ts:9-99; ls"),
             (
-                "cat src/a.ts; grep -n x src/b.ts",
-                "lets show src/a.ts --all; lets find -s 'x' src/b.ts",
+                "cat src/a.ts; grep -n x src/b.ts && ls",
+                "lets show src/a.ts --all; lets find -s 'x' src/b.ts && ls",
             ),
             (
                 "cat src/a.ts & git status",
@@ -2165,16 +2282,135 @@ mod tests {
     }
 
     #[test]
-    fn a_search_an_edit_or_a_write_stays_a_deny() {
-        assert_still_blocked("grep -rn cap src");
-        assert_still_blocked("rg cap src/a.ts");
+    fn an_edit_or_a_write_stays_a_deny() {
         assert_still_blocked("sed -i 's/a/b/g' src/a.ts");
         assert_still_blocked("cat > out.txt <<'EOF'\nx\nEOF");
     }
 
     #[test]
+    fn an_exact_search_whose_status_nothing_reads_is_rewritten_where_it_stands() {
+        assert_eq!(rewritten("grep -rn cap src"), "lets find -s 'cap' src");
+        assert_eq!(rewritten("rg cap src/a.ts"), "lets find -s 'cap' src/a.ts");
+        assert_eq!(rewritten("rg -l cap"), "lets find -s --files 'cap'");
+        assert_eq!(
+            rewritten("grep -n x src/b.ts 2>/dev/null"),
+            "lets find -s 'x' src/b.ts"
+        );
+        assert_eq!(
+            rewritten("cat src/a.ts && rg cap src/b.ts"),
+            "lets show src/a.ts --all && lets find -s 'cap' src/b.ts"
+        );
+        assert_eq!(
+            rewritten("git status; grep -n x src/b.ts\nls"),
+            "git status; lets find -s 'x' src/b.ts\nls"
+        );
+        assert_eq!(
+            rewritten("cd src && cat a.ts && grep -n x b.ts"),
+            "cd src && lets show a.ts --all && lets find -s 'x' b.ts"
+        );
+    }
+
+    #[test]
+    fn a_rewritten_search_says_what_ran_and_names_only_a_rest_that_exists() {
+        let Verdict::Rewrite { reason, .. } = claude_code(r"grep 'a\|x' src/grep.txt") else {
+            panic!("a lone exact search is a rewrite");
+        };
+        assert_eq!(
+            reason,
+            "grep pattern translated to lets regex; lets find returns every hit numbered and \
+             grouped by file.\nran instead: lets find -s 'a|x' src/grep.txt"
+        );
+        let Verdict::Rewrite { reason, .. } = claude_code("rg x src/a.ts; rg x src/b.ts") else {
+            panic!("two exact searches are a rewrite");
+        };
+        assert_eq!(
+            reason,
+            "`rg x src/a.ts` ran as `lets find -s 'x' src/a.ts`; `rg x src/b.ts` ran as `lets find \
+             -s 'x' src/b.ts`; lets find returns every hit numbered and grouped by file.\nran \
+             instead: lets find -s 'x' src/a.ts; lets find -s 'x' src/b.ts"
+        );
+    }
+
+    /// `lets find` exits 1 over its cap where grep exits 0, so an operator or `set -e` reading
+    /// the search's status could run a different branch.
+    #[test]
+    fn a_search_whose_exit_status_decides_what_runs_stays_a_deny() {
+        for (command, run) in [
+            (
+                "grep -n x src/a.ts && ls",
+                "lets find -s 'x' src/a.ts && ls",
+            ),
+            ("rg x src/a.ts || ls", "lets find -s 'x' src/a.ts || ls"),
+            (
+                "cat src/a.ts && rg cap src/b.ts || ls",
+                "lets show src/a.ts --all && lets find -s 'cap' src/b.ts || ls",
+            ),
+            (
+                "set -e; grep -n x src/a.ts",
+                "set -e; lets find -s 'x' src/a.ts",
+            ),
+            (
+                "trap 'echo failed' ERR; grep -n x src/a.ts",
+                "trap 'echo failed' ERR; lets find -s 'x' src/a.ts",
+            ),
+            (
+                "{ set -e; }; grep -n x src/a.ts",
+                "{ set -e; }; lets find -s 'x' src/a.ts",
+            ),
+        ] {
+            let verdict = claude_code(command);
+            let Verdict::Block { reason } = verdict else {
+                panic!("{command:?} must stay a deny: {verdict:?}");
+            };
+            assert!(
+                reason.ends_with(&format!("\nrun: {run}")),
+                "{command:?}: {reason}"
+            );
+        }
+        assert_eq!(
+            rewritten("grep -n x src/a.ts; ls"),
+            "lets find -s 'x' src/a.ts; ls"
+        );
+    }
+
+    #[test]
+    fn a_search_of_a_dotfile_a_glob_or_a_path_leaving_the_tree_stays_a_deny() {
+        let tree = tree();
+        write(&tree, ".env", "x\n");
+        write(&tree, "config/.secrets/k.txt", "x\n");
+        let outside = TempDir::new().expect("a temp directory outside the tree");
+        write(&outside, "o.txt", "x\n");
+        std::os::unix::fs::symlink(outside.path(), tree.path().join("out"))
+            .expect("a symlink out of the tree");
+        for command in [
+            "grep -n x .env",
+            "grep -rn x config/.secrets",
+            "grep -rn x .git",
+            "grep -n x src/*.ts",
+            "grep -rn x out",
+            "cd config/.secrets && rg x",
+        ] {
+            let verdict = rewrite_in(&tree, command);
+            assert!(
+                matches!(verdict, Verdict::Block { .. }),
+                "{command:?} must stay a deny: {verdict:?}"
+            );
+        }
+        assert_eq!(
+            command_of(rewrite_in(&tree, "grep -rn x src")),
+            "lets find -s 'x' src"
+        );
+    }
+
+    #[test]
+    fn a_codex_search_stays_a_deny() {
+        assert!(blocked("grep -rn cap src").ends_with("\nrun: lets find -s 'cap' src"));
+        assert!(blocked("rg cap src/a.ts").ends_with("\nrun: lets find -s 'cap' src/a.ts"));
+    }
+
+    #[test]
     fn a_read_one_lets_show_cannot_reproduce_stays_a_deny() {
-        assert_still_blocked("cat src/a.ts && rg cap src/b.ts");
+        assert_still_blocked("cat src/a.ts && rg cap src/b.ts && ls");
         assert_still_blocked("head src/a.ts");
         assert_still_blocked("tail src/a.ts");
         assert_still_blocked("sed -n '/^func Target(/,/^}/p' src/sym.go");
@@ -2278,9 +2514,9 @@ mod tests {
             rewrite_in(&tree, "find private | xargs cat"),
             Verdict::Block { .. }
         ));
-        assert!(
-            reason_of(rewrite_in(&tree, "rg HELLO src/a.ts"))
-                .ends_with("run: lets find 'HELLO' src/a.ts")
+        assert_eq!(
+            command_of(rewrite_in(&tree, "rg HELLO src/a.ts")),
+            "lets find 'HELLO' src/a.ts"
         );
     }
 

@@ -192,8 +192,9 @@ mod tests {
         }
     }
 
-    /// A search stays a deny on Claude Code, so it carries the same reason on both harnesses.
-    const SEARCH: &str = "rg cap README.md";
+    /// `&&` reads the search's exit status, so it stays a deny on Claude Code and carries the same
+    /// reason on both harnesses.
+    const SEARCH: &str = "rg cap README.md && ls";
 
     #[test]
     fn a_claude_code_read_of_two_repo_files_rewrites_to_one_show_of_both() {
@@ -263,14 +264,39 @@ mod tests {
     }
 
     #[test]
-    fn a_read_that_needs_two_commands_stays_a_deny_on_claude_code() {
+    fn a_chain_whose_search_status_an_operator_reads_stays_a_deny_on_claude_code() {
         let repo = Repo::new();
-        let reason =
-            block_reason(repo.classify(&repo.event("Bash", "cat src/a.ts && rg cap src/b.ts")));
+        let reason = block_reason(
+            repo.classify(&repo.event("Bash", "cat src/a.ts && rg cap src/b.ts && ls")),
+        );
 
         assert!(
-            reason.ends_with("\nrun: lets show src/a.ts --all && lets find -s 'cap' src/b.ts"),
+            reason
+                .ends_with("\nrun: lets show src/a.ts --all && lets find -s 'cap' src/b.ts && ls"),
             "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_claude_code_search_is_rewritten_and_the_same_codex_search_denies() {
+        let repo = Repo::new();
+        let Verdict::Rewrite { command, reason } =
+            repo.classify(&repo.event("Bash", "rg cap README.md"))
+        else {
+            panic!("an exact search on Claude Code is a rewrite");
+        };
+        assert_eq!(command, "lets find -s 'cap' README.md");
+        assert_eq!(
+            reason,
+            "lets find returns every hit numbered and grouped by file.\nran instead: lets find -s \
+             'cap' README.md"
+        );
+
+        let reason = block_reason(repo.classify(&repo.codex_event("rg cap README.md")));
+        assert_eq!(
+            reason,
+            "lets find returns every hit numbered and grouped by file.\nrun: lets find -s 'cap' \
+             README.md\nthe command above replaces the original"
         );
     }
 
@@ -304,7 +330,7 @@ mod tests {
 
         assert_eq!(
             reason.lines().last(),
-            Some("run: lets find -s 'cap' README.md"),
+            Some("run: lets find -s 'cap' README.md && ls"),
             "{reason}"
         );
         assert!(!reason.contains("the command above"), "{reason}");
@@ -316,7 +342,7 @@ mod tests {
         let reason = block_reason(repo.classify(&repo.event("Bash", SEARCH)));
         let delivered = format!("{reason}. Command: {SEARCH}");
 
-        assert_ne!(run_line(&delivered), "lets find 'cap' README.md");
+        assert_ne!(run_line(&delivered), "lets find -s 'cap' README.md && ls");
     }
 
     #[test]

@@ -1,9 +1,0 @@
-COMMAND
-grep -i foo src/c.ts
-===END===
-VERDICT block
-REASON lets find returns every hit numbered and grouped by file.
-REPLACEMENT
-run: lets find -i 'foo' src/c.ts
-===END===
-COMPARE search

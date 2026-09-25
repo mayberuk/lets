@@ -1,9 +1,0 @@
-COMMAND
-rg foo src/c.ts; rg foo src/e.ts
-===END===
-VERDICT block
-REASON lets find returns every hit numbered and grouped by file.
-REPLACEMENT
-run: lets find -s 'foo' src/c.ts; lets find -s 'foo' src/e.ts
-===END===
-COMPARE search

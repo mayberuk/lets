@@ -1,0 +1,9 @@
+COMMAND
+grep -n "label={\`" src/grep.txt
+===END===
+VERDICT rewrite
+REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: lets find -s 'label=[{]`' src/grep.txt
+===END===
+COMPARE search

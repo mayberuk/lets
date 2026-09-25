@@ -1,0 +1,9 @@
+COMMAND
+grep -rn 'call(x)' src/
+===END===
+VERDICT rewrite
+REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: lets find -s 'call[(]x[)]' src/
+===END===
+COMPARE search

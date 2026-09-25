@@ -1,0 +1,4 @@
+COMMAND
+leaders=$(grep -n 'leader' pkg/x/metrics.go)
+===END===
+VERDICT allow

@@ -1,0 +1,9 @@
+COMMAND
+rg -w foo src
+===END===
+VERDICT rewrite
+REASON lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: lets find -s -w 'foo' src
+===END===
+COMPARE search

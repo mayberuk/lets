@@ -1,9 +1,0 @@
-COMMAND
-grep -n "^export \(async \)\?\(function\|const\)" src/grep.txt
-===END===
-VERDICT block
-REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
-REPLACEMENT
-run: lets find -s '^export (async )?(function|const)' src/grep.txt
-===END===
-COMPARE search
