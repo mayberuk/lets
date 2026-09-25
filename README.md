@@ -99,12 +99,21 @@ change:
 | Sonnet 5 | 9 vs 6 | −16% (64.6 vs 76.5) | −11% (403 s vs 451 s) | 99.1% vs 97.8% (339/342 vs 223/228) | −0.5% ($1.349 vs $1.356), cost-neutral |
 | Opus 5.5 | 6 vs 6 | −16% | −12% | 100% both arms | +8% mean ($1.003 vs $0.929; +4% median) |
 
-Local latency, p50 from `just bench-gate`'s wall-clock target against the generated fixture
-corpus: `guide` 1.1 ms, `hook classify` 1.2 ms (1.34× `bash -n`), `show` on 200 lines 1.2 ms,
-`find` on 2,000 files 8.8 ms (1.34× `rg`), `edit` plus a syntax check 2.7 ms, a 10-file batch edit
-24 ms, `transform` on a YAML file 3.8 ms. Measured once on the same private monorepo, outside the
-bench-gate harness: `show` at 2–4 ms, `find` at roughly 110 ms across the whole tree, and a
-symbol lookup plus an edit on its largest file (17.9k lines) at 116 ms and 183 ms.
+Local latency, median p50 across three `just bench-gate` wall-clock passes against the generated
+fixture corpus, on an 8-core/16-thread AMD Ryzen 7 5700X3D (kernel 6.17.4-76061704-generic):
+`guide` 0.8 ms, `hook classify` 1.1 ms (1.17× `bash -n`), `show` on 200 lines 0.9 ms (1.64×
+`cat`), `find` on 2,000 files 7.8 ms (1.14× `rg`), `edit` plus a syntax check 2.3 ms, a 10-file
+batch edit 23.0 ms, `transform` on a YAML file 3.2 ms. Measured once on the same private
+monorepo, outside the bench-gate harness: `show` at 2–4 ms, `find` at roughly 110 ms across the
+whole tree, and a symbol lookup plus an edit on its largest file (17.9k lines) at 116 ms and
+183 ms.
+
+0.0.1 → 0.0.2 on the same machine, interleaved runs of both binaries (one run of each per
+iteration, so a shared-machine load burst lands in every arm equally): `show` on a 200-line file
+1.45× faster, `show` on an 8 MiB file 4.10× faster (default window) and 2.86× faster (`--all`),
+`find` across the 2,000-file corpus 1.70× faster (1.04× `rg`), `find` on this repo's own root
+2.11× faster (1.20× `rg`), `hook classify` 1.29× faster, `guide` startup 1.42× faster, `edit`
+1.37× faster, `transform` 1.38× faster.
 
 Method, sample sizes and caveats: [`docs/benchmarks.md`](docs/benchmarks.md).
 

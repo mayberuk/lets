@@ -79,18 +79,20 @@ headline numbers above.
 ## Local latency
 
 `just bench-gate`'s wall-clock target spawns the built `lets` binary against `bash -n`, `cat` and
-`rg` on the generated fixture corpus under `tests/fixtures/` — never a real repository. A sample
-dev-box run, p50:
+`rg` on the generated fixture corpus under `tests/fixtures/` — never a real repository. Median
+p50 across three passes, 2026-09-24, on an 8-core/16-thread AMD Ryzen 7 5700X3D (kernel
+6.17.4-76061704-generic) — a shared machine with other builds and test runs going at the same
+time, 1-minute load 2–4 rather than idle:
 
 | workload | p50 | vs. reference |
 |---|---|---|
-| `guide` | 1.1 ms | — |
-| `hook classify`, 200-char command | 1.2 ms | 1.34× `bash -n` |
-| `show`, one file ≤ 200 lines | 1.2 ms | — |
-| `find`, literal, 2,000 files | 8.8 ms | 1.34× `rg` |
-| `edit`, one replacement + structural check | 2.7 ms | — |
-| `edit --from -`, 10 files | 24 ms | — |
-| `transform --set`, 500-line YAML | 3.8 ms | — |
+| `guide` | 0.8 ms | — |
+| `hook classify`, 200-char command | 1.1 ms | 1.17× `bash -n` |
+| `show`, one file ≤ 200 lines | 0.9 ms | 1.64× `cat` |
+| `find`, literal, 2,000 files | 7.8 ms | 1.14× `rg` |
+| `edit`, one replacement + structural check | 2.3 ms | — |
+| `edit --from -`, 10 files | 23.0 ms | — |
+| `transform --set`, 500-line YAML | 3.2 ms | — |
 
 Gate thresholds, the CI margin and the allocation baselines live in `bench/gates.rs`; that file
 carries the exact measurement each threshold was set from.
@@ -98,3 +100,38 @@ carries the exact measurement each threshold was set from.
 Measured once, outside the bench-gate harness, on the large-repo trial's 17.7k-file monorepo:
 `show` at 2–4 ms, `find` at roughly 110 ms across the whole tree, and a symbol lookup plus an edit
 on its largest file (17.9k lines) at 116 ms and 183 ms.
+
+## 0.0.1 → 0.0.2
+
+Same machine as above. `lets` 0.0.1 (tag `v0.0.1`) and 0.0.2 (commit `7e3dde4`) were each built as
+`cargo build --locked --profile dist --target x86_64-unknown-linux-musl` from their own `git
+worktree`, then run against the same generated fixture corpus and, for the repo-root row, a
+worktree checkout of this repo. Each row's arms — both `lets` versions and, where named, `rg`,
+`cat` or `bash -n` — were interleaved one run at a time (one run of arm 1, one of arm 2, one of
+arm 3, repeat), so a load burst from the other work sharing the machine lands in every arm's
+sample equally rather than biasing whichever arm happened to run during it; times come from a
+small Python harness (`subprocess.run`, no shell) rather than hyperfine, because hyperfine runs
+all of arm 1's samples before starting arm 2. 20 warmup runs plus 200 measured runs per arm; p50
+and p99 use the same integer-percentile formula as `benches/wall_clock.rs`. Load ranged 2.06–4.10
+across the run; every number below was taken while other processes shared the machine.
+
+| workload | 0.0.1 p50 | 0.0.2 p50 | reference p50 | 0.0.2 vs 0.0.1 | 0.0.2 vs reference |
+|---|---|---|---|---|---|
+| `show`, 199-line TypeScript | 1.415 ms | 0.977 ms | `cat` 0.592 ms | 1.45× faster | 1.65× `cat` |
+| `show`, 8 MiB file, default window | 16.650 ms | 4.065 ms | `cat` 1.097 ms | 4.10× faster | 3.71× `cat` |
+| `show`, 8 MiB file, `--all` | 102.070 ms | 35.674 ms | `cat` 1.423 ms | 2.86× faster | 25.07× `cat` |
+| `show path#symbol`, 1999-line TypeScript | 15.587 ms | 11.623 ms | — | 1.34× faster | — |
+| `find`, literal, whole corpus | 12.304 ms | 7.253 ms | `rg` 6.967 ms | 1.70× faster | 1.04× `rg` |
+| `find`, literal, this repo's root (3 hits, 2 files) | 22.242 ms | 10.516 ms | `rg` 8.755 ms | 2.11× faster | 1.20× `rg` |
+| `find`, repo root, 0.0.2 with expansion on | — | 16.510 ms | — | — | +57% p50 over no-expand |
+| `hook classify`, 200-byte command | 1.573 ms | 1.217 ms | `bash -n` 1.015 ms | 1.29× faster | 1.20× `bash -n` |
+| `guide` (startup) | 1.196 ms | 0.845 ms | — | 1.42× faster | — |
+| `--version` (startup) | 1.114 ms | 0.815 ms | — | 1.37× faster | — |
+| `edit` + structural check, 199 lines | 3.261 ms | 2.385 ms | — | 1.37× faster | — |
+| `transform --set`, 503-line YAML | 4.492 ms | 3.264 ms | — | 1.38× faster | — |
+
+0.0.1's `find` has no symbol-expansion feature at all, so its numbers above are directly
+comparable to 0.0.2's `find --no-expand`; the "expansion on" row measures 0.0.2 alone, against
+itself, to show what expansion costs. `show --all` on the 8 MiB file needed `--max-bytes
+16777216`: the default 64 KiB budget refuses `--all` on a file that size on both versions
+(exit 4, `over_budget`).

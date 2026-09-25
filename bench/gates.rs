@@ -1,4 +1,8 @@
 //! Every performance threshold, included via `#[path]` by `tests/startup.rs` and both benches.
+//!
+//! The `Gate` p50/p99 values below are each the median of three 200-run `bench-gate` passes
+//! taken 2026-09-24 on a shared 8-core/16-thread Ryzen 7 5700X3D (1-minute load 2–4, not idle),
+//! set at 2× that median, rounded up.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gate {
@@ -16,69 +20,72 @@ impl Gate {
     }
 }
 
-/// p50 1.06 ms, p99 1.25 ms over 200 runs; the gate is 2× that, rounded up.
+/// Median p50 0.77 ms, p99 1.41 ms.
 pub const GUIDE: Gate = Gate {
-    p50_ms: 3,
+    p50_ms: 2,
     p99_ms: 3,
 };
 
-/// p50 1.22 ms, p99 1.37 ms over 200 runs; the gate is 2× that, rounded up.
+/// Median p50 1.05 ms, p99 1.66 ms.
 pub const HOOK_CLASSIFY: Gate = Gate {
     p50_ms: 3,
-    p99_ms: 3,
+    p99_ms: 4,
 };
 
-/// p50 1.20 ms, p99 1.32 ms over 200 runs; the gate is 2× that, rounded up.
+/// Median p50 0.87 ms, p99 1.31 ms.
 pub const SHOW_SMALL: Gate = Gate {
-    p50_ms: 3,
+    p50_ms: 2,
     p99_ms: 3,
 };
 
-/// p50 13.78 ms, p99 14.40 ms over 200 runs; the gate is 2× that, rounded up.
+/// Median p50 11.39 ms, p99 12.26 ms.
 pub const SHOW_SYMBOL: Gate = Gate {
-    p50_ms: 28,
-    p99_ms: 29,
+    p50_ms: 23,
+    p99_ms: 25,
 };
 
-/// p50 8.75 ms, p99 10.60 ms over 200 runs; the gate is 2× that, rounded up.
+/// Median p50 7.83 ms, p99 9.69 ms.
 pub const FIND: Gate = Gate {
-    p50_ms: 18,
-    p99_ms: 22,
+    p50_ms: 16,
+    p99_ms: 20,
 };
 
 /// The same search printing its hit's enclosing symbol, which parses the 2,000-line file holding
-/// it: p50 15.68 ms, p99 17.85 ms over 200 runs; the gate is 2× that, rounded up.
+/// it: median p50 16.11 ms, p99 18.39 ms.
 pub const FIND_EXPANDED: Gate = Gate {
-    p50_ms: 32,
-    p99_ms: 36,
+    p50_ms: 33,
+    p99_ms: 37,
 };
 
-/// p50 2.66 ms, p99 3.05 ms over 200 runs; the gate is 2× that, rounded up.
+/// Median p50 2.30 ms, p99 2.99 ms.
 pub const EDIT: Gate = Gate {
-    p50_ms: 6,
-    p99_ms: 7,
+    p50_ms: 5,
+    p99_ms: 6,
 };
 
-/// p50 24.78 ms, p99 25.96 ms over 200 runs; the gate is 2× that, rounded up.
+/// Median p50 22.99 ms, p99 24.37 ms.
 pub const EDIT_BATCH_10: Gate = Gate {
-    p50_ms: 50,
-    p99_ms: 52,
+    p50_ms: 46,
+    p99_ms: 49,
 };
 
-/// p50 3.73 ms, p99 4.18 ms over 200 runs; the gate is 2× that, rounded up.
+/// Median p50 3.18 ms, p99 3.96 ms.
 pub const TRANSFORM_SET: Gate = Gate {
-    p50_ms: 8,
-    p99_ms: 9,
+    p50_ms: 7,
+    p99_ms: 8,
 };
 
-/// 1.28–1.33× `rg` at default threads; tighter than performance.md's 2× ceiling.
-pub const FIND_VS_RG_MAX_RATIO: f64 = 1.5;
+/// 1.13–1.15× `rg` at default threads across three passes (2026-09-24); tighter than
+/// performance.md's 2× ceiling.
+pub const FIND_VS_RG_MAX_RATIO: f64 = 1.3;
 
-/// performance.md "Relative gates" line: "`show` ≤ 3× `cat`".
-pub const SHOW_VS_CAT_MAX_RATIO: f64 = 3.0;
+/// 1.62–1.67× `cat` across three passes (2026-09-24); tighter than performance.md's
+/// "`show` ≤ 3× `cat`" ceiling.
+pub const SHOW_VS_CAT_MAX_RATIO: f64 = 2.0;
 
-/// performance.md "Relative gates" line: "`hook classify` ≤ 2× `bash -n`".
-pub const HOOK_VS_BASH_N_MAX_RATIO: f64 = 2.0;
+/// 1.17–1.19× `bash -n` across three passes (2026-09-24); tighter than performance.md's
+/// "`hook classify` ≤ 2× `bash -n`" ceiling.
+pub const HOOK_VS_BASH_N_MAX_RATIO: f64 = 1.4;
 
 /// 2.2–3.3× quiet and under 6–40 busy loops on 16 cores; the gate is 2× that.
 pub const GUIDE_VS_TRUE_MAX_RATIO: f64 = 6.0;
@@ -105,8 +112,8 @@ mod tests {
     #[test]
     fn widened_scales_both_percentiles() {
         assert_eq!(FIND.widened(3), Gate {
-            p50_ms: 54,
-            p99_ms: 66
+            p50_ms: 48,
+            p99_ms: 60
         });
     }
 
