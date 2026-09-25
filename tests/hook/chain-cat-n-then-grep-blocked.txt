@@ -1,0 +1,9 @@
+COMMAND
+cat -n a.go; grep -n -i x a.go
+===END===
+VERDICT block
+REASON lets show reads several files and ranges in one call; lets find returns every hit numbered and grouped by file.
+REPLACEMENT
+run: lets show a.go --all; lets find -i 'x' a.go
+===END===
+COMPARE search

@@ -1,4 +1,4 @@
-after-git-diff-blocked
+after-git-diff-rewritten
 append-redirect-allowed
 at-sign-path-rewritten
 background-cat-blocked
@@ -9,6 +9,7 @@ cat-both-streams-rewritten
 cat-escaped-and-live-glob-allowed
 cat-escaped-space-rewritten
 cat-into-cat-allowed
+cat-into-grep-allowed
 cat-into-head-rewritten
 cat-into-tail-allowed
 cat-n-into-head-rewritten
@@ -33,6 +34,15 @@ cd-then-grep-blocked
 cd-then-heredoc-blocked
 cd-then-sed-i-blocked
 cd-variable-allowed
+chain-cat-n-then-grep-blocked
+chain-cat-redirect-then-ls-allowed
+chain-cat-then-git-status-rewritten
+chain-cd-cat-then-find-rewritten
+chain-cd-parent-outside-allowed
+chain-cd-read-outside-allowed
+chain-dotenv-blocked
+chain-or-rewritten
+chain-piped-cat-then-cat-rewritten
 chained-cats-rewritten
 colon-path-rewritten
 command-cat-allowed
@@ -110,14 +120,14 @@ heredoc-to-file-blocked
 heredoc-to-stdin-allowed
 home-ssh-key-allowed
 if-cat-allowed
-lets-then-cat-blocked
+lets-then-cat-rewritten
 long-cat-rewritten-to-all
 negated-cat-allowed
 newline-cats-rewritten
 outside-tree-allowed
 piped-cat-allowed
 pipeline-joined-line-allowed
-pipeline-then-semicolon-cat-blocked
+pipeline-then-semicolon-cat-rewritten
 private-cat-left-to-claude-code-allowed
 private-cd-then-cat-left-to-claude-code-allowed
 private-head-left-to-claude-code-allowed

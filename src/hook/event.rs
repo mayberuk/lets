@@ -268,9 +268,8 @@ mod tests {
         let reason =
             block_reason(repo.classify(&repo.event("Bash", "cat src/a.ts && rg cap src/b.ts")));
 
-        assert!(reason.contains("\nrun: lets show src/a.ts\n"), "{reason}");
         assert!(
-            reason.ends_with("\nrun: lets find 'cap' src/b.ts"),
+            reason.ends_with("\nrun: lets show src/a.ts --all && lets find 'cap' src/b.ts"),
             "{reason}"
         );
     }

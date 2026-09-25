@@ -1,0 +1,4 @@
+COMMAND
+cat a.go > b.go && ls
+===END===
+VERDICT allow

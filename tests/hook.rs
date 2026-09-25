@@ -92,6 +92,8 @@ enum Compare {
     SearchFiles,
     SearchCount,
     Write,
+    /// A command whose other statements run beside the reads a rewrite put `lets show` in for.
+    Chain,
 }
 
 struct Replacement {
@@ -203,6 +205,7 @@ fn parse_replacement<'a, I: Iterator<Item = &'a str>>(
         Some("search-files") => Compare::SearchFiles,
         Some("search-count") => Compare::SearchCount,
         Some("write") => Compare::Write,
+        Some("chain") => Compare::Chain,
         other => return Err(format!("unknown COMPARE {other:?}")),
     };
     let oracle = match lines.next_if_eq(&"ORACLE") {
@@ -406,6 +409,7 @@ fn execute(
         Compare::SearchFiles => compare_search_files(&expected.out, &answer),
         Compare::SearchCount => compare_search_count(&expected.out, &answer),
         Compare::Write => compare_write(&tree_bytes(original.path()), &tree_bytes(replaced.path())),
+        Compare::Chain => compare_chain(&expected.out, &answer),
     };
     failures.extend(mismatch.err());
     failures
@@ -456,6 +460,29 @@ fn compare_read(oracle: &str, replacement: &str) -> Result<(), String> {
     }
     Err(format!(
         "read mismatch\n--- the original printed\n{}\n--- the replacement shows\n{}",
+        printed.join("\n"),
+        shown.join("\n")
+    ))
+}
+
+/// Both sides lose every `── ` header and footer and every `lets show` gutter, so a kept `lets`
+/// call reads the same in each, and only a line the rewrite added, dropped or changed is a
+/// mismatch.
+fn compare_chain(oracle: &str, replacement: &str) -> Result<(), String> {
+    let gutter = Regex::new(r"^ *\d+ \t").expect("a valid pattern");
+    let plain = |output: &str| -> Vec<String> {
+        output
+            .lines()
+            .filter(|line| !line.starts_with("── "))
+            .map(|line| gutter.replace(line, "").into_owned())
+            .collect()
+    };
+    let (printed, shown) = (plain(oracle), plain(replacement));
+    if printed == shown {
+        return Ok(());
+    }
+    Err(format!(
+        "chain mismatch\n--- the original printed\n{}\n--- the replacement printed\n{}",
         printed.join("\n"),
         shown.join("\n")
     ))
@@ -891,6 +918,28 @@ fn a_read_whose_content_differs_by_one_line_is_a_mismatch() {
         compare_read(printed, &off).is_err_and(|failure| failure.starts_with("read mismatch")),
         "{off}"
     );
+}
+
+#[test]
+fn a_chain_replacement_that_drops_a_statement_or_changes_a_line_is_a_mismatch() {
+    let command = "cat src/a.ts; git status";
+    for dropped in [
+        "run: lets show src/a.ts --all",
+        "run: lets show src/b.ts --all; git status",
+    ] {
+        let failures = execute(Compare::Chain, command, command, &hook_tree(), &[dropped]);
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.starts_with("chain mismatch")),
+            "{dropped}: {failures:#?}"
+        );
+    }
+
+    let failures = execute(Compare::Chain, command, command, &hook_tree(), &[
+        "run: lets show src/a.ts --all; git status",
+    ]);
+    assert_eq!(failures, Vec::<String>::new());
 }
 
 #[test]

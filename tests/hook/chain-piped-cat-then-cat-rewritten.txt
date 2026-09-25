@@ -1,0 +1,9 @@
+COMMAND
+cat a.go | grep x && cat src/a.ts
+===END===
+VERDICT rewrite
+REASON `cat src/a.ts` ran as `lets show src/a.ts --all`; the rest ran as written; lets show reads several files and ranges in one call.
+REPLACEMENT
+run: cat a.go | grep x && lets show src/a.ts --all
+===END===
+COMPARE chain
