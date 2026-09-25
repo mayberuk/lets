@@ -6,6 +6,8 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-09-25
+
 ### Added
 
 - `find` footer names every directory it skipped and why: `ignored dirs (gitignore target/ ·
