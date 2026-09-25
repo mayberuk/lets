@@ -67,10 +67,16 @@ for dir in tests/cmd/*/; do
               n = length(line)
               i = 1
               while (i <= n) {
-                if (substr(line, i, 1) != "\"") { i++; continue }
+                q = substr(line, i, 1)
+                if (q != "\"" && q != "\047") { i++; continue }
                 i++
                 arg = ""; raw = ""; control = 0
-                while (i <= n) {
+                # A TOML literal string has no escapes: everything up to the next quote is the arg.
+                if (q == "\047") {
+                  while (i <= n && substr(line, i, 1) != "\047") { arg = arg substr(line, i, 1); i++ }
+                  i++
+                }
+                while (q == "\"" && i <= n) {
                   c = substr(line, i, 1)
                   if (c == "\\") {
                     e = substr(line, i + 1, 1)
