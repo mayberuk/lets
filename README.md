@@ -1,4 +1,4 @@
-# lets
+<h1><img src="docs/header.png" alt="lets: Locate, Edit, Transform, Show" width="100%"></h1>
 
 Locate · Edit · Transform · Show — a file-operations CLI for coding agents (Claude Code, Codex):
 one Bash call reads, searches, edits or transforms several files and returns bounded, numbered
