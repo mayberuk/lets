@@ -46,6 +46,13 @@ pub const FIND: Gate = Gate {
     p99_ms: 22,
 };
 
+/// The same search printing its hit's enclosing symbol, which parses the 2,000-line file holding
+/// it: p50 15.68 ms, p99 17.85 ms over 200 runs; the gate is 2× that, rounded up.
+pub const FIND_EXPANDED: Gate = Gate {
+    p50_ms: 32,
+    p99_ms: 36,
+};
+
 /// p50 2.66 ms, p99 3.05 ms over 200 runs; the gate is 2× that, rounded up.
 pub const EDIT: Gate = Gate {
     p50_ms: 6,

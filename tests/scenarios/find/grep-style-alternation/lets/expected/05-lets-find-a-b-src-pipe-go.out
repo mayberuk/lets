@@ -1,3 +1,7 @@
 ── src/pipe.go
+1-	package pipe
+2-	
 3:	const flags = «a|b»
-── 1 hit in 1 file · searched 1 file
+4-	var alpha = 1
+5-	var beta = 2
+── 1 hit in 1 file · searched 1 file · expanded 1 hit to ±5 lines

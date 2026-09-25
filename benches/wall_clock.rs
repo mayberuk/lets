@@ -77,6 +77,7 @@ fn main() -> ExitCode {
         show_small(&bin, &corpus),
         show_symbol(&bin, &corpus),
         find(&bin, &corpus),
+        find_expanded(&bin, &corpus),
         edit(&bin, &corpus),
         edit_batch(&bin, &corpus),
         transform_set(&bin, &corpus),
@@ -473,10 +474,18 @@ fn show_symbol(bin: &Path, corpus: &Path) -> Row {
 }
 
 /// `--no-ignore`: the corpus root's `*` .gitignore would hide every file from both tools.
+/// `--no-expand`: `rg` prints the hit alone, so an expanded hit would not compare like for like.
 fn find(bin: &Path, corpus: &Path) -> Row {
     let lets = readonly(
         bin,
-        &["find", "-F", "--no-ignore", SEARCH_TARGET, "."],
+        &[
+            "find",
+            "-F",
+            "--no-ignore",
+            "--no-expand",
+            SEARCH_TARGET,
+            ".",
+        ],
         corpus,
         None,
         stdout_has("1 hit in 1 file"),
@@ -494,6 +503,24 @@ fn find(bin: &Path, corpus: &Path) -> Row {
         p99,
         gate: gates::FIND,
         relative: Some(relative),
+    }
+}
+
+/// The hit sits mid-way through a 2,000-line TypeScript file, so the expansion pays for parsing it.
+fn find_expanded(bin: &Path, corpus: &Path) -> Row {
+    let (p50, p99) = sample(readonly(
+        bin,
+        &["find", "-F", "--no-ignore", SEARCH_TARGET, "."],
+        corpus,
+        None,
+        stdout_has("expanded 1 hit to enclosing symbols"),
+    ));
+    Row {
+        workload: "find, 1 hit, expanded".into(),
+        p50,
+        p99,
+        gate: gates::FIND_EXPANDED,
+        relative: None,
     }
 }
 

@@ -91,7 +91,19 @@ fn find_over_the_hit_cap_as_json() {
 
     assert_eq!(run.code, 1);
     assert_eq!(last_line(&run.err), "ERROR_CODE=over_cap");
-    assert!(run.out.contains("\"targets\":[]"), "{}", run.out);
+    assert!(
+        run.out.contains(
+            "{\"busiest_file\":{\"shown\":10,\"hits\":64}},{\"top_files\":{\"shown\":1}}"
+        ),
+        "{}",
+        run.out
+    );
+    assert_eq!(
+        run.out.matches("\"marker\":\"hit\"").count(),
+        10,
+        "the busiest file's first ten hits, and nothing else: {}",
+        run.out
+    );
     insta::assert_snapshot!(run.out);
 }
 

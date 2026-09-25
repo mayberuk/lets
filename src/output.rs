@@ -353,7 +353,7 @@ pub enum WriteOutcome {
     Exists,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Line {
     pub number: usize,
     pub marker: Marker,
@@ -483,6 +483,13 @@ pub enum Omission {
     TopFiles {
         shown: usize,
     },
+    /// Over the hit cap, the busiest file's first hits are printed, so the bare total is not all
+    /// a caller sees.
+    BusiestFile {
+        shown: usize,
+        hits: usize,
+    },
+    Expanded(ExpandedHits),
     /// The counts are files a filter rejected directly. A rejected directory is named instead,
     /// never entered, so the files under it are counted nowhere.
     Ignored {
@@ -547,6 +554,41 @@ pub enum Omission {
     },
 }
 
+/// `find` hits printed with their enclosing symbol or `around` lines either side; `unexpanded`
+/// hits stayed bare once the expanded lines reached `line_cap`.
+#[derive(Debug, Serialize)]
+pub struct ExpandedHits {
+    pub symbols: usize,
+    pub windows: usize,
+    pub around: usize,
+    pub unexpanded: usize,
+    pub line_cap: usize,
+}
+
+/// A zero part is left out, as in `write_parts`.
+impl fmt::Display for ExpandedHits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let parts = [
+            (self.symbols, "to enclosing symbols".to_owned()),
+            (self.windows, format!("to \u{b1}{} lines", self.around)),
+            (
+                self.unexpanded,
+                format!("not expanded ({}-line cap)", self.line_cap),
+            ),
+        ];
+        let mut open = false;
+        for (n, what) in parts {
+            if n == 0 {
+                continue;
+            }
+            f.write_str(if open { " \u{b7} " } else { "expanded " })?;
+            write!(f, "{n} hit{} {what}", plural_suffix(n))?;
+            open = true;
+        }
+        Ok(())
+    }
+}
+
 /// Per source, because the source is what says whether `--no-ignore` or `--hidden` brings a
 /// directory back. A name is a lossy string, as a failed target's is: `serde_json` refuses a
 /// non-UTF-8 `PathBuf`.
@@ -563,6 +605,10 @@ pub struct NamedDirs {
 }
 
 impl fmt::Display for Omission {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per omission keeps every footer phrase in one place"
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Omission::Window { shown, total } => write!(f, ":{}-{total} not shown", shown.1 + 1),
@@ -584,6 +630,14 @@ impl fmt::Display for Omission {
             Omission::TopFiles { shown } => {
                 write!(f, "top {shown} file{} shown", plural_suffix(*shown))
             },
+            Omission::BusiestFile { shown, hits } => {
+                let s = plural_suffix(*hits);
+                write!(
+                    f,
+                    "first {shown} of {hits} hit{s} in the busiest file shown"
+                )
+            },
+            Omission::Expanded(expanded) => expanded.fmt(f),
             Omission::Ignored {
                 gitignore,
                 hidden,

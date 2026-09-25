@@ -16,3 +16,4 @@ binary-skipped-named.trycmd
 long-line-cut.trycmd
 binary-over-cap-named-too-large.toml
 binary-under-cap-named-binary.toml
+expand.trycmd

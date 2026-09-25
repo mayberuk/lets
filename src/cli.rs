@@ -234,6 +234,9 @@ pub struct FindArgs {
     pub before: Option<usize>,
     #[arg(short = 'C')]
     pub context: Option<usize>,
+    /// Print hit lines only, never the enclosing symbol or the lines around a hit
+    #[arg(long)]
+    pub no_expand: bool,
     #[command(flatten)]
     pub grep: GrepCompat,
 }
@@ -715,6 +718,12 @@ mod tests {
         assert!(files.files && !files.count);
         let count = find(&["lets", "find", "x", "-c"]);
         assert!(count.count && !count.files);
+    }
+
+    #[test]
+    fn no_expand_is_off_unless_typed() {
+        assert!(!find(&["lets", "find", "x"]).no_expand);
+        assert!(find(&["lets", "find", "x", "--no-expand"]).no_expand);
     }
 
     #[test]

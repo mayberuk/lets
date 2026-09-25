@@ -65,6 +65,7 @@ lets — Locate · Edit · Transform · Show          one call, bounded output, 
 
   show   <target>...            read files, ranges, anchors, symbols — several per call
   find   <pattern> [path]...    search; hits print as path:line; capped at 50, says so
+                                ≤10 hits show their enclosing function or ±5 lines · --no-expand
                                 -F/-i/-w · -A/-B/-C context · --files/-l · --count/-c
                                 grep's -n/--line-number -r -R -E -H are accepted as no-ops
   edit   <target> --old --new   exact-once replace; --all; --insert-after; --from - for batches
