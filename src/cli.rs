@@ -283,6 +283,9 @@ pub struct EditArgs {
     pub insert_after: Option<String>,
     #[arg(long)]
     pub insert_before: Option<String>,
+    /// Read a batch from stdin; `-` is the only accepted value. Fenced form, one block per edit:
+    /// `@@ file` (or `@@ file insert-after @'regex'`), then `<<<<<<< old` / `======= new` /
+    /// `>>>>>>>`. A JSONL form is also accepted, one edit object per line.
     #[arg(long)]
     pub from: Option<String>,
     #[arg(long = "if", value_parser = if_sha)]

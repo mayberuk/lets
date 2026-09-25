@@ -1,4 +1,4 @@
-── [HOME]/.claude/settings.json  (1-36 of 36) · sha:6acdeb86e322
+── [HOME]/.claude/settings.json  (1-36 of 36) · sha:65a42271bd00
  1 	{
  2 	  "hooks": {
  3 	    "PreToolUse": [
@@ -17,7 +17,7 @@
 16 	        "hooks": [
 17 	          {
 18 	            "type": "command",
-19 	            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"SubagentStart\",\"additionalContext\":\"# File work: use `lets` through Bash\\n\\n| Instead of | Run |\\n|---|---|\\n| `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |\\n| `sed -n '\\''40,80p'\\'' f.ts` | `lets show f.ts:40-80` |\\n| find one function | `lets show f.ts#computeFee` |\\n| `grep -n -A 5 '\\''x'\\'' f.ts` | `lets show \\\"f.ts@'\\''x'\\''\\\" -A 5` |\\n| `grep -rn '\\''x'\\'' src`, `rg x src` | `lets find '\\''x'\\'' src` |\\n| `sed -i '\\''s/a/b/'\\''`, Edit | `lets edit f.ts --old a --new b` |\\n| several edits, one call | `lets edit --from - <<'\\''LETS'\\''` (`lets guide`) |\\n| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |\\n| `cat > new.ts <<'\\''EOF'\\''` | `lets write new.ts <<'\\''EOF'\\''` |\\n\\nExact `cat`, `head -n` and `sed -n` reads become `lets show`; `grep`/`rg` searches and `sed -i` substitutions it recognizes are denied with the matching `lets` command.…
+19 	            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"SubagentStart\",\"additionalContext\":\"# File work: use `lets` through Bash\\n\\n| Instead of | Run |\\n|---|---|\\n| `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |\\n| `sed -n '\\''40,80p'\\'' f.ts` | `lets show f.ts:40-80` |\\n| find one function | `lets show f.ts#computeFee` |\\n| `grep -n -A 5 '\\''x'\\'' f.ts` | `lets show \\\"f.ts@'\\''x'\\''\\\" -A 5` |\\n| `grep -rn '\\''x'\\'' src`, `rg x src` | `lets find '\\''x'\\'' src` |\\n| `sed -i '\\''s/a/b/'\\''`, Edit | `lets edit f.ts --old a --new b` |\\n| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |\\n| `cat > new.ts <<'\\''EOF'\\''` | `lets write new.ts <<'\\''EOF'\\''` |\\n\\nSeveral edits in one call; each `old` is exact text that occurs once:\\n\\n```\\nlets edit --from - <<'\\''LETS'\\''\\n@@ a.ts\\n<<<<<<< old\\ncap = 10\\n======= new\\ncap = 20\\n>>>>>>>\\nLETS\\n```\\n\\nDo not pipe `lets` through `head`/`tail` or add …
 20 	          }
 21 	        ]
 22 	      }
@@ -28,7 +28,7 @@
 27 	        "hooks": [
 28 	          {
 29 	            "type": "command",
-30 	            "command": "if command -v lets >/dev/null 2>&1; then printf '%s\\n' '# File work: use `lets` through Bash\n\n| Instead of | Run |\n|---|---|\n| `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |\n| `sed -n '\\''40,80p'\\'' f.ts` | `lets show f.ts:40-80` |\n| find one function | `lets show f.ts#computeFee` |\n| `grep -n -A 5 '\\''x'\\'' f.ts` | `lets show \"f.ts@'\\''x'\\''\" -A 5` |\n| `grep -rn '\\''x'\\'' src`, `rg x src` | `lets find '\\''x'\\'' src` |\n| `sed -i '\\''s/a/b/'\\''`, Edit | `lets edit f.ts --old a --new b` |\n| several edits, one call | `lets edit --from - <<'\\''LETS'\\''` (`lets guide`) |\n| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |\n| `cat > new.ts <<'\\''EOF'\\''` | `lets write new.ts <<'\\''EOF'\\''` |\n\nExact `cat`, `head -n` and `sed -n` reads become `lets show`; `grep`/`rg` searches and `sed -i` substitutions it recognizes are denied with the matching `lets` command.\n\nDo not pipe `lets` through `head`/`tail` or add `2>/dev…
+30 	            "command": "if command -v lets >/dev/null 2>&1; then printf '%s\\n' '# File work: use `lets` through Bash\n\n| Instead of | Run |\n|---|---|\n| `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |\n| `sed -n '\\''40,80p'\\'' f.ts` | `lets show f.ts:40-80` |\n| find one function | `lets show f.ts#computeFee` |\n| `grep -n -A 5 '\\''x'\\'' f.ts` | `lets show \"f.ts@'\\''x'\\''\" -A 5` |\n| `grep -rn '\\''x'\\'' src`, `rg x src` | `lets find '\\''x'\\'' src` |\n| `sed -i '\\''s/a/b/'\\''`, Edit | `lets edit f.ts --old a --new b` |\n| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |\n| `cat > new.ts <<'\\''EOF'\\''` | `lets write new.ts <<'\\''EOF'\\''` |\n\nSeveral edits in one call; each `old` is exact text that occurs once:\n\n```\nlets edit --from - <<'\\''LETS'\\''\n@@ a.ts\n<<<<<<< old\ncap = 10\n======= new\ncap = 20\n>>>>>>>\nLETS\n```\n\nDo not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for imag…
 31 	          }
 32 	        ]
 33 	      }

@@ -70,6 +70,8 @@ lets — Locate · Edit · Transform · Show          one call, bounded output, 
                                 -F/-i/-w · -A/-B/-C context · --files/-l · --count/-c
                                 grep's -n/--line-number -r -R -E -H are accepted as no-ops
   edit   <target> --old --new   exact-once replace; --all; --insert-after; --from - for batches
+                                batch: --from - <<'LETS' then @@ file, <<<<<<< old,
+                                ======= new, >>>>>>> per edit — full example: lets edit --help
   transform <file> --set k=v    --append k=v; JSON/YAML/TOML/frontmatter keys, formatting preserved
   write  <path> < stdin         create a file; refuses to overwrite without --force
 

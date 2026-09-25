@@ -101,11 +101,21 @@ system prompt any more.
 > | `grep -n -A 5 'x' f.ts` | `lets show "f.ts@'x'" -A 5` |
 > | `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` |
 > | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
-> | several edits, one call | `lets edit --from - <<'LETS'` (`lets guide`) |
-| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
+> | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 > | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
 >
-> Exact `cat`, `head -n` and `sed -n` reads become `lets show`; `grep`/`rg` searches and `sed -i` substitutions it recognizes are denied with the matching `lets` command.
+> Several edits in one call; each `old` is exact text that occurs once:
+>
+> ```
+> lets edit --from - <<'LETS'
+> @@ a.ts
+> <<<<<<< old
+> cap = 10
+> ======= new
+> cap = 20
+> >>>>>>>
+> LETS
+> ```
 >
 > Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.
 
@@ -156,10 +166,20 @@ Discovery) arrives instead as SubagentStart `additionalContext`:
 > | `grep -n -A 5 'x' f.ts` | `lets show "f.ts@'x'" -A 5` |
 > | `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` |
 > | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
-> | several edits, one call | `lets edit --from - <<'LETS'` (`lets guide`) |
-| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
+> | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 > | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
 >
-> Exact `cat`, `head -n` and `sed -n` reads become `lets show`; `grep`/`rg` searches and `sed -i` substitutions it recognizes are denied with the matching `lets` command.
+> Several edits in one call; each `old` is exact text that occurs once:
+>
+> ```
+> lets edit --from - <<'LETS'
+> @@ a.ts
+> <<<<<<< old
+> cap = 10
+> ======= new
+> cap = 20
+> >>>>>>>
+> LETS
+> ```
 >
 > Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.

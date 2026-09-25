@@ -26,11 +26,21 @@ pub(crate) const CLAUDE_CODE_PARAGRAPH: &str = r#"# File work: use `lets` throug
 | `grep -n -A 5 'x' f.ts` | `lets show "f.ts@'x'" -A 5` |
 | `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` |
 | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
-| several edits, one call | `lets edit --from - <<'LETS'` (`lets guide`) |
 | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
 
-Exact `cat`, `head -n` and `sed -n` reads become `lets show`; `grep`/`rg` searches and `sed -i` substitutions it recognizes are denied with the matching `lets` command.
+Several edits in one call; each `old` is exact text that occurs once:
+
+```
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+LETS
+```
 
 Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files."#;
 
@@ -1179,13 +1189,28 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert_eq!(output.status.code(), Some(0));
     }
 
+    /// Raised from 1,050 when the batch example was added back: a paid-trial run without it saw
+    /// 6 of 8 sessions hit `edit --from -`, get `ERROR_CODE=usage`, and fall back to Python.
     #[test]
-    fn the_session_start_paragraph_stays_under_its_1_050_byte_budget() {
+    fn the_session_start_paragraph_stays_under_its_1_000_byte_budget() {
         let printed = format!("{CLAUDE_CODE_PARAGRAPH}\n");
         assert!(
-            printed.len() <= 1_050,
-            "printed paragraph is {} bytes, over the 1,050-byte SessionStart budget",
+            printed.len() <= 1_000,
+            "printed paragraph is {} bytes, over the 1,000-byte SessionStart budget",
             printed.len()
+        );
+    }
+
+    #[test]
+    fn the_session_start_paragraph_shows_the_batch_example_and_drops_the_cat_sentence() {
+        assert!(CLAUDE_CODE_PARAGRAPH.contains("lets edit --from - <<'LETS'"));
+        assert!(CLAUDE_CODE_PARAGRAPH.contains("<<<<<<< old"));
+        assert!(CLAUDE_CODE_PARAGRAPH.contains("======= new"));
+        assert!(CLAUDE_CODE_PARAGRAPH.contains(">>>>>>>"));
+        assert!(
+            !CLAUDE_CODE_PARAGRAPH.contains("Exact `cat`, `head -n` and `sed -n` reads become"),
+            "this sentence led agents to write `cat` inside compound commands, which then got \
+             denied"
         );
     }
 
