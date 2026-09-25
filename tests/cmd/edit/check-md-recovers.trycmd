@@ -2,9 +2,6 @@ The markdown block grammar has no error state: an unterminated fence that would 
 
 ```console
 $ lets edit notes.md --old 'Layer 2 is the validator for markdown.' --new '```'
-── notes.md · 1 replacement · line 7 · exact
-6 	In that case the agent – not the user – decides.
-7~	```
-── check: structure ok · sha:a4f8537ddc9b→e5d43c02dbf4
+── notes.md · 1 replacement · line 7 · check: structure ok · sha:a4f8537ddc9b→e5d43c02dbf4
 
 ```

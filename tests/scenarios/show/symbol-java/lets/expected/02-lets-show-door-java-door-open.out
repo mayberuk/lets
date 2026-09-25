@@ -1,4 +1,4 @@
-── Door.java#Door.open  (6-8 of 13 · via tree-sitter) · sha:aa3319d5ea2c
+── Door.java#Door.open  (6-8 of 13 · via tree-sitter)
 6 	    public void open() {
 7 	        shut = false;
 8 	    }

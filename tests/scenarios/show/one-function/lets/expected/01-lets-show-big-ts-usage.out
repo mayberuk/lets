@@ -1,4 +1,4 @@
-── big.ts#usage  (38-61 of 212 · via tree-sitter) · sha:e37232c09d01
+── big.ts#usage  (38-61 of 212 · via tree-sitter)
 38 	export function usage(id: string) {
 39 	  const store = new Map<string, number>();
 40 	  const cap = 10;

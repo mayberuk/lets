@@ -77,8 +77,8 @@ fn repeatable_switches(command: Command) -> Command {
 const INVERT_MATCH_REFUSED: &str = "lets find has no -v: it prints matching lines only \u{b7} use \
                                     grep -v to print the lines that do not match\n";
 
-const IF_SHA_USAGE: &str =
-    "--if takes sha: and 12 or more lowercase hex digits, as a show header prints it";
+const IF_SHA_USAGE: &str = "--if takes sha: and 12 or more lowercase hex digits, as an earlier \
+                            `lets edit` result prints it";
 
 fn if_sha(value: &str) -> Result<String, String> {
     let hex = value.strip_prefix("sha:").unwrap_or(value);
@@ -194,6 +194,7 @@ pub enum Verb {
 }
 
 #[derive(Debug, Args)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ShowArgs {
     // Unlike edit/transform, `show` has no `--from -` batch form to stand in for targets.
     #[arg(required = true)]
@@ -211,6 +212,12 @@ pub struct ShowArgs {
     pub context: Option<usize>,
     #[arg(long)]
     pub no_numbers: bool,
+    /// Print no header line, and no footer line when nothing was left out
+    #[arg(long)]
+    pub no_header: bool,
+    /// Print each definition's line range and first line instead of the file's content
+    #[arg(long)]
+    pub outline: bool,
 }
 
 /// `--exclude GLOB` is `-g '!GLOB'`; interleaved with `-g` by argv position so a later flag can
@@ -265,6 +272,13 @@ pub struct FindArgs {
     /// Print hit lines only, never the enclosing symbol or the lines around a hit
     #[arg(long)]
     pub no_expand: bool,
+    /// Print hit lines with no number gutter
+    #[arg(long)]
+    pub no_numbers: bool,
+    /// Exit 0 over the hit cap, matching grep's own exit-0-on-any-match (including a truncated
+    /// one), so a rewritten `grep ... && ...` chain keeps grep's exit-status parity
+    #[arg(long)]
+    pub cap_exit_0: bool,
     #[command(flatten)]
     pub grep: GrepCompat,
 }
@@ -958,8 +972,8 @@ mod tests {
                 assert_eq!(err.kind(), ErrorKind::ValueValidation, "{value}");
                 assert!(
                     err.to_string().contains(
-                        "--if takes sha: and 12 or more lowercase hex digits, as a show header \
-                         prints it"
+                        "--if takes sha: and 12 or more lowercase hex digits, as an earlier \
+                         `lets edit` result prints it"
                     ),
                     "{value}: {err}"
                 );

@@ -1,5 +1,1 @@
-── usage.ts · 1 replacement · line 4 · exact
-3 	export function usage(id: string) {
-4~	  if (!id) return undefined
-5 	  const now = clock.now()
-── check: structure ok · sha:c5525cc20b61→7efe0329c8e8
+── usage.ts · 1 replacement · line 4 · check: structure ok · sha:c5525cc20b61→7efe0329c8e8

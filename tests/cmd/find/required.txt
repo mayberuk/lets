@@ -20,3 +20,5 @@ expand.trycmd
 expand-limits.trycmd
 smart-case.trycmd
 exclude-prunes-nested-vendor.trycmd
+cap-exit-0.toml
+no-numbers.trycmd

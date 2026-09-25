@@ -1,9 +1,5 @@
 ```console
 $ lets edit run.sh --old 'echo "$name"' --new 'printf "%s" "$name"'
-── run.sh · 1 replacement · line 3 · exact
-2 	for name in one two; do
-3~	  printf "%s" "$name"
-4 	done
-── check: structure ok · sha:1a0659d2422d→b2a25dfc11cf
+── run.sh · 1 replacement · line 3 · check: structure ok · sha:1a0659d2422d→b2a25dfc11cf
 
 ```

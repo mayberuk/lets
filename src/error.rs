@@ -27,7 +27,7 @@ pub enum Error {
         files: usize,
         cap: usize,
     },
-    #[error("{} is unsupported: no grammar for .{ext} · use a :line, :a-b or @'regex' target", path.display())]
+    #[error("{} is unsupported: no grammar for .{ext} · drop --outline", path.display())]
     NoGrammar { path: PathBuf, ext: String },
     #[error("{layer} check failed for {}: {detail}", path.display())]
     CheckFailed {
@@ -241,11 +241,13 @@ fn render_expect_refused(target: &str, reason: &ExpectReason) -> String {
     match reason {
         ExpectReason::Range { first, last } => format!(
             "{target}: --expect checks line {first} only, and the range runs to line {last} \u{b7} \
-             pass --expect-all (the whole range on stdin) or --if sha:<12 hex>"
+             pass --expect-all (the whole range on stdin) or --if sha:<12 hex> from an earlier \
+             `lets edit`"
         ),
         ExpectReason::Mismatch { line, actual } => format!(
             "{target}: line {line} does not match --expect \u{b7} it reads: {actual} \u{b7} \
-             re-read it, or confirm with --expect-all or --if sha:<12 hex>"
+             re-read it, or confirm with --expect-all or --if sha:<12 hex> from an earlier \
+             `lets edit`"
         ),
     }
 }
@@ -599,7 +601,8 @@ mod tests {
             }
             .to_string(),
             "a.ts:3-5: --expect checks line 3 only, and the range runs to line 5 \u{b7} pass \
-             --expect-all (the whole range on stdin) or --if sha:<12 hex>"
+             --expect-all (the whole range on stdin) or --if sha:<12 hex> from an earlier \
+             `lets edit`"
         );
         assert_eq!(
             Error::ExpectRefused {
@@ -611,7 +614,7 @@ mod tests {
             }
             .to_string(),
             "a.ts:40: line 40 does not match --expect \u{b7} it reads: if (x) { \u{b7} re-read it, \
-             or confirm with --expect-all or --if sha:<12 hex>"
+             or confirm with --expect-all or --if sha:<12 hex> from an earlier `lets edit`"
         );
         assert_eq!(
             Error::MistypedTarget {
@@ -719,16 +722,17 @@ mod tests {
     }
 
     #[test]
-    fn no_grammar_names_the_extension_and_a_target_form_that_works() {
+    fn no_grammar_names_the_extension_and_the_fix() {
         let err = Error::NoGrammar {
             path: PathBuf::from("unsupported.vue"),
             ext: "vue".into(),
         };
 
+        // The only caller is `show --outline`, which already refuses a `:line`/`#symbol`/
+        // `@'regex'` target, so advising one back would be self-contradictory.
         assert_eq!(
             err.to_string(),
-            "unsupported.vue is unsupported: no grammar for .vue \u{b7} use a :line, :a-b or \
-             @'regex' target"
+            "unsupported.vue is unsupported: no grammar for .vue \u{b7} drop --outline"
         );
         assert!(!err.to_string().contains("not found in"));
     }

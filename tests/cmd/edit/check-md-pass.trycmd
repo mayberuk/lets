@@ -1,8 +1,5 @@
 ```console
 $ lets edit notes.md --old 'Layer 2 is the validator for markdown.' --new 'Layer 2 is the validator here.'
-── notes.md · 1 replacement · line 7 · exact
-6 	In that case the agent – not the user – decides.
-7~	Layer 2 is the validator here.
-── check: structure ok · sha:a4f8537ddc9b→983c07fb7869
+── notes.md · 1 replacement · line 7 · check: structure ok · sha:a4f8537ddc9b→983c07fb7869
 
 ```

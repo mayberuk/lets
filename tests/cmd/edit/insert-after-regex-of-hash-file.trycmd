@@ -2,10 +2,7 @@ The anchor, typed with its quotes as the guide shows it, joins the file name as 
 
 ```console
 $ lets edit C#.md --insert-after "@'^b'" --new 'c'
-── C#.md · inserted 1 line after line 2
-2 	b
-3+	c
-── check: structure ok · sha:[..]→[..]
+── C#.md · inserted 1 line after line 2 · check: structure ok · sha:41153ec5e22e→f2a0aad84bf0
 
 $ lets edit C#.md --insert-after :3 --new 'd'
 ? 1

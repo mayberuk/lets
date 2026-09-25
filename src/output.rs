@@ -41,6 +41,9 @@ pub struct Response {
     pub top_files: Vec<CountRow>,
     #[serde(skip_serializing_if = "is_zero")]
     pub top_files_more: usize,
+    /// Text only: `--json` and `--jsonl` carry no header or footer line to drop.
+    #[serde(skip)]
+    pub no_header: bool,
 }
 
 impl Response {
@@ -55,6 +58,7 @@ impl Response {
             stats: Stats::new(0, 0),
             top_files: Vec::new(),
             top_files_more: 0,
+            no_header: false,
         }
     }
 
@@ -62,6 +66,7 @@ impl Response {
     pub fn has_output(&self) -> bool {
         let body = match &self.body {
             Body::Targets(blocks) => !blocks.is_empty(),
+            Body::Outline(blocks) => !blocks.is_empty(),
             Body::Files(paths) => !paths.is_empty(),
             Body::Counts(rows) => !rows.is_empty(),
             Body::Raw { text, .. } => !text.is_empty(),
@@ -77,6 +82,7 @@ impl Response {
 #[serde(rename_all = "snake_case")]
 pub enum Body {
     Targets(Vec<TargetBlock>),
+    Outline(Vec<OutlineBlock>),
     Files(#[serde(serialize_with = "lossy_paths")] Vec<PathBuf>),
     Counts(Vec<CountRow>),
     Raw { field: &'static str, text: String },
@@ -114,9 +120,29 @@ pub struct TargetBlock {
     pub crlf: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub lossy_lines: Vec<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sha: Option<Sha12>,
+    /// True when the shown range reaches the file's real last line and that line has no `\n`.
+    /// Text only: JSON's `lines` are exact strings, with no synthetic newline to omit.
+    #[serde(skip)]
+    pub no_trailing_newline: bool,
     pub lines: Vec<Line>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OutlineBlock {
+    pub target: String,
+    #[serde(serialize_with = "lossy_path")]
+    pub path: PathBuf,
+    pub entries: Vec<OutlineEntry>,
+    /// Set when the size bound stopped this block short; the footer names how many were left out.
+    pub omitted: bool,
+}
+
+/// `sig` is the definition's first source line, indentation trimmed, cut at the display cap.
+#[derive(Debug, Serialize)]
+pub struct OutlineEntry {
+    pub sig: String,
+    pub line: usize,
+    pub end_line: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -462,7 +488,7 @@ impl Serialize for Stats {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Omission {
     Window {
@@ -530,6 +556,12 @@ pub enum Omission {
         limit: usize,
         lines: usize,
     },
+    /// `--outline`'s size bound stopped short of the file's own definitions, whole entries at a
+    /// time, so the count is definitions left out, not lines.
+    OutlineTrimmed {
+        limit: usize,
+        definitions: usize,
+    },
     Skipped {
         binary: usize,
         too_large: usize,
@@ -559,13 +591,19 @@ pub enum Omission {
     CaseFolded {
         hits: usize,
     },
+    /// `-s`/`--case-sensitive` found nothing, but a case-insensitive re-walk of the same search
+    /// would have; unlike `CaseFolded`, `-s` was asked for on purpose, so no "(-s for exact case)"
+    /// suffix — that advice would point back at the flag the reader already gave.
+    CaseInsensitiveOnly {
+        hits: usize,
+    },
 }
 
 /// `find` hits printed with their enclosing symbol or `around` lines either side. `unparsed` of
 /// the `windows` lie in a file over `parse_max_kib`, which is never parsed for its symbols.
 /// `unexpanded` hits stayed bare once the expanded lines reached `line_cap`, and `over_limit`
 /// ones because their context would have pushed a hit line out of `limit`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExpandedHits {
     pub symbols: usize,
     pub windows: usize,
@@ -639,13 +677,13 @@ impl fmt::Display for ExpandedHits {
 /// Per source, because the source is what says whether `--no-ignore` or `--hidden` brings a
 /// directory back. A name is a lossy string, as a failed target's is: `serde_json` refuses a
 /// non-UTF-8 `PathBuf`.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct IgnoredDirs {
     pub gitignore: NamedDirs,
     pub hidden: NamedDirs,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct NamedDirs {
     pub named: Vec<String>,
     pub more: usize,
@@ -738,6 +776,11 @@ impl fmt::Display for Omission {
                 "output over --max-bytes {limit}: {lines} line{} not shown",
                 plural_suffix(*lines)
             ),
+            Omission::OutlineTrimmed { limit, definitions } => write!(
+                f,
+                "output over --max-bytes {limit}: {definitions} definition{} not shown",
+                plural_suffix(*definitions)
+            ),
             Omission::Skipped {
                 binary,
                 too_large,
@@ -769,6 +812,14 @@ impl fmt::Display for Omission {
                 write!(
                     f,
                     "{hits} hit{} {matches} only ignoring case (-s for exact case)",
+                    plural_suffix(*hits)
+                )
+            },
+            Omission::CaseInsensitiveOnly { hits } => {
+                let matches = if *hits == 1 { "matches" } else { "match" };
+                write!(
+                    f,
+                    "{hits} hit{} {matches} only ignoring case",
                     plural_suffix(*hits)
                 )
             },
@@ -887,14 +938,34 @@ fn render_text(resp: &Response, opts: RenderOptions) -> String {
     match &resp.body {
         Body::Raw { text, .. } => out.push_str(text),
         Body::Targets(blocks) => {
+            let mut header_notes: Vec<String> = Vec::new();
             for block in blocks {
-                push_target_header(&mut out, block);
-                push_lines(&mut out, &block.lines, width, opts);
+                if !resp.no_header {
+                    push_target_header(&mut out, block);
+                } else if let Some(note) = header_note(block) {
+                    header_notes.push(note);
+                }
+                let no_final_newline = resp.no_header && !opts.numbers && block.no_trailing_newline;
+                push_lines_faithful(&mut out, &block.lines, width, opts, no_final_newline);
             }
             if !opts.quiet {
                 push_top_files(&mut out, &resp.top_files, resp.top_files_more);
             }
-            push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
+            let mut leads: Vec<&str> = Vec::with_capacity(1 + header_notes.len());
+            leads.push(summary_lead(resp));
+            leads.extend(header_notes.iter().map(String::as_str));
+            push_footer(&mut out, &leads, &resp.omitted);
+        },
+        Body::Outline(blocks) => {
+            for block in blocks {
+                if !resp.no_header {
+                    writeln!(out, "── {}", block.target).unwrap();
+                }
+                if !opts.quiet {
+                    push_outline(&mut out, &block.entries);
+                }
+            }
+            push_footer(&mut out, &[summary_lead(resp)], &resp.omitted);
         },
         Body::Files(paths) => {
             if !opts.quiet {
@@ -943,45 +1014,113 @@ fn push_target_header(out: &mut String, block: &TargetBlock) {
     if !block.lossy_lines.is_empty() {
         push_lossy_lines(out, &block.lossy_lines);
     }
-    if let Some(sha) = &block.sha {
-        write!(out, " · sha:{}", sha.as_str()).unwrap();
-    }
     out.push('\n');
+}
+
+/// `--no-header` drops the summary too, so a read that left nothing out ends with no footer line.
+fn summary_lead(resp: &Response) -> &str {
+    if resp.no_header {
+        ""
+    } else {
+        &resp.footer.summary
+    }
+}
+
+fn push_outline(out: &mut String, entries: &[OutlineEntry]) {
+    for entry in entries {
+        push_padded(out, entry.line, 0);
+        if entry.end_line != entry.line {
+            out.push('-');
+            push_padded(out, entry.end_line, 0);
+        }
+        out.push('\t');
+        out.push_str(&entry.sig);
+        out.push('\n');
+    }
 }
 
 /// Enough to go and look; a mostly Latin-1 file would otherwise list every line.
 const LOSSY_LINES_LISTED: usize = 5;
 
 fn push_lossy_lines(out: &mut String, lines: &[usize]) {
-    out.push_str(if lines.len() == 1 {
-        " · non-UTF-8 line "
+    out.push_str(" · ");
+    out.push_str(&lossy_lines_text(lines));
+}
+
+fn lossy_lines_text(lines: &[usize]) -> String {
+    let mut text = String::new();
+    text.push_str(if lines.len() == 1 {
+        "non-UTF-8 line "
     } else {
-        " · non-UTF-8 lines "
+        "non-UTF-8 lines "
     });
     for (i, line) in lines.iter().take(LOSSY_LINES_LISTED).enumerate() {
         if i > 0 {
-            out.push_str(", ");
+            text.push_str(", ");
         }
-        write!(out, "{line}").unwrap();
+        write!(text, "{line}").unwrap();
     }
     if let Some(more) = lines
         .len()
         .checked_sub(LOSSY_LINES_LISTED)
         .filter(|n| *n > 0)
     {
-        write!(out, " (+{more} more)").unwrap();
+        write!(text, " (+{more} more)").unwrap();
+    }
+    text
+}
+
+/// `--no-header` prints no header line, so anything only the header would have named — CRLF
+/// stripping, lossy decoding, a guessed symbol span — would otherwise vanish with no trace.
+fn header_note(block: &TargetBlock) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if block.crlf {
+        parts.push("crlf".to_owned());
+    }
+    if !block.lossy_lines.is_empty() {
+        parts.push(lossy_lines_text(&block.lossy_lines));
+    }
+    if let Some(resolver) = &block.resolver {
+        parts.push(format!("via {resolver}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("{}: {}", block.target, parts.join(" \u{b7} ")))
     }
 }
 
 // A tab, not spaces: in a trial a model read a two-space gutter as indentation and copied it into
 // `--old`. A tab also matches `cat -n`'s number-then-tab shape.
 fn push_lines(out: &mut String, lines: &[Line], width: usize, opts: RenderOptions) {
+    push_lines_faithful(out, lines, width, opts, false);
+}
+
+/// `no_final_newline`: the block's real last line has none in the source, and `--no-header
+/// --no-numbers` renders raw bytes, so `sed -n` and this must agree on not adding one.
+fn push_lines_faithful(
+    out: &mut String,
+    lines: &[Line],
+    width: usize,
+    opts: RenderOptions,
+    no_final_newline: bool,
+) {
     if opts.quiet {
         return;
     }
-    for line in lines {
+    // Without a number gutter, a jump between two context groups is otherwise invisible.
+    let mut previous_number: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
         let (marker, text) = (line.marker.glyph(), &line.text);
         if !opts.numbers {
+            if line.marker == Marker::Gap {
+                previous_number = None;
+            } else {
+                if previous_number.is_some_and(|previous| line.number > previous + 1) {
+                    out.push_str("--\n");
+                }
+                previous_number = Some(line.number);
+            }
             out.push_str(text);
         } else if line.marker == Marker::Gap {
             write!(out, "{:>width$}{marker}\t{text}", "").unwrap();
@@ -991,7 +1130,9 @@ fn push_lines(out: &mut String, lines: &[Line], width: usize, opts: RenderOption
             out.push('\t');
             out.push_str(text);
         }
-        out.push('\n');
+        if !no_final_newline || i + 1 < lines.len() {
+            out.push('\n');
+        }
     }
 }
 
@@ -1040,6 +1181,17 @@ fn push_top_files(out: &mut String, rows: &[CountRow], more: usize) {
     }
 }
 
+/// `edit.rs::match_kind` is `""` for an insertion (no matching concept) or `"exact"` for a
+/// literal, unfolded replace — the two values with nothing a full echo would add. Any other value
+/// (a `normalized (...)` fold, or an `--expect`/`--if` confirmation note) is worth keeping visible,
+/// so it still gets the full echo. A guessed plaintext span (`resolver` set) also keeps the full
+/// echo: an exact match at a span the tool is unsure of is not "nothing else to confirm".
+fn all_clean(results: &[EditResult]) -> bool {
+    results.iter().all(|r| {
+        matches!(r.match_kind.as_str(), "" | "exact") && !r.reverted && r.resolver.is_none()
+    })
+}
+
 fn push_edit(
     out: &mut String,
     resp: &Response,
@@ -1047,7 +1199,8 @@ fn push_edit(
     width: usize,
     opts: RenderOptions,
 ) {
-    if !opts.quiet {
+    let terse = !opts.quiet && all_clean(results);
+    if !opts.quiet && !terse {
         for result in results {
             push_edit_header(out, result);
             if let Some(region) = &result.region {
@@ -1055,8 +1208,26 @@ fn push_edit(
             }
         }
     }
+    // A `RegionGap` names a hole in the per-result echo; the terse footer omits that echo
+    // entirely, so an unrendered echo has no gap left to annotate.
+    let omitted: Cow<[Omission]> = if terse {
+        Cow::Owned(
+            resp.omitted
+                .iter()
+                .filter(|o| !matches!(o, Omission::RegionGap { .. }))
+                .cloned()
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(&resp.omitted)
+    };
     // A batch has no single check to report; the verb composes the aggregate into the summary.
     if let [only] = results {
+        let lead = if terse {
+            edit_lead(only)
+        } else {
+            String::new()
+        };
         let check = only.check.as_ref().map(check_line).unwrap_or_default();
         // After a revert, the same hash twice would read as a change that did not happen.
         let sha = if only.sha.before == only.sha.after {
@@ -1069,9 +1240,9 @@ fn push_edit(
             )
         };
         let unchanged = if only.reverted { "file unchanged" } else { "" };
-        push_footer(out, &[&check, unchanged, &sha], &resp.omitted);
+        push_footer(out, &[&lead, &check, unchanged, &sha], &omitted);
     } else {
-        push_footer(out, &[&resp.footer.summary], &resp.omitted);
+        push_footer(out, &[&resp.footer.summary], &omitted);
     }
 }
 
@@ -1084,23 +1255,30 @@ fn check_line(check: &CheckResult) -> String {
     }
 }
 
-/// `edit` sizes its cost estimate with this, so the estimate and the header cannot disagree.
-pub fn push_edit_header(out: &mut String, result: &EditResult) {
-    write!(out, "── {}", result.path.display()).unwrap();
+/// The path and its replacement/insertion phrase, shared by the full header and the terse footer
+/// lead — the two places `edit` names what it did to a file.
+fn edit_lead(result: &EditResult) -> String {
+    let mut lead = result.path.display().to_string();
     match &result.kind {
         EditKind::Replaced { count } => {
-            write!(out, " · {count} replacement{}", plural_suffix(*count)).unwrap();
-            push_line_runs(out, &result.lines);
+            write!(lead, " · {count} replacement{}", plural_suffix(*count)).unwrap();
+            push_line_runs(&mut lead, &result.lines);
         },
         EditKind::Inserted { lines, anchor } => {
             write!(
-                out,
+                lead,
                 " · inserted {lines} line{} {anchor}",
                 plural_suffix(*lines)
             )
             .unwrap();
         },
     }
+    lead
+}
+
+/// `edit` sizes its cost estimate with this, so the estimate and the header cannot disagree.
+pub fn push_edit_header(out: &mut String, result: &EditResult) {
+    write!(out, "── {}", edit_lead(result)).unwrap();
     if !result.match_kind.is_empty() {
         write!(out, " · {}", result.match_kind).unwrap();
     }
@@ -1360,7 +1538,8 @@ fn number_width(resp: &Response) -> usize {
             .flat_map(|r| r.region.iter().flat_map(|g| g.lines.iter()))
             .map(|l| l.number)
             .max(),
-        Body::Files(_)
+        Body::Outline(_)
+        | Body::Files(_)
         | Body::Counts(_)
         | Body::Raw { .. }
         | Body::Write(_)
@@ -1382,6 +1561,7 @@ fn digits(n: usize) -> usize {
 fn capacity_hint(resp: &Response) -> usize {
     let lines = match &resp.body {
         Body::Targets(blocks) => blocks.iter().map(|b| b.lines.len()).sum::<usize>(),
+        Body::Outline(blocks) => blocks.iter().map(|b| b.entries.len() + 1).sum(),
         Body::Edit(results) => results
             .iter()
             .map(|r| r.region.as_ref().map_or(0, |g| g.lines.len()))
@@ -1402,7 +1582,9 @@ fn capacity_hint(resp: &Response) -> usize {
 
 fn render_json(resp: &Response) -> String {
     let body = match &resp.body {
-        Body::Targets(_) | Body::Files(_) | Body::Counts(_) => serde_json::to_string(resp),
+        Body::Targets(_) | Body::Outline(_) | Body::Files(_) | Body::Counts(_) => {
+            serde_json::to_string(resp)
+        },
         Body::Raw { field, text } => serde_json::to_string(&BTreeMap::from([(*field, text)])),
         Body::Edit(results) => match results.as_slice() {
             [only] => json_with_tail(only, resp),
@@ -1451,6 +1633,11 @@ fn render_jsonl(resp: &Response) -> String {
     let mut out = String::with_capacity(capacity_hint(resp));
     match &resp.body {
         Body::Targets(blocks) => {
+            for block in blocks {
+                push_json_line(&mut out, block);
+            }
+        },
+        Body::Outline(blocks) => {
             for block in blocks {
                 push_json_line(&mut out, block);
             }
@@ -1578,7 +1765,7 @@ mod tests {
             resolver: None,
             crlf: false,
             lossy_lines: Vec::new(),
-            sha: None,
+            no_trailing_newline: false,
             lines: Vec::new(),
         }
     }
@@ -1594,6 +1781,7 @@ mod tests {
             stats: Stats::new(0, bytes),
             top_files: Vec::new(),
             top_files_more: 0,
+            no_header: false,
         }
     }
 
@@ -1618,15 +1806,14 @@ mod tests {
     }
 
     #[test]
-    fn whole_file_header_names_range_total_and_sha() {
+    fn whole_file_header_names_range_and_total() {
         let mut b = block("plugins/example/hooks/hooks.json", 1, 64, 64);
-        b.sha = Some(sha("3e9a3e9a3e9a"));
         b.lines = vec![line(1, Marker::None, "{")];
         let out = render(&targets(vec![b], 0), Format::Text, &opts());
 
         assert_eq!(
             first_line(&out),
-            "── plugins/example/hooks/hooks.json  (1-64 of 64) · sha:3e9a3e9a3e9a"
+            "── plugins/example/hooks/hooks.json  (1-64 of 64)"
         );
     }
 
@@ -1635,12 +1822,11 @@ mod tests {
         let mut b = block("agents/mine-refuter.md", 1, 200, 243);
         b.window = Some(200);
         b.not_shown = Some((201, 243));
-        b.sha = Some(sha("9c029c029c02"));
         let out = render(&targets(vec![b], 0), Format::Text, &opts());
 
         assert_eq!(
             first_line(&out),
-            "── agents/mine-refuter.md  (1-200 of 243 · window 200 · :201-243 not shown) · sha:9c029c029c02"
+            "── agents/mine-refuter.md  (1-200 of 243 · window 200 · :201-243 not shown)"
         );
     }
 
@@ -1648,21 +1834,204 @@ mod tests {
     fn symbol_header_names_the_resolver() {
         let mut tree_sitter = block("src/store/usage.ts#usage", 38, 61, 212);
         tree_sitter.resolver = Some(Resolver::TreeSitter);
-        tree_sitter.sha = Some(sha("e77be77be77b"));
         let out = render(&targets(vec![tree_sitter], 0), Format::Text, &opts());
         assert_eq!(
             first_line(&out),
-            "── src/store/usage.ts#usage  (38-61 of 212 · via tree-sitter) · sha:e77be77be77b"
+            "── src/store/usage.ts#usage  (38-61 of 212 · via tree-sitter)"
         );
 
         let mut heuristic = block("census.md#'Bottom line'", 39, 60, 353);
         heuristic.resolver = Some(Resolver::Heuristic("heading"));
-        heuristic.sha = Some(sha("a1c4a1c4a1c4"));
         let out = render(&targets(vec![heuristic], 0), Format::Text, &opts());
         assert_eq!(
             first_line(&out),
-            "── census.md#'Bottom line'  (39-60 of 353 · via heuristic (heading)) · sha:a1c4a1c4a1c4"
+            "── census.md#'Bottom line'  (39-60 of 353 · via heuristic (heading))"
         );
+    }
+
+    #[test]
+    fn no_header_drops_every_header_and_the_summary_of_a_complete_read() {
+        let mut first = block("a.ts", 1, 2, 2);
+        first.lines = vec![line(1, Marker::None, "one"), line(2, Marker::None, "two")];
+        let mut second = block("b.ts", 1, 1, 1);
+        second.lines = vec![line(1, Marker::None, "three")];
+        let mut resp = targets(vec![first, second], 0);
+        resp.footer.summary = "showed 2 targets · 3 lines".to_owned();
+        resp.no_header = true;
+
+        let out = render(&resp, Format::Text, &RenderOptions {
+            numbers: false,
+            quiet: false,
+        });
+
+        assert_eq!(out, "one\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn no_header_still_names_an_omission_in_the_footer() {
+        let mut b = block("big.md", 1, 2, 243);
+        b.window = Some(2);
+        b.not_shown = Some((3, 243));
+        b.lines = vec![line(1, Marker::None, "one"), line(2, Marker::None, "two")];
+        let mut resp = targets(vec![b], 0);
+        resp.footer.summary = "showed 1 target · 2 lines".to_owned();
+        resp.omitted = vec![Omission::Window {
+            shown: (1, 2),
+            total: 243,
+        }];
+        resp.no_header = true;
+
+        let out = render(&resp, Format::Text, &opts());
+
+        assert_eq!(out, "1 \tone\n2 \ttwo\n── :3-243 not shown\n");
+    }
+
+    #[test]
+    fn no_header_names_crlf_lossy_and_resolver_in_the_footer_on_a_complete_read() {
+        let mut b = block("mix.txt", 1, 2, 2);
+        b.crlf = true;
+        b.lossy_lines = vec![1];
+        b.lines = vec![line(1, Marker::None, "one"), line(2, Marker::None, "two")];
+        let mut resp = targets(vec![b], 0);
+        resp.no_header = true;
+
+        let out = render(&resp, Format::Text, &opts());
+
+        assert_eq!(
+            out,
+            "1 \tone\n2 \ttwo\n── mix.txt: crlf \u{b7} non-UTF-8 line 1\n"
+        );
+    }
+
+    #[test]
+    fn no_header_names_a_guessed_resolver_in_the_footer() {
+        let mut b = block("door.kt", 3, 3, 3);
+        b.resolver = Some(Resolver::Heuristic("plaintext"));
+        b.lines = vec![line(3, Marker::None, "fun close() {}")];
+        let mut resp = targets(vec![b], 0);
+        resp.no_header = true;
+
+        let out = render(&resp, Format::Text, &opts());
+
+        assert_eq!(
+            out,
+            "3 \tfun close() {}\n── door.kt: via heuristic (plaintext)\n"
+        );
+    }
+
+    #[test]
+    fn header_on_carries_crlf_and_lossy_in_the_header_not_a_footer_note() {
+        let mut b = block("mix.txt", 1, 2, 2);
+        b.crlf = true;
+        b.lossy_lines = vec![1];
+        b.lines = vec![line(1, Marker::None, "one"), line(2, Marker::None, "two")];
+        let resp = targets(vec![b], 0);
+
+        let out = render(&resp, Format::Text, &opts());
+
+        assert_eq!(
+            out,
+            "── mix.txt  (1-2 of 2) \u{b7} crlf \u{b7} non-UTF-8 line 1\n1 \tone\n2 \ttwo\n"
+        );
+        assert!(!out.contains("mix.txt: "), "{out}");
+    }
+
+    #[test]
+    fn no_header_no_numbers_on_a_file_with_no_trailing_newline_adds_none_of_its_own() {
+        let mut b = block("noeof.txt", 1, 3, 3);
+        b.no_trailing_newline = true;
+        b.lines = vec![
+            line(1, Marker::None, "a"),
+            line(2, Marker::None, "b"),
+            line(3, Marker::None, "c"),
+        ];
+        let mut resp = targets(vec![b], 0);
+        resp.no_header = true;
+
+        let out = render(&resp, Format::Text, &RenderOptions {
+            numbers: false,
+            quiet: false,
+        });
+
+        // `sed -n '1,3p'` on a file whose last line has no `\n` prints none of its own either.
+        assert_eq!(out, "a\nb\nc");
+    }
+
+    #[test]
+    fn header_on_still_adds_the_synthetic_trailing_newline() {
+        // Control: the byte-faithful contract only applies to `--no-header --no-numbers`
+        // together — with the header on, `no_trailing_newline` changes nothing.
+        let mut b = block("noeof.txt", 1, 3, 3);
+        b.no_trailing_newline = true;
+        b.lines = vec![
+            line(1, Marker::None, "a"),
+            line(2, Marker::None, "b"),
+            line(3, Marker::None, "c"),
+        ];
+        let resp = targets(vec![b], 0);
+
+        let out = render(&resp, Format::Text, &RenderOptions {
+            numbers: false,
+            quiet: false,
+        });
+
+        assert!(out.ends_with("c\n"), "{out}");
+    }
+
+    fn outline(entries: &[(usize, usize, &str)]) -> Response {
+        let block = OutlineBlock {
+            target: "lib.rs".to_owned(),
+            path: PathBuf::from("lib.rs"),
+            entries: entries
+                .iter()
+                .map(|(line, end_line, sig)| OutlineEntry {
+                    sig: (*sig).to_owned(),
+                    line: *line,
+                    end_line: *end_line,
+                })
+                .collect(),
+            omitted: false,
+        };
+        let mut resp = response("show", Body::Outline(vec![block]), 0);
+        resp.footer.summary = "showed 1 target · 2 definitions".to_owned();
+        resp
+    }
+
+    #[test]
+    fn an_outline_prints_a_range_a_tab_and_the_signature_and_one_number_for_a_one_line_definition()
+    {
+        let resp = outline(&[
+            (3, 9, "pub fn open(path: &Path) -> File {"),
+            (12, 12, "const CAP: usize = 20;"),
+        ]);
+
+        assert_eq!(
+            render(&resp, Format::Text, &opts()),
+            "── lib.rs\n3-9\tpub fn open(path: &Path) -> File {\n12\tconst CAP: usize = 20;\n\
+             ── showed 1 target · 2 definitions\n"
+        );
+    }
+
+    #[test]
+    fn an_outline_under_no_header_prints_only_its_entries() {
+        let mut resp = outline(&[(3, 9, "fn open() {")]);
+        resp.no_header = true;
+
+        assert_eq!(render(&resp, Format::Text, &opts()), "3-9\tfn open() {\n");
+    }
+
+    #[test]
+    fn an_outline_renders_the_same_struct_as_json() {
+        let resp = outline(&[(3, 9, "fn open() {")]);
+        let value: serde_json::Value =
+            serde_json::from_str(&render(&resp, Format::Json, &opts())).expect("valid JSON");
+
+        assert_eq!(
+            value["outline"][0]["entries"][0],
+            serde_json::json!({"sig": "fn open() {", "line": 3, "end_line": 9})
+        );
+        assert_eq!(value["outline"][0]["omitted"], false);
+        assert!(value["outline"][0].get("sha").is_none());
     }
 
     #[test]
@@ -1705,7 +2074,7 @@ mod tests {
         let mut b = block("a.ts", 9, 10, 1234);
         b.lines = vec![
             line(9, Marker::None, "kept"),
-            line(1234, Marker::Replaced, "replaced"),
+            line(10, Marker::Replaced, "replaced"),
         ];
         let out = render(&targets(vec![b], 0), Format::Text, &RenderOptions {
             numbers: false,
@@ -1716,16 +2085,51 @@ mod tests {
     }
 
     #[test]
+    fn no_numbers_separates_non_adjacent_context_groups_with_a_dashes_line() {
+        let mut b = block("g.txt", 2, 11, 12);
+        b.lines = vec![
+            line(2, Marker::Context, "2"),
+            line(3, Marker::Hit, "needle"),
+            line(4, Marker::Context, "4"),
+            line(9, Marker::Context, "9"),
+            line(10, Marker::Hit, "needle"),
+            line(11, Marker::Context, "11"),
+        ];
+        let out = render(&targets(vec![b], 0), Format::Text, &RenderOptions {
+            numbers: false,
+            quiet: false,
+        });
+
+        assert!(
+            out.contains("4\n--\n9\n"),
+            "a gap between two context groups needs a separator when there is no number \
+             gutter to show it: {out}"
+        );
+    }
+
+    #[test]
+    fn numbers_on_prints_no_dashes_separator_between_context_groups() {
+        let mut b = block("g.txt", 2, 11, 12);
+        b.lines = vec![
+            line(2, Marker::Context, "2"),
+            line(3, Marker::Hit, "needle"),
+            line(9, Marker::Context, "9"),
+        ];
+        let out = render(&targets(vec![b], 0), Format::Text, &opts());
+
+        assert!(!out.contains("--"), "{out}");
+    }
+
+    #[test]
     fn quiet_keeps_the_header_and_the_footer_and_drops_the_content() {
         let mut b = block("a.ts", 1, 2, 2);
-        b.sha = Some(sha("0e1f0e1f0e1f"));
         b.lines = vec![line(1, Marker::None, "one"), line(2, Marker::None, "two")];
         let mut resp = targets(vec![b], 0);
         resp.footer.summary = "showed 1 file".to_owned();
 
         assert_eq!(
             render(&resp, Format::Text, &quiet()),
-            "── a.ts  (1-2 of 2) · sha:0e1f0e1f0e1f\n── showed 1 file\n"
+            "── a.ts  (1-2 of 2)\n── showed 1 file\n"
         );
     }
 
@@ -2128,7 +2532,7 @@ mod tests {
     }
 
     #[test]
-    fn one_edit_renders_its_region_and_a_check_and_sha_footer() {
+    fn a_clean_single_edit_renders_one_line_with_the_check_and_sha_pair() {
         let mut result = edit_result("src/store/usage.ts", 1, vec![42]);
         result.match_kind = "exact".to_owned();
         result.region = Some(Region {
@@ -2146,11 +2550,93 @@ mod tests {
 
         assert_eq!(
             out,
-            "── src/store/usage.ts · 1 replacement · line 42 · exact\n\
+            "── src/store/usage.ts · 1 replacement · line 42 · check: structure ok · \
+             sha:e77be77be77b→b410b410b410\n"
+        );
+    }
+
+    #[test]
+    fn a_normalized_single_edit_renders_the_full_echo_region_and_a_check_and_sha_footer() {
+        let mut result = edit_result("src/store/usage.ts", 1, vec![42]);
+        result.match_kind = "normalized (\u{2013} \u{2192} -)".to_owned();
+        result.region = Some(Region {
+            start: 40,
+            end: 44,
+            lines: vec![
+                line(40, Marker::None, "export function usage() {"),
+                line(42, Marker::Replaced, "  const cap = 20"),
+                line(44, Marker::None, "}"),
+            ],
+        });
+        result.check = Some(structure_ok());
+
+        let out = render(&edit_response(vec![result], 840), Format::Text, &opts());
+
+        assert_eq!(
+            out,
+            "── src/store/usage.ts · 1 replacement · line 42 · normalized (\u{2013} \u{2192} -)\n\
              40 \texport function usage() {\n\
              42~\t  const cap = 20\n\
              44 \t}\n\
              ── check: structure ok · sha:e77be77be77b→b410b410b410\n"
+        );
+    }
+
+    #[test]
+    fn a_guessed_span_renders_the_full_echo_even_though_the_match_was_exact() {
+        let mut result = edit_result("greet.kt", 1, vec![6]);
+        result.match_kind = "exact".to_owned();
+        result.resolver = Some("span guessed (plaintext heuristic)");
+        result.region = Some(Region {
+            start: 5,
+            end: 6,
+            lines: vec![
+                line(5, Marker::None, "// limit"),
+                line(6, Marker::Replaced, "val limit = 30"),
+            ],
+        });
+
+        let out = render(&edit_response(vec![result], 40), Format::Text, &opts());
+
+        assert!(
+            out.contains("6~\t"),
+            "an exact match at a guessed span is not \"nothing else to confirm\": {out}"
+        );
+        assert!(out.contains("span guessed (plaintext heuristic)"), "{out}");
+    }
+
+    #[test]
+    fn a_truncated_span_s_gap_omission_is_dropped_from_a_terse_one_liner() {
+        let mut result = edit_result("plain.txt", 1, (10..=19).collect());
+        result.match_kind = "exact".to_owned();
+        result.region = Some(Region {
+            start: 9,
+            end: 20,
+            lines: vec![
+                line(9, Marker::None, "line 9"),
+                line(10, Marker::Replaced, "LINE 10"),
+                line(11, Marker::Replaced, "LINE 11"),
+                Line {
+                    number: 0,
+                    marker: Marker::Gap,
+                    text: ":12-17 not shown".into(),
+                },
+                line(18, Marker::Replaced, "LINE 18"),
+                line(19, Marker::Replaced, "LINE 19"),
+                line(20, Marker::None, "line 20"),
+            ],
+        });
+        let mut resp = edit_response(vec![result], 200);
+        resp.omitted = vec![Omission::RegionGap {
+            not_shown: vec![(12, 17)],
+            path: None,
+        }];
+
+        let out = render(&resp, Format::Text, &opts());
+
+        assert!(
+            !out.contains("not shown"),
+            "the gap named a hole in the echo that terse no longer prints: {out}"
         );
     }
 
@@ -2238,7 +2724,7 @@ mod tests {
     }
 
     #[test]
-    fn a_batch_edit_drops_the_per_result_check_line_for_an_aggregate_summary() {
+    fn a_clean_batch_edit_renders_only_the_aggregate_summary_with_no_per_file_echo() {
         let mut first = edit_result("src/a.ts", 1, vec![42]);
         first.check = Some(structure_ok());
         let second = edit_result("src/b.ts", 1, vec![3]);
@@ -2261,14 +2747,25 @@ mod tests {
 
         assert_eq!(
             out,
-            "── src/a.ts · 1 replacement · line 42\n\
-             ── src/b.ts · 1 replacement · line 3\n\
-             ── src/c.ts · inserted 1 line after line 1\n\
-             ── 3 files · 3 edits · all applied · checks: structure ok ×3\n"
+            "── 3 files · 3 edits · all applied · checks: structure ok ×3\n"
         );
-        assert!(
-            !out.contains("sha:"),
-            "a batch has no single before/after pair to report"
+    }
+
+    #[test]
+    fn an_unclean_batch_edit_renders_the_full_per_file_echo_for_every_result() {
+        let first = edit_result("src/a.ts", 1, vec![42]);
+        let mut second = edit_result("src/b.ts", 1, vec![3]);
+        second.match_kind = "normalized (\u{2013} \u{2192} -)".to_owned();
+        let mut resp = edit_response(vec![first, second], 900);
+        resp.footer.summary = "2 files · 2 edits · all applied".to_owned();
+
+        let out = render(&resp, Format::Text, &opts());
+
+        assert_eq!(
+            out,
+            "── src/a.ts · 1 replacement · line 42\n\
+             ── src/b.ts · 1 replacement · line 3 · normalized (\u{2013} \u{2192} -)\n\
+             ── 2 files · 2 edits · all applied\n"
         );
     }
 
@@ -2343,7 +2840,8 @@ mod tests {
 
         assert_eq!(
             first_line(&out),
-            "── src/store/usage.ts · 4 replacements · lines 12, 42, 57, 88"
+            "── src/store/usage.ts · 4 replacements · lines 12, 42, 57, 88 · \
+             sha:e77be77be77b→b410b410b410"
         );
     }
 
@@ -2363,7 +2861,7 @@ mod tests {
         let out = render(&edit_response(vec![after_a_line], 0), Format::Text, &opts());
         assert_eq!(
             first_line(&out),
-            "── src/app.ts · inserted 1 line after line 3"
+            "── src/app.ts · inserted 1 line after line 3 · sha:e77be77be77b→b410b410b410"
         );
 
         let before_a_symbol = EditResult {
@@ -2384,7 +2882,8 @@ mod tests {
         );
         assert_eq!(
             first_line(&out),
-            "── src/store/usage.ts · inserted 1 line before #usage (line 38)"
+            "── src/store/usage.ts · inserted 1 line before #usage (line 38) · \
+             sha:e77be77be77b→b410b410b410"
         );
     }
 
@@ -2544,7 +3043,6 @@ mod tests {
         let mut b = block("src/store/usage.ts#usage", 38, 61, 212);
         b.path = PathBuf::from("src/store/usage.ts");
         b.resolver = Some(Resolver::TreeSitter);
-        b.sha = Some(sha("e77be77be77b"));
         b.lines = vec![line(
             38,
             Marker::None,
@@ -2560,7 +3058,7 @@ mod tests {
         assert_eq!(keys(&value), ["omitted", "stats", "targets"]);
         let target = &value["targets"][0];
         assert_eq!(keys(target), [
-            "end", "lines", "path", "resolver", "sha", "start", "target", "total"
+            "end", "lines", "path", "resolver", "start", "target", "total"
         ]);
         assert_eq!(target["resolver"], "tree-sitter");
         assert_eq!(value["stats"]["tokens_est"], 210);
@@ -2607,7 +3105,6 @@ mod tests {
     #[test]
     fn the_same_response_renders_byte_identically_and_without_colour() {
         let mut b = block("a.ts", 1, 2, 2);
-        b.sha = Some(sha("0e1f0e1f0e1f"));
         b.lines = vec![line(1, Marker::Added, "one"), line(2, Marker::None, "two")];
         let mut resp = targets(vec![b], 840);
         resp.footer.summary = "showed 1 file".to_owned();
@@ -3082,6 +3579,14 @@ mod tests {
                 Omission::CaseFolded { hits: 3 },
                 "3 hits match only ignoring case (-s for exact case)",
             ),
+            (
+                Omission::CaseInsensitiveOnly { hits: 1 },
+                "1 hit matches only ignoring case",
+            ),
+            (
+                Omission::CaseInsensitiveOnly { hits: 3 },
+                "3 hits match only ignoring case",
+            ),
         ];
         for (omission, expected) in cases {
             assert_eq!(omission.to_string(), expected);
@@ -3120,18 +3625,13 @@ mod tests {
     }
 
     #[test]
-    fn a_crlf_file_names_it_between_the_span_and_the_sha() {
+    fn a_crlf_file_names_it_after_the_span() {
         let mut crlf = block("a.txt", 1, 3, 3);
-        crlf.sha = Some(sha("0123456789ab"));
         crlf.crlf = true;
-        assert_eq!(
-            header_of(crlf),
-            "── a.txt  (1-3 of 3) · crlf · sha:0123456789ab"
-        );
+        assert_eq!(header_of(crlf), "── a.txt  (1-3 of 3) · crlf");
 
-        let mut lf = block("a.txt", 1, 3, 3);
-        lf.sha = Some(sha("0123456789ab"));
-        assert_eq!(header_of(lf), "── a.txt  (1-3 of 3) · sha:0123456789ab");
+        let lf = block("a.txt", 1, 3, 3);
+        assert_eq!(header_of(lf), "── a.txt  (1-3 of 3)");
 
         let mut bare = bare_block("a.txt");
         bare.crlf = true;
@@ -3142,31 +3642,29 @@ mod tests {
     fn lossy_lines_follow_crlf_and_list_at_most_five() {
         let lossy = |lines: Vec<usize>, crlf: bool| {
             let mut b = block("latin1.txt", 1, 40, 40);
-            b.sha = Some(sha("0123456789ab"));
             b.crlf = crlf;
             b.lossy_lines = lines;
             header_of(b)
         };
         assert_eq!(
             lossy(vec![3, 7], false),
-            "── latin1.txt  (1-40 of 40) · non-UTF-8 lines 3, 7 · sha:0123456789ab"
+            "── latin1.txt  (1-40 of 40) · non-UTF-8 lines 3, 7"
         );
         assert_eq!(
             lossy(vec![3, 7], true),
-            "── latin1.txt  (1-40 of 40) · crlf · non-UTF-8 lines 3, 7 · sha:0123456789ab"
+            "── latin1.txt  (1-40 of 40) · crlf · non-UTF-8 lines 3, 7"
         );
         assert_eq!(
             lossy(vec![3, 7, 9, 12, 15, 20, 31], false),
-            "── latin1.txt  (1-40 of 40) · non-UTF-8 lines 3, 7, 9, 12, 15 (+2 more) · \
-             sha:0123456789ab"
+            "── latin1.txt  (1-40 of 40) · non-UTF-8 lines 3, 7, 9, 12, 15 (+2 more)"
         );
         assert_eq!(
             lossy(vec![3, 7, 9, 12, 15], false),
-            "── latin1.txt  (1-40 of 40) · non-UTF-8 lines 3, 7, 9, 12, 15 · sha:0123456789ab"
+            "── latin1.txt  (1-40 of 40) · non-UTF-8 lines 3, 7, 9, 12, 15"
         );
         assert_eq!(
             lossy(vec![3], false),
-            "── latin1.txt  (1-40 of 40) · non-UTF-8 line 3 · sha:0123456789ab"
+            "── latin1.txt  (1-40 of 40) · non-UTF-8 line 3"
         );
     }
 

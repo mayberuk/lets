@@ -1,6 +1,1 @@
-── crlf.txt · 1 replacement · lines 2, 3 · exact
-1 	alpha
-2~	BETA
-3~	GAMMA
-4 	delta
-── sha:c636be1b624d→99dc02a6c775 · check: skipped (no grammar for .txt) · --old matched as CRLF
+── crlf.txt · 1 replacement · lines 2, 3 · sha:c636be1b624d→99dc02a6c775 · check: skipped (no grammar for .txt) · --old matched as CRLF

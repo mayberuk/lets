@@ -1,8 +1,5 @@
 ```console
 $ lets edit config.yaml --old 'name: lets' --new 'name: lets-cli'
-── config.yaml · 1 replacement · line 1 · exact
-1~	name: lets-cli
-2 	items:
-── check: yaml ok · sha:e1046ecc996b→c3a6db4757bd
+── config.yaml · 1 replacement · line 1 · check: yaml ok · sha:e1046ecc996b→c3a6db4757bd
 
 ```

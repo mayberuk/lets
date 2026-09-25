@@ -1,8 +1,10 @@
 Case is smart by default, as in ripgrep's `--smart-case`: a pattern with no uppercase letter
 searches case-insensitively, and a hit that matched only by ignoring case is named in the footer.
-`-s` forces exact case back; the second call is the control, finding nothing once folding is
-turned off. A pattern carrying an uppercase letter stays exact on its own, and a folded search
-whose hits all matched exactly anyway carries no case note.
+`-s` forces exact case back; the second call finds 0 exact-case hits but names the count a
+case-insensitive re-walk would have found, still exiting 1. The third call is that hint's own
+control: a pattern that also matches nothing case-insensitively gets no hint line. A pattern
+carrying an uppercase letter stays exact on its own, and a folded search whose hits all matched
+exactly anyway carries no case note.
 
 ```console
 $ lets find 'billing plan' notes.md
@@ -13,8 +15,14 @@ $ lets find 'billing plan' notes.md
 
 $ lets find 'billing plan' -s notes.md
 ? 1
-── 0 hits in 0 files · searched 1 file
+── 0 hits in 0 files · searched 1 file · 1 hit matches only ignoring case
 no hits for «billing plan»
+ERROR_CODE=not_found
+
+$ lets find 'refund policy' -s notes.md
+? 1
+── 0 hits in 0 files · searched 1 file
+no hits for «refund policy»
 ERROR_CODE=not_found
 
 $ lets find 'Billing plan' notes.md

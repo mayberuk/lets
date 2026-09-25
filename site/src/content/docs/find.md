@@ -36,6 +36,7 @@ matched only because case was ignored is named in the footer.
 | `-s, --case-sensitive` | force exact case, overriding smart case | off |
 | `-w, --word` | match whole words only | off |
 | `--cap <N>` | raise the hit cap (prints hits, not the over-cap map) | 50 |
+| `--cap-exit-0` | over the cap, print the same top-files map but exit 0 instead of 1 — for a rewritten `grep … && …` chain that needs `grep`'s own exit-status parity | off |
 | `-l, --files` | list matching files only, one bare path per line, no cap | off |
 | `-c, --count` | print the footer first, then one `<count>  <path>` row per file | off |
 | `-g, --glob <GLOB>` (alias `--include`) | narrow the walk to paths the glob matches; footer names it | — |
@@ -45,6 +46,7 @@ matched only because case was ignored is named in the footer.
 | `-B <N>` | lines of context before | — |
 | `-C <N>` | lines of context on both sides | — |
 | `--no-expand` | print hit lines only, never the enclosing symbol or the lines around a hit | off |
+| `--no-numbers` | print hit lines with no line-number gutter | off |
 | `--no-ignore` | do not honor `.gitignore`/`.ignore`/global excludes | off |
 | `--allow-outside` | permit a path outside the working tree | off |
 | `--json` / `--jsonl` | structured output | off |
@@ -90,6 +92,8 @@ Over the cap, no hit lines print. Instead:
   `· «A\|B» had no hits, read grep-style as «A|B»`.
 - Smart case folded the search and one or more hits have no case-sensitive match of the pattern:
   `· 3 hits match only ignoring case (-s for exact case)`.
+- `-s` found no hits, but the same pattern and paths would have without it: `· 3 hits match only
+  ignoring case`, still exit 1 — no `(-s for exact case)` suffix, since `-s` was already given.
 
 ## Exit codes
 
@@ -126,14 +130,46 @@ $ lets find 'Bottom line|Next' small.md
 ── 2 hits in 1 file · searched 1 file
 ```
 
-Over the cap: no hits printed, a map of where they are instead, exit 1:
+Over the cap: the busiest file's first hits are still shown as a preview, then a map of where the
+rest are, exit 1:
 
 ```console
 $ lets find needle many-hits.txt
 ? 1
+── many-hits.txt
+ 1:	«needle»
+ 2:	«needle»
+ 3:	«needle»
+ 4:	«needle»
+ 5:	«needle»
+ 6:	«needle»
+ 7:	«needle»
+ 8:	«needle»
+ 9:	«needle»
+10:	«needle»
 64	many-hits.txt
-── 64 hits in 1 file · searched 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files · top 1 file shown
+── 64 hits in 1 file · searched 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files · first 10 of 64 hits in the busiest file shown · top 1 file shown
 ERROR_CODE=over_cap
+```
+
+`--cap-exit-0` prints the same output but exits 0, so a rewritten `grep … && …` chain sees the
+same has-any-hits exit status `grep` itself would give:
+
+```console
+$ lets find needle many-hits.txt --cap-exit-0
+── many-hits.txt
+ 1:	«needle»
+ 2:	«needle»
+ 3:	«needle»
+ 4:	«needle»
+ 5:	«needle»
+ 6:	«needle»
+ 7:	«needle»
+ 8:	«needle»
+ 9:	«needle»
+10:	«needle»
+64	many-hits.txt
+── 64 hits in 1 file · searched 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files · first 10 of 64 hits in the busiest file shown · top 1 file shown
 ```
 
 Narrowing the walk with a glob, and the control with no glob:

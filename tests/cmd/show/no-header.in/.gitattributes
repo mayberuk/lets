@@ -1,0 +1,2 @@
+# crlf.txt's CRLF endings and lossy.txt's non-UTF-8 bytes are the fixture; a checkout or commit that normalises them erases the case.
+* -text

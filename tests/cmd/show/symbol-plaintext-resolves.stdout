@@ -1,4 +1,4 @@
-── greet.kt#greet  (3-5 of 7 · via heuristic (plaintext)) · sha:[..]
+── greet.kt#greet  (3-5 of 7 · via heuristic (plaintext))
 3 	fun greet(name: String): String {
 4 	    return "hi $name"
 5 	}

@@ -1,0 +1,5 @@
+---
+source: tests/json_snapshots.rs
+expression: run.out
+---
+{"outline":[{"target":"store.go","path":"store.go","entries":[{"sig":"func Open(path string) (*Store, error) {","line":44,"end_line":46},{"sig":"func (s *Store) Open(ctx context.Context) error {","line":213,"end_line":215}],"omitted":false}],"omitted":[],"stats":{"lines":2,"bytes":105,"tokens_est":null}}

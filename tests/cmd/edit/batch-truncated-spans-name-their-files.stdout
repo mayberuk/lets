@@ -1,17 +1,1 @@
-── p.txt · 1 replacement · lines 4-10 · exact
- 3 	line 3
- 4~	line 4 EDITED
- 5~	line 5 EDITED
-  ·	:6-8 not shown
- 9~	line 9 EDITED
-10~	line 10 EDITED
-11 	line 11
-── q.txt · 1 replacement · lines 2-8 · exact
- 1 	line 1
- 2~	line 2 EDITED
- 3~	line 3 EDITED
-  ·	:4-6 not shown
- 7~	line 7 EDITED
- 8~	line 8 EDITED
- 9 	line 9
-── 2 files · 2 edits · all applied · check: skipped (p.txt: no grammar for .txt) · p.txt:6-8 not shown · check: skipped (q.txt: no grammar for .txt) · q.txt:4-6 not shown
+── 2 files · 2 edits · all applied · check: skipped (p.txt: no grammar for .txt) · check: skipped (q.txt: no grammar for .txt)

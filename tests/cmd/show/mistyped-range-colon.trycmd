@@ -14,7 +14,7 @@ nope.go:3: No such file or directory (os error 2)
 ERROR_CODE=not_found
 
 $ lets show a.go:3-5
-── a.go:3-5  (3-5 of 6) · sha:[..]
+── a.go:3-5  (3-5 of 6)
 3 	three
 4 	four
 5 	five

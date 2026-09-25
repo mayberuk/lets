@@ -3,10 +3,6 @@ A table's span now stops before the next table's header (`src/symbols/mod.rs`'s 
 
 ```console
 $ lets edit t.toml --insert-after '#package' --new 'version = "2"'
-── t.toml · inserted 1 line after #package (line 2)
-2 	name = "x"
-3+	version = "2"
-4 	[deps]
-── check: toml ok · sha:[..]→[..]
+── t.toml · inserted 1 line after #package (line 2) · check: toml ok · sha:0486752c92ba→9a6349c4cd25
 
 ```

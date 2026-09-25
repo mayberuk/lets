@@ -1,9 +1,1 @@
-── s.txt · inserted 7 lines after line 5
- 5 	line 5
- 6+	new 1
- 7+	new 2
-  ·	:8-10 not shown
-11+	new 6
-12+	new 7
-13 	line 6
-── sha:[..]→[..] · check: skipped (no grammar for .txt) · :8-10 not shown
+── s.txt · inserted 7 lines after line 5 · sha:b72837628326→bcfdb5987d81 · check: skipped (no grammar for .txt)

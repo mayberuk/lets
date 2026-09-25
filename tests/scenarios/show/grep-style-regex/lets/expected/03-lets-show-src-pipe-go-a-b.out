@@ -1,3 +1,3 @@
-── src/pipe.go@'a\|b'  (3-3 of 5) · sha:6fb94ea391f0
+── src/pipe.go@'a\|b'  (3-3 of 5)
 3 	const flags = a|b
 ── showed 1 target · 1 line

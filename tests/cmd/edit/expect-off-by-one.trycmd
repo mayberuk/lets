@@ -3,7 +3,7 @@ The control for the case above, one line off: the line number is wrong, the cont
 ```console
 $ lets edit usage.ts:7 --expect 'const cap = 10' --new '  const cap = 20'
 ? 2
-usage.ts:7: line 7 does not match --expect · it reads:   if (now > cap) return · re-read it, or confirm with --expect-all or --if sha:<12 hex>
+usage.ts:7: line 7 does not match --expect · it reads:   if (now > cap) return · re-read it, or confirm with --expect-all or --if sha:<12 hex> from an earlier `lets edit`
 ERROR_CODE=expect_refused
 
 ```

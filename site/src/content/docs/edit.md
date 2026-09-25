@@ -19,9 +19,12 @@ lets edit [OPTIONS] [TARGET] [MORE_TARGETS]...
 
 `--old` is matched as an exact substring that must occur exactly once in the target (or the
 target's line range); `--new` replaces it. The file is parsed before and after the edit and a
-guardrail reverts the write if the edit introduced a new parse error. The output shows the
-changed region with 2 lines of context and the check result, so the agent does not need to
-re-read the file to confirm the edit landed. See [target forms](/docs/targets/).
+guardrail reverts the write if the edit introduced a new parse error. An exact match with a
+passing (or inapplicable) check prints one line: the path, the replacement or insertion count,
+the check result and the sha pair — nothing else to confirm, so there is nothing else to print.
+A match that needed `--normalize` to land, or a check that reverted the edit, prints the full
+changed region with 2 lines of context instead, so the agent can see exactly what happened
+without a follow-up read. See [target forms](/docs/targets/).
 
 ## Flags
 
@@ -35,7 +38,7 @@ re-read the file to confirm the edit landed. See [target forms](/docs/targets/).
 | `--insert-after <target>` | insert `--new` after an anchor (`@'regex'` or `#symbol`); no line-number insert | — |
 | `--insert-before <target>` | insert `--new` before an anchor | — |
 | `--from -` | a fence-delimited or JSONL batch on stdin, one edit per entry; `-` is the only accepted value | — |
-| `--if sha:<12+ hex>` | refuse (exit 5) if the file changed since the `show` that produced this hash | — |
+| `--if sha:<12+ hex>` | refuse (exit 5) if the file changed since the `edit` result that reported this hash | — |
 | `--normalize` | also try a match with smart quotes, en/em dashes and non-breaking spaces folded to their ASCII forms | off |
 | `--literal-newlines` | write `--new`'s line endings exactly as typed, instead of matching them to the target file's dominant line-ending convention | off |
 | `--check <cmd\|@preset>` | layer-2 checker: a real command, or one of `@auto`, `@cargo`, `@go`, `@tsc`, `@py` | — |
@@ -102,8 +105,18 @@ is present.
 
 ## Output shape
 
+An exact match whose check passes (or does not apply) is one line — the path, the replacement or
+insertion count, the line(s) touched, the check result and the sha pair, in that order:
+
 ```
-── <path> · <N> replacement(s) · line <n> · exact
+── <path> · <N> replacement(s) · line <n> · check: <result> · sha:<before>→<after>[ · <cost>]
+```
+
+A match that needed `--normalize`, or an edit whose check reverted it, prints the changed region
+too, since there is now something worth seeing:
+
+```
+── <path> · <N> replacement(s) · line <n> · <match note>
 <n>	<context line>
 <n>+	<inserted line>
 <n>~	<replaced line>
@@ -113,7 +126,10 @@ is present.
 `+` marks an inserted line, `~` a replaced line, in the marker column right after the line
 number. A reverted edit prints `REVERTED` after the line/replacement count and shows the rejected
 line with `← parse error` (or `← invalid json`/`yaml`/`toml`), then `check: failed → reverted ·
-file unchanged`. `--quiet` returns only the footer line.
+file unchanged`. `--quiet` always returns only the footer line, whether or not the edit was exact
+and clean. A batch prints the one-line aggregate summary only when every edit in it is exact and
+its check passes; if any edit needed normalizing or reverted, every result in that batch gets its
+full per-file echo.
 
 ## Exit codes
 
@@ -132,15 +148,24 @@ file unchanged`. `--quiet` returns only the footer line.
 
 ## Examples
 
-Edit and get the proof back in the same call — the `~` marks the changed line, and the check runs
-before the output is printed, not after, in a separate call:
+Edit and get the proof back in the same call — the check runs before the output is printed, not
+after, in a separate call. The match was exact and the check passed, so the whole answer is one
+line:
 
 ```console
 $ lets edit src/usage.ts --old 'const cap = 10' --new 'const cap = 20'
-── src/usage.ts · 1 replacement · line 5 · exact
+── src/usage.ts · 1 replacement · line 5 · check: structure ok · sha:75d31d847ffb→93b5daea8ace · ~26 tokens
+```
+
+A match that needed `--normalize` to land (the file has an em dash where `--old` typed a plain
+hyphen) is worth a second look, so it gets the full echo — the `~` marks the changed line:
+
+```console
+$ lets edit src/usage.ts --old 'cap - 1' --new 'cap - 2' --normalize
+── src/usage.ts · 1 replacement · line 5 · normalized (— → -)
 3   export function usage(id: string) {
 4     const now = Date.now()
-5~    const cap = 20
+5~    const cap = cap - 2
 6     if (!id) return
 7     if (count(id) > cap) return
 ── check: structure ok · sha:75d31d847ffb→93b5daea8ace · ~45 tokens
@@ -183,7 +208,9 @@ command check failed for a/src/lib.rs: `cargo check --workspace --quiet --all-ta
 ERROR_CODE=check_failed
 ```
 
-Several edits across files in one call, validated before any file is written:
+Several edits across files in one call, validated before any file is written. Every match was
+exact and every check passed, so the batch prints only its one-line aggregate summary — no
+per-file echo:
 
 ```console
 $ lets edit --from - <<'LETS'
@@ -200,15 +227,11 @@ import { usageCap } from './config'
 import { usageLimit } from './config'
 >>>>>>>
 LETS
-── src/config.ts · 1 replacement · line 1 · exact
-1~  export const usageLimit = 10
-2   export const retries = 3
-── src/usage.ts · 1 replacement · line 1 · exact
-1~  import { usageLimit } from './config'
-2
-3   export function usage(id: string) {
-── 2 files · 2 edits · all applied · checks: structure ok ×2 · ~60 tokens
+── 2 files · 2 edits · all applied · checks: structure ok ×2 · ~17 tokens
 ```
+
+If any edit in the batch had needed normalizing, or its check had reverted it, every result in
+that batch would print its own full per-file echo instead, exactly as the single-file case does.
 
 A stale `--if` hash is refused rather than silently overwritten:
 
@@ -219,15 +242,10 @@ usage.ts changed since sha:000000000000 (now sha:c5525cc20b61)
 ERROR_CODE=changed
 ```
 
-Insert text anchored on a symbol, not a guessed line number:
+Insert text anchored on a symbol, not a guessed line number — an insertion always lands exactly,
+so a passing check means one line again:
 
 ```console
 $ lets edit usage.ts --insert-before '#usage' --new '/** Returns the running total for id. */'
-── usage.ts · inserted 1 line before #usage (line 3)
-1 	import { usageCap } from './config'
-2 	import { clock } from './clock'
-3+	/** Returns the running total for id. */
-4 	export function usage(id: string) {
-5 	  if (!id) return
-── check: structure ok · sha:c5525cc20b61→45b5b2745608
+── usage.ts · inserted 1 line before #usage (line 3) · check: structure ok · sha:c5525cc20b61→45b5b2745608
 ```

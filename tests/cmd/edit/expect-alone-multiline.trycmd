@@ -3,7 +3,7 @@
 ```console
 $ lets edit usage.ts:6-7 --expect 'const cap = 10' --new '  const cap = 20'
 ? 2
-usage.ts:6-7: --expect checks line 6 only, and the range runs to line 7 · pass --expect-all (the whole range on stdin) or --if sha:<12 hex>
+usage.ts:6-7: --expect checks line 6 only, and the range runs to line 7 · pass --expect-all (the whole range on stdin) or --if sha:<12 hex> from an earlier `lets edit`
 ERROR_CODE=expect_refused
 
 ```

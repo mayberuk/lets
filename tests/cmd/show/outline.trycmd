@@ -1,0 +1,51 @@
+`--outline` prints one line per definition the file's grammar query captures: its line range, a
+tab, and its first source line with the indentation trimmed. An `impl` block is a scope, not a
+definition, so only the method inside it is listed. A signature that wraps is still one line: the
+Go `Open` below lists as `func Open(`. `--no-header` drops the header and, with nothing left out,
+the footer.
+
+```console
+$ lets show lib.rs --outline
+── lib.rs
+3-5	pub struct Store {
+8-12	pub fn open(path: &Path) -> Store {
+15-17	pub fn wrapped(first: usize, second: usize) -> usize {
+── showed 1 target · 3 definitions
+
+$ lets show store.go --outline
+── store.go
+3-5	type Store struct {
+7-11	func Open(
+13-15	func (s *Store) Root() string {
+── showed 1 target · 3 definitions
+
+$ lets show store.go --outline --no-header
+3-5	type Store struct {
+7-11	func Open(
+13-15	func (s *Store) Root() string {
+
+```
+
+Entries carry no file column, so `--no-header` on several targets at once would run one file's
+definitions into the next with nothing to tell them apart; refused rather than guessed at. The
+control is the same two targets with the header on, which prints both files' entries under their
+own headers:
+
+```console
+$ lets show lib.rs store.go --outline --no-header
+? 64
+--outline --no-header prints no file name, and several targets need one · pass one target at a time
+ERROR_CODE=usage
+
+$ lets show lib.rs store.go --outline
+── lib.rs
+3-5	pub struct Store {
+8-12	pub fn open(path: &Path) -> Store {
+15-17	pub fn wrapped(first: usize, second: usize) -> usize {
+── store.go
+3-5	type Store struct {
+7-11	func Open(
+13-15	func (s *Store) Root() string {
+── showed 2 targets · 6 definitions
+
+```

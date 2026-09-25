@@ -2,7 +2,7 @@
 
 ```console
 $ lets show small.md --allow-outside
-── small.md  (1-15 of 15) · sha:bc4ff3a9b973
+── small.md  (1-15 of 15)
 ...
 ── showed 1 target · 15 lines
 
@@ -21,13 +21,13 @@ A file whose endings are mostly CRLF says so in its header, since the rendered l
 
 ```console
 $ lets show win.txt
-── win.txt  (1-2 of 2) · crlf · sha:[..]
+── win.txt  (1-2 of 2) · crlf
 1 	one
 2 	two
 ── showed 1 target · 2 lines
 
 $ lets show unix.txt
-── unix.txt  (1-2 of 2) · sha:[..]
+── unix.txt  (1-2 of 2)
 1 	one
 2 	two
 ── showed 1 target · 2 lines
@@ -36,14 +36,14 @@ $ lets show unix.txt
 
 ```console
 $ lets show empty.md
-── empty.md · sha:af1349b9f5f9
+── empty.md
 ── showed 1 target · 0 lines
 
 ```
 
 ```console
 $ lets show 'C#.md:2'
-── C#.md:2  (2-2 of 2) · sha:[..]
+── C#.md:2  (2-2 of 2)
 2 	b
 ── showed 1 target · 1 line
 
@@ -51,7 +51,7 @@ $ lets show 'C#.md:2'
 
 ```console
 $ lets show 'C#.md@'\''b'\'''
-── C#.md@'b'  (2-2 of 2) · sha:[..]
+── C#.md@'b'  (2-2 of 2)
 2 	b
 ── showed 1 target · 1 line
 
@@ -59,7 +59,7 @@ $ lets show 'C#.md@'\''b'\'''
 
 ```console
 $ lets show a:1
-── a:1  (1-2 of 2) · sha:[..]
+── a:1  (1-2 of 2)
 1 	first
 2 	second
 ── showed 1 target · 2 lines
@@ -68,7 +68,7 @@ $ lets show a:1
 
 ```console
 $ lets show 'C#.md'
-── C#.md  (1-3 of 3) · sha:[..]
+── C#.md  (1-3 of 3)
 1 	one
 2 	two
 3 	three
@@ -78,7 +78,7 @@ $ lets show 'C#.md'
 
 ```console
 $ lets show latin1.txt
-── latin1.txt  (1-7 of 7) · non-UTF-8 lines 3, 7 · sha:[..]
+── latin1.txt  (1-7 of 7) · non-UTF-8 lines 3, 7
 1 	one
 2 	two
 3 	thr�e
@@ -92,7 +92,7 @@ $ lets show latin1.txt
 
 ```console
 $ lets show a:1
-── a:1  (1-1 of 3) · sha:[..]
+── a:1  (1-1 of 3)
 1 	alpha
 ── showed 1 target · 1 line
 
@@ -100,7 +100,7 @@ $ lets show a:1
 
 ```console
 $ lets show big.ts:10-12
-── big.ts:10-12  (10-12 of 212) · sha:e37232c09d01
+── big.ts:10-12  (10-12 of 212)
 10 	// filler 10
 11 	// filler 11
 12 	// filler 12
@@ -113,12 +113,12 @@ over `--max-bytes` into a refusal. The second call is the control: 900 bytes is 
 
 ```console
 $ lets show long.js --max-bytes 2000
-── long.js  (1-1 of 1) · sha:[..]
+── long.js  (1-1 of 1)
 1 	xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…
 ── showed 1 target · 1 line · 1 long line cut
 
 $ lets show short.js --max-bytes 2000
-── short.js  (1-1 of 1) · sha:[..]
+── short.js  (1-1 of 1)
 1 	xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ── showed 1 target · 1 line
 
@@ -140,7 +140,7 @@ nope.go:3: No such file or directory (os error 2)
 ERROR_CODE=not_found
 
 $ lets show a.go:3-5
-── a.go:3-5  (3-5 of 6) · sha:[..]
+── a.go:3-5  (3-5 of 6)
 3 	three
 4 	four
 5 	five
@@ -175,9 +175,129 @@ a.ts@cap: no such file · did you mean "a.ts@'cap'"
 ERROR_CODE=not_found
 
 $ lets show "a.ts@'cap'"
-── a.ts@'cap'  (1-1 of 1) · sha:[..]
+── a.ts@'cap'  (1-1 of 1)
 1 	export const cap = 10;
 ── showed 1 target · 1 line
+
+```
+
+`--no-header --no-numbers` on a complete range prints the file's own lines 2 through 4, byte for
+byte what `sed -n '2,4p'` prints: no header, no footer, the tab and the spaces kept. The second
+call is the control: without `--no-header` the same range has its header and its summary. A read
+the window cut still names the cut with `--no-header`; one the window left whole has no footer.
+
+```console
+$ lets show poem.txt:2-4 --no-header --no-numbers
+	beta
+  gamma
+delta
+
+$ lets show poem.txt:2-4 --no-numbers
+── poem.txt:2-4  (2-4 of 5)
+	beta
+  gamma
+delta
+── showed 1 target · 3 lines
+
+$ lets show poem.txt --no-header --window 2
+1 	alpha
+2 		beta
+── :3-5 not shown
+
+$ lets show poem.txt --no-header
+1 	alpha
+2 		beta
+3 	  gamma
+4 	delta
+5 	epsilon
+
+```
+
+A file with no bundled grammar has no definitions to list, so `--outline` exits 1 with
+`no_grammar`, while reading the same file whole still works. `--outline` reads whole files, so a
+`:line`, `:a-b`, `#symbol` or `@'regex'` target refuses the whole call as a usage error naming the
+form, and prints nothing from either mode, even beside a target it could have outlined.
+
+```console
+$ lets show page.vue --outline
+? 1
+page.vue is unsupported: no grammar for .vue · use a :line, :a-b or @'regex' target
+ERROR_CODE=no_grammar
+
+$ lets show page.vue
+── page.vue  (1-3 of 3)
+1 	<template>
+2 	  <p>page</p>
+3 	</template>
+── showed 1 target · 3 lines
+
+$ lets show lib.rs lib.rs:3 --outline
+? 64
+--outline reads whole files, and lib.rs:3 is a :line target · drop the :line or --outline
+ERROR_CODE=usage
+
+$ lets show lib.rs:3-5 --outline
+? 64
+--outline reads whole files, and lib.rs:3-5 is a :a-b target · drop the :a-b or --outline
+ERROR_CODE=usage
+
+$ lets show lib.rs#open --outline
+? 64
+--outline reads whole files, and lib.rs#open is a #symbol target · drop the #symbol or --outline
+ERROR_CODE=usage
+
+$ lets show "lib.rs@'fn'" --outline
+? 64
+--outline reads whole files, and lib.rs@'fn' is a @'regex' target · drop the @'regex' or --outline
+ERROR_CODE=usage
+
+```
+
+The outline stops before the first entry that would take its rendered bytes over `--max-bytes`,
+and the footer names how many were left out and why. The three `lib.rs` entries render to 23, 41
+and 61 bytes, so a 60-byte bound keeps the first and names the other two. The second call is the
+control: a bound of exactly 125 bytes fits all three and names nothing.
+
+```console
+$ lets show lib.rs --outline --max-bytes 60
+── lib.rs
+3-5	pub struct Store {
+── showed 1 target · 1 definition · output over --max-bytes 60: 2 lines not shown
+
+$ lets show lib.rs --outline --max-bytes 125
+── lib.rs
+3-5	pub struct Store {
+8-12	pub fn open(path: &Path) -> Store {
+15-17	pub fn wrapped(first: usize, second: usize) -> usize {
+── showed 1 target · 3 definitions
+
+```
+
+`--outline` prints one line per definition the file's grammar query captures: its line range, a
+tab, and its first source line with the indentation trimmed. An `impl` block is a scope, not a
+definition, so only the method inside it is listed. A signature that wraps is still one line: the
+Go `Open` below lists as `func Open(`. `--no-header` drops the header and, with nothing left out,
+the footer.
+
+```console
+$ lets show lib.rs --outline
+── lib.rs
+3-5	pub struct Store {
+8-12	pub fn open(path: &Path) -> Store {
+15-17	pub fn wrapped(first: usize, second: usize) -> usize {
+── showed 1 target · 3 definitions
+
+$ lets show store.go --outline
+── store.go
+3-5	type Store struct {
+7-11	func Open(
+13-15	func (s *Store) Root() string {
+── showed 1 target · 3 definitions
+
+$ lets show store.go --outline --no-header
+3-5	type Store struct {
+7-11	func Open(
+13-15	func (s *Store) Root() string {
 
 ```
 
@@ -191,7 +311,7 @@ ERROR_CODE=outside_tree
 
 ```console
 $ lets show big.ts --max-bytes 100 --budget 1000
-── big.ts  (1-100 of 212 · window 100 · :101-212 not shown) · sha:e37232c09d01
+── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
 ...
 ── showed 1 target · 100 lines · :101-212 not shown
 
@@ -208,7 +328,7 @@ ERROR_CODE=over_budget
 ```console
 $ lets show nope1.ts small.md:3 nope2.ts
 ? 1
-── small.md:3  (3-3 of 15) · sha:[..]
+── small.md:3  (3-3 of 15)
 3 	One grammar every verb speaks.
 ── showed 1 target · 1 line · nope1.ts failed (not_found) · nope2.ts failed (not_found)
 nope1.ts: No such file or directory (os error 2)
@@ -219,7 +339,7 @@ ERROR_CODE=not_found
 
 ```console
 $ lets show 'store.go#Store.Open'
-── store.go#Store.Open  (213-215 of 215 · via tree-sitter) · sha:7aacc2f489c8
+── store.go#Store.Open  (213-215 of 215 · via tree-sitter)
 ...
 ── showed 1 target · 3 lines
 
@@ -245,7 +365,7 @@ ERROR_CODE=not_found
 
 ```console
 $ lets show 'greet.kt#greet'
-── greet.kt#greet  (3-5 of 7 · via heuristic (plaintext)) · sha:[..]
+── greet.kt#greet  (3-5 of 7 · via heuristic (plaintext))
 3 	fun greet(name: String): String {
 4 	    return "hi $name"
 5 	}
@@ -255,7 +375,7 @@ $ lets show 'greet.kt#greet'
 
 ```console
 $ lets show 'big.ts#usage'
-── big.ts#usage  (38-61 of 212 · via tree-sitter) · sha:e37232c09d01
+── big.ts#usage  (38-61 of 212 · via tree-sitter)
 ...
 ── showed 1 target · 24 lines
 
@@ -263,7 +383,7 @@ $ lets show 'big.ts#usage'
 
 ```console
 $ lets show 't.toml#package'
-── t.toml#package  (1-2 of 4 · via tree-sitter) · sha:[..]
+── t.toml#package  (1-2 of 4 · via tree-sitter)
 1 	[package]
 2 	name = "x"
 ── showed 1 target · 2 lines
@@ -272,7 +392,7 @@ $ lets show 't.toml#package'
 
 ```console
 $ lets show small.md
-── small.md  (1-15 of 15) · sha:bc4ff3a9b973
+── small.md  (1-15 of 15)
 ...
 ── showed 1 target · 15 lines
 
@@ -280,7 +400,7 @@ $ lets show small.md
 
 ```console
 $ lets show big.ts
-── big.ts  (1-100 of 212 · window 100 · :101-212 not shown) · sha:e37232c09d01
+── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
 ...
 ── showed 1 target · 100 lines · :101-212 not shown
 

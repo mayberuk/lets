@@ -7,7 +7,7 @@ $ lets edit 'greet.kt#limit' --old 20 --new 30
 ── greet.kt · 1 replacement · line 8 · exact · span guessed (plaintext heuristic)
 7 	
 8~	val limit = 30
-── sha:[..]→[..] · check: skipped (no grammar for .kt)
+── sha:28d97b9d9e49→d160887527f5 · check: skipped (no grammar for .kt)
 
 $ lets edit 'greet.kt#limit' --old 30 --new 40 --json
 {"path":"greet.kt","replacements":1,"lines":[8],"match":"exact","resolver":"span guessed (plaintext heuristic)",[..]}

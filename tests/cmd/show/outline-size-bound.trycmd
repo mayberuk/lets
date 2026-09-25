@@ -1,0 +1,19 @@
+The outline stops before the first entry that would take its rendered bytes over `--max-bytes`,
+and the footer names how many were left out and why. The three `lib.rs` entries render to 23, 41
+and 61 bytes, so a 60-byte bound keeps the first and names the other two. The second call is the
+control: a bound of exactly 125 bytes fits all three and names nothing.
+
+```console
+$ lets show lib.rs --outline --max-bytes 60
+── lib.rs
+3-5	pub struct Store {
+── showed 1 target · 1 definition · output over --max-bytes 60: 2 definitions not shown
+
+$ lets show lib.rs --outline --max-bytes 125
+── lib.rs
+3-5	pub struct Store {
+8-12	pub fn open(path: &Path) -> Store {
+15-17	pub fn wrapped(first: usize, second: usize) -> usize {
+── showed 1 target · 3 definitions
+
+```

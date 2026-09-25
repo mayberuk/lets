@@ -47,6 +47,24 @@ ERROR_CODE=not_found
 ```
 
 ```console
+$ lets find needle many-hits.txt --cap-exit-0
+── many-hits.txt
+ 1:	line 01 contains the «needle» for lets find's over-cap fixture
+ 2:	line 02 contains the «needle» for lets find's over-cap fixture
+ 3:	line 03 contains the «needle» for lets find's over-cap fixture
+ 4:	line 04 contains the «needle» for lets find's over-cap fixture
+ 5:	line 05 contains the «needle» for lets find's over-cap fixture
+ 6:	line 06 contains the «needle» for lets find's over-cap fixture
+ 7:	line 07 contains the «needle» for lets find's over-cap fixture
+ 8:	line 08 contains the «needle» for lets find's over-cap fixture
+ 9:	line 09 contains the «needle» for lets find's over-cap fixture
+10:	line 10 contains the «needle» for lets find's over-cap fixture
+64	many-hits.txt
+── 64 hits in 1 file · searched 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files · first 10 of 64 hits in the busiest file shown · top 1 file shown
+
+```
+
+```console
 $ lets find needle many-hits.txt --cap 64
 ── many-hits.txt
  1:	line 01 contains the «needle» for lets find's over-cap fixture
@@ -422,6 +440,24 @@ ERROR_CODE=not_found
 
 ```
 
+`--no-numbers` drops the line-number gutter from every hit line; the footer is unchanged. The
+second call is the control: without the flag, numbers print as they do today.
+
+```console
+$ lets find needle small.txt --no-numbers --no-expand
+── small.txt
+«needle» 1
+«needle» 2
+── 2 hits in 1 file · searched 1 file
+
+$ lets find needle small.txt --no-expand
+── small.txt
+1:	«needle» 1
+3:	«needle» 2
+── 2 hits in 1 file · searched 1 file
+
+```
+
 ```console
 $ lets find x ../../../..
 ? 6
@@ -453,9 +489,11 @@ ERROR_CODE=over_cap
 
 Case is smart by default, as in ripgrep's `--smart-case`: a pattern with no uppercase letter
 searches case-insensitively, and a hit that matched only by ignoring case is named in the footer.
-`-s` forces exact case back; the second call is the control, finding nothing once folding is
-turned off. A pattern carrying an uppercase letter stays exact on its own, and a folded search
-whose hits all matched exactly anyway carries no case note.
+`-s` forces exact case back; the second call finds 0 exact-case hits but names the count a
+case-insensitive re-walk would have found, still exiting 1. The third call is that hint's own
+control: a pattern that also matches nothing case-insensitively gets no hint line. A pattern
+carrying an uppercase letter stays exact on its own, and a folded search whose hits all matched
+exactly anyway carries no case note.
 
 ```console
 $ lets find 'billing plan' notes.md
@@ -466,8 +504,14 @@ $ lets find 'billing plan' notes.md
 
 $ lets find 'billing plan' -s notes.md
 ? 1
-── 0 hits in 0 files · searched 1 file
+── 0 hits in 0 files · searched 1 file · 1 hit matches only ignoring case
 no hits for «billing plan»
+ERROR_CODE=not_found
+
+$ lets find 'refund policy' -s notes.md
+? 1
+── 0 hits in 0 files · searched 1 file
+no hits for «refund policy»
 ERROR_CODE=not_found
 
 $ lets find 'Billing plan' notes.md

@@ -1,4 +1,4 @@
-── small.md  (1-15 of 15) · sha:bc4ff3a9b973
+── small.md  (1-15 of 15)
   1 	# Targets
   2 	
   3 	One grammar every verb speaks.
@@ -14,7 +14,7 @@
  13 	## Next
  14 	
  15 	Something else.
-── big.ts  (1-100 of 212 · window 100 · :101-212 not shown) · sha:e37232c09d01
+── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
   1 	// big.ts — padded fixture for lets show's window-truncation and #usage cases.
   2 	// Total file length and the usage() span are pinned to spec.md's own worked
   3 	// example (38-61 of 212) so a golden's numbers come from the spec, not a run.
