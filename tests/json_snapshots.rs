@@ -42,7 +42,7 @@ fn show_a_whole_file_target_under_the_window_as_json() {
     insta::assert_snapshot!(run.out);
 }
 
-/// `big.ts` is 212 lines, over the default 200-line window.
+/// `big.ts` is 212 lines, over the default 100-line window.
 #[test]
 fn show_a_truncated_whole_file_target_as_json() {
     let sandbox = sandbox("read");
@@ -51,8 +51,8 @@ fn show_a_truncated_whole_file_target_as_json() {
 
     assert_eq!(run.code, 0);
     assert!(run.err.is_empty(), "{}", run.err);
-    assert!(run.out.contains("\"window\":200"));
-    assert!(run.out.contains("\"not_shown\":[201,212]"));
+    assert!(run.out.contains("\"window\":100"));
+    assert!(run.out.contains("\"not_shown\":[101,212]"));
     insta::assert_snapshot!(run.out);
 }
 

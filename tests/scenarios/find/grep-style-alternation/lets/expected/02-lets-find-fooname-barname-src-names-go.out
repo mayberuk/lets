@@ -1,4 +1,7 @@
 ── src/names.go
+1-	package names
+2-	
 3:	type «FooName» struct{}
+4-	
 5:	func «BarName»() {}
-── 2 hits in 1 file · searched 1 file · «FooName\|BarName» had no hits, read grep-style as «FooName|BarName»
+── 2 hits in 1 file · searched 1 file · «FooName\|BarName» had no hits, read grep-style as «FooName|BarName» · expanded 2 hits to ±5 lines

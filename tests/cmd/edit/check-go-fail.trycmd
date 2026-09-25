@@ -5,7 +5,6 @@ $ lets edit main.go --old 'func' --new 'fun'
 1 	package main
 2~	fun usage(id string) int {          ← parse error
 3 		cap := 10
-4 		return cap + len(id)
 ── check: failed → reverted · file unchanged · sha:db91a17c0af6
 structure check failed for main.go: failed
 ERROR_CODE=check_failed

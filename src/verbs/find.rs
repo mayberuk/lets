@@ -17,8 +17,8 @@ use crate::error::Error;
 use crate::grammars::{self, Language};
 use crate::hook::bre;
 use crate::output::{
-    Body, CountRow, ExpandedHits, Footer, IgnoredDirs, Line, Marker, NamedDirs, Omission, Response,
-    Stats, TargetBlock,
+    Body, ByteLimit, CountRow, ExpandedHits, Footer, IgnoredDirs, Line, Marker, NamedDirs,
+    Omission, Response, Stats, TargetBlock,
 };
 use crate::{Outcome, fs, symbols, window};
 
@@ -590,26 +590,26 @@ fn respond_targets(
         .map(|(block, first_match)| window::cut_long_lines(&mut block.lines, first_match))
         .sum();
     if expands(args, global, total_hits, matched_files) {
-        let expansion = expand(&blocks, search);
-        let bytes: usize = expansion
-            .blocks
-            .iter()
-            .map(|lines| window::content_bytes(lines))
-            .sum();
-        // An expansion that alone would push the answer past `--max-bytes` is dropped, not refused.
-        if global.budget.is_some() || bytes <= global.max_bytes {
-            long_lines_cut += expansion.long_lines_cut;
-            response.omitted.extend(expansion.named());
-            for ((block, lines), lossy) in
-                blocks.iter_mut().zip(expansion.blocks).zip(expansion.lossy)
-            {
-                block.lines = lines;
-                if !lossy.is_empty() {
-                    let known = walk.lossy.entry(block.path.clone()).or_default();
-                    known.extend(lossy);
-                    known.sort_unstable();
-                    known.dedup();
-                }
+        let (limit, limit_bytes) = match global.budget {
+            Some(budget) => (
+                ByteLimit::Budget(budget),
+                budget.saturating_mul(window::BYTES_PER_TOKEN),
+            ),
+            None => (ByteLimit::MaxBytes(global.max_bytes), global.max_bytes),
+        };
+        // Context gets only what the bare hits leave, so no trim or refusal can cost a hit line.
+        let bytes_left = limit_bytes.saturating_sub(content_size(&blocks).1);
+        let expansion = expand(&blocks, search, limit, bytes_left);
+        long_lines_cut += expansion.long_lines_cut;
+        response.omitted.extend(expansion.named());
+        for ((block, lines), lossy) in blocks.iter_mut().zip(expansion.blocks).zip(expansion.lossy)
+        {
+            block.lines = lines;
+            if !lossy.is_empty() {
+                let known = walk.lossy.entry(block.path.clone()).or_default();
+                known.extend(lossy);
+                known.sort_unstable();
+                known.dedup();
             }
         }
     }
@@ -669,9 +669,9 @@ fn respond_over_cap(
     let mut response = Response::empty("find");
     let mut top_files = file_hits;
     top_files.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
-    let preview = top_files
-        .first()
-        .and_then(|busiest| busiest_preview(blocks, first_matches, busiest, walk, global));
+    let preview = top_files.first().and_then(|busiest| {
+        busiest_preview(blocks, first_matches, busiest, walk, global, args.cap)
+    });
     let shown = top_files.len().min(TOP_FILES_SHOWN);
     let more = top_files.len() - shown;
     top_files.truncate(shown);
@@ -719,15 +719,21 @@ fn lossy_shown(blocks: &[TargetBlock], lossy: &BTreeMap<PathBuf, Vec<usize>>) ->
         .sum()
 }
 
-/// Hit lines only, so `-C` cannot crowd the hits out of the preview. Left out, rather than
-/// refused, when it alone is over `--max-bytes`: the over-cap exit stays the answer.
+/// Hit lines only, so `-C` cannot crowd the hits out of the preview, and never more than `--cap`
+/// asked for. Left out, rather than refused, when it alone is over `--max-bytes`: the over-cap
+/// exit stays the answer.
 fn busiest_preview(
     mut blocks: Vec<TargetBlock>,
     mut first_matches: Vec<Vec<Option<Range<usize>>>>,
     busiest: &CountRow,
     walk: &Walk,
     global: &Global,
+    cap: usize,
 ) -> Option<(TargetBlock, Vec<Omission>)> {
+    let shown = BUSIEST_HITS_SHOWN.min(cap);
+    if shown == 0 {
+        return None;
+    }
     let index = blocks.iter().position(|block| block.path == busiest.path)?;
     let mut block = blocks.swap_remove(index);
     let (mut lines, first_match): (Vec<Line>, Vec<Option<Range<usize>>>) =
@@ -735,20 +741,21 @@ fn busiest_preview(
             .into_iter()
             .zip(first_matches.swap_remove(index))
             .filter(|(line, _)| line.marker == Marker::Hit)
-            .take(BUSIEST_HITS_SHOWN)
+            .take(shown)
             .unzip();
     let cut = window::cut_long_lines(&mut lines, &first_match);
-    let mut omitted = vec![Omission::BusiestFile {
-        shown: lines.len(),
-        hits: busiest.count,
-    }];
     block.lines = lines;
     let mut preview = [block];
-    if let Some(budget) = global.budget {
-        omitted.extend(window::trim_to_budget(&mut preview, budget));
-    } else if window::content_bytes(&preview[0].lines) > global.max_bytes {
-        return None;
-    }
+    let trimmed = match global.budget {
+        Some(budget) => window::trim_to_budget(&mut preview, budget),
+        None if window::content_bytes(&preview[0].lines) > global.max_bytes => return None,
+        None => Vec::new(),
+    };
+    let mut omitted = vec![Omission::BusiestFile {
+        shown: preview[0].lines.len(),
+        hits: busiest.count,
+    }];
+    omitted.extend(trimmed);
     if cut > 0 {
         omitted.push(Omission::LongLinesCut { lines: cut });
     }
@@ -765,12 +772,20 @@ fn busiest_preview(
 /// symbol and window limits are sized to that follow-up view.
 const EXPAND_MAX_HITS: usize = 10;
 const EXPAND_MAX_FILES: usize = 3;
-/// A longer symbol gets `EXPAND_AROUND` lines either side of the hit instead.
+/// A symbol outside these lengths gets `EXPAND_AROUND` lines either side of the hit instead: a
+/// longer one is a view of its own, and a one- or two-line one (a `key: value` pair, a one-line
+/// function) adds no context.
+const EXPAND_SYMBOL_MIN_LINES: usize = 3;
 const EXPAND_SYMBOL_MAX_LINES: usize = 40;
 const EXPAND_AROUND: usize = 5;
 /// About 1.9k tokens, what the same trials measured one agent request to cost: the expansion is
 /// never dearer than the view it saves.
 const EXPAND_MAX_LINES: usize = 80;
+/// A larger file is not parsed, so its hits get `EXPAND_AROUND` lines. Parsing grows about
+/// linearly with size: on the musl dist build (2026-09-24, load 1.6) one expanded hit took
+/// 27/33/16 ms p50 and 20/23/25 MB peak RSS at 128 KiB of TypeScript, one-line minified JS and
+/// pretty JSON, about the `FIND_EXPANDED` gate; 256 KiB took 49/62/25 ms. Bare, 2 ms.
+const EXPAND_PARSE_MAX_BYTES: usize = 128 * 1024;
 
 /// `--json` and `--jsonl` feed programs, which take the hits, not a reader's context.
 fn expands(args: &FindArgs, global: &Global, hits: usize, files: usize) -> bool {
@@ -782,11 +797,25 @@ fn expands(args: &FindArgs, global: &Global, hits: usize, files: usize) -> bool 
         && files <= EXPAND_MAX_FILES
 }
 
-/// Hits are taken in render order, so which stay bare past the line cap is deterministic.
-fn expand(blocks: &[TargetBlock], search: &Search<'_>) -> Expansion {
+/// Hits are taken in render order, so which stay bare past a limit is deterministic.
+fn expand(
+    blocks: &[TargetBlock],
+    search: &Search<'_>,
+    limit: ByteLimit,
+    bytes_left: usize,
+) -> Expansion {
     let mut expansion = Expansion {
+        blocks: Vec::with_capacity(blocks.len()),
+        lossy: Vec::with_capacity(blocks.len()),
+        long_lines_cut: 0,
+        symbols: 0,
+        windows: 0,
+        unparsed: 0,
+        unexpanded: 0,
+        over_limit: 0,
         lines_left: EXPAND_MAX_LINES,
-        ..Expansion::default()
+        bytes_left,
+        limit,
     };
     let mut queries = Vec::new();
     for block in blocks {
@@ -804,7 +833,6 @@ fn expand(blocks: &[TargetBlock], search: &Search<'_>) -> Expansion {
     expansion
 }
 
-#[derive(Default)]
 struct Expansion {
     /// One entry per block, in block order; so is `lossy`, the non-UTF-8 lines each block gained.
     blocks: Vec<Vec<Line>>,
@@ -812,9 +840,13 @@ struct Expansion {
     long_lines_cut: usize,
     symbols: usize,
     windows: usize,
+    unparsed: usize,
     unexpanded: usize,
+    over_limit: usize,
     lines_left: usize,
-    capped: bool,
+    /// What `limit` leaves once every bare hit line is counted.
+    bytes_left: usize,
+    limit: ByteLimit,
 }
 
 /// Once per call, however many files of the language expand: compiling the TypeScript query costs
@@ -831,18 +863,24 @@ fn compiled(queries: &mut Vec<(Language, Query)>, lang: Language) -> Option<&Que
 
 impl Expansion {
     fn named(&self) -> Option<Omission> {
-        (self.symbols + self.windows + self.unexpanded > 0).then_some(Omission::Expanded(
-            ExpandedHits {
+        (self.symbols + self.windows + self.unexpanded + self.over_limit > 0).then_some(
+            Omission::Expanded(ExpandedHits {
                 symbols: self.symbols,
                 windows: self.windows,
                 around: EXPAND_AROUND,
+                unparsed: self.unparsed,
+                parse_max_kib: EXPAND_PARSE_MAX_BYTES / 1024,
                 unexpanded: self.unexpanded,
                 line_cap: EXPAND_MAX_LINES,
-            },
-        ))
+                over_limit: self.over_limit,
+                limit: self.limit,
+            }),
+        )
     }
 
-    /// A hit whose range is its own line alone is left out of every count: nothing was added.
+    /// Each hit takes its symbol if that fits both limits, else its window if that does, else
+    /// stays bare. A hit whose window is its own line alone is left out of every count: nothing
+    /// could be added.
     fn block(
         &mut self,
         block: &TargetBlock,
@@ -857,51 +895,65 @@ impl Expansion {
             .extension()
             .and_then(|ext| ext.to_str())
             .and_then(grammars::from_extension);
+        let unparsed = lang.is_some() && raw.len() > EXPAND_PARSE_MAX_BYTES;
+        let lang = lang.filter(|_| !unparsed);
         let query = lang.and_then(|lang| compiled(queries, lang));
         let mut enclosing = Enclosing::new(lang, query, &content);
+        let raw_lines: Vec<&[u8]> = raw.split(|byte| *byte == b'\n').collect();
+        let mut rendered = BTreeMap::new();
         let mut covered: Vec<(usize, usize)> = Vec::new();
         for hit in block.lines.iter().map(|line| line.number) {
             if hit == 0 || hit > text.total {
                 continue;
             }
-            if self.capped {
-                self.unexpanded += usize::from(!covers(&covered, hit));
+            let around = (
+                hit.saturating_sub(EXPAND_AROUND).max(1),
+                (hit + EXPAND_AROUND).min(text.total),
+            );
+            if around.0 == around.1 {
                 continue;
             }
             let symbol = enclosing
                 .symbol(hit, &text, spans)
                 .map(|(start, end)| (start, end.min(text.total)))
-                .filter(|(start, end)| end + 1 - start <= EXPAND_SYMBOL_MAX_LINES);
-            let (start, end) = symbol.unwrap_or((
-                hit.saturating_sub(EXPAND_AROUND).max(1),
-                (hit + EXPAND_AROUND).min(text.total),
-            ));
-            if start == end {
-                continue;
+                .filter(|(start, end)| {
+                    (EXPAND_SYMBOL_MIN_LINES..=EXPAND_SYMBOL_MAX_LINES).contains(&(end + 1 - start))
+                });
+            let mut over_lines = false;
+            let mut taken = None;
+            for range in symbol.into_iter().chain([around]) {
+                let (lines, bytes) = added(block, &raw_lines, &mut rendered, &covered, range);
+                if lines <= self.lines_left && bytes <= self.bytes_left {
+                    self.lines_left -= lines;
+                    self.bytes_left -= bytes;
+                    taken = Some(range);
+                    break;
+                }
+                over_lines = lines > self.lines_left;
             }
-            let added = (start..=end)
-                .filter(|line| !covers(&covered, *line))
-                .count();
-            if added > self.lines_left {
-                self.capped = true;
-                self.unexpanded += usize::from(!covers(&covered, hit));
-                continue;
-            }
-            self.lines_left -= added;
-            covered.push((start, end));
-            if symbol.is_some() {
-                self.symbols += 1;
-            } else {
-                self.windows += 1;
+            match taken {
+                Some(range) => {
+                    covered.push(range);
+                    if symbol == Some(range) {
+                        self.symbols += 1;
+                    } else {
+                        self.windows += 1;
+                        self.unparsed += usize::from(unparsed);
+                    }
+                },
+                None if covers(&covered, hit) => {},
+                None if over_lines => self.unexpanded += 1,
+                None => self.over_limit += 1,
             }
         }
-        self.render(block, raw, &covered)
+        self.render(block, &raw_lines, &mut rendered, &covered)
     }
 
     fn render(
         &mut self,
         block: &TargetBlock,
-        raw: &[u8],
+        raw_lines: &[&[u8]],
+        rendered: &mut BTreeMap<usize, ContextLine>,
         covered: &[(usize, usize)],
     ) -> (Vec<Line>, Vec<usize>) {
         let mut shown: Vec<usize> = covered
@@ -911,7 +963,6 @@ impl Expansion {
             .collect();
         shown.sort_unstable();
         shown.dedup();
-        let raw_lines: Vec<&[u8]> = raw.split(|byte| *byte == b'\n').collect();
         let mut lines = Vec::with_capacity(shown.len());
         let mut lossy = Vec::new();
         for number in shown {
@@ -922,19 +973,60 @@ impl Expansion {
                 lines.push(block.lines[hit].clone());
                 continue;
             }
-            let (mut line, is_lossy) = sink_line(
-                raw_lines[number - 1],
-                u64::try_from(number).ok(),
-                Marker::Context,
-            );
-            if is_lossy {
+            let shown = rendered
+                .remove(&number)
+                .unwrap_or_else(|| context_line(raw_lines, number));
+            if shown.lossy {
                 lossy.push(number);
             }
-            self.long_lines_cut += window::cut_long_lines(std::slice::from_mut(&mut line), &[None]);
-            lines.push(line);
+            self.long_lines_cut += shown.cut;
+            lines.push(shown.line);
         }
         (lines, lossy)
     }
+}
+
+struct ContextLine {
+    line: Line,
+    lossy: bool,
+    cut: usize,
+}
+
+fn context_line(raw_lines: &[&[u8]], number: usize) -> ContextLine {
+    let (mut line, lossy) = sink_line(
+        raw_lines[number - 1],
+        u64::try_from(number).ok(),
+        Marker::Context,
+    );
+    let cut = window::cut_long_lines(std::slice::from_mut(&mut line), &[None]);
+    ContextLine { line, lossy, cut }
+}
+
+/// The lines `range` shows past those already covered, and the bytes they add as rendered: a hit
+/// line is in the answer already. Each context line is rendered once, into `rendered`.
+fn added(
+    block: &TargetBlock,
+    raw_lines: &[&[u8]],
+    rendered: &mut BTreeMap<usize, ContextLine>,
+    covered: &[(usize, usize)],
+    (start, end): (usize, usize),
+) -> (usize, usize) {
+    let mut lines = 0;
+    let mut bytes = 0;
+    for number in (start..=end).filter(|number| !covers(covered, *number)) {
+        lines += 1;
+        if block
+            .lines
+            .binary_search_by_key(&number, |line| line.number)
+            .is_err()
+        {
+            let shown = rendered
+                .entry(number)
+                .or_insert_with(|| context_line(raw_lines, number));
+            bytes += shown.line.text.len() + 1;
+        }
+    }
+    (lines, bytes)
 }
 
 fn covers(covered: &[(usize, usize)], line: usize) -> bool {
@@ -988,8 +1080,8 @@ struct Enclosing<'a, 'q> {
     /// Per top-level item, keyed by its byte span: running the query over the whole file cost
     /// half a parse on 2,000 lines of TypeScript.
     items: BTreeMap<(usize, usize), Vec<symbols::Defined<'a>>>,
-    /// Markdown headings, which have no query: keyed by name.
-    sections: BTreeMap<String, Vec<(usize, usize)>>,
+    /// Markdown headings, which have no query: keyed by name, built on the first lookup.
+    sections: Option<BTreeMap<&'a str, Vec<(usize, usize)>>>,
 }
 
 impl<'a, 'q> Enclosing<'a, 'q> {
@@ -1009,7 +1101,7 @@ impl<'a, 'q> Enclosing<'a, 'q> {
             tree,
             query,
             items: BTreeMap::new(),
-            sections: BTreeMap::new(),
+            sections: None,
         }
     }
 
@@ -1037,18 +1129,26 @@ impl<'a, 'q> Enclosing<'a, 'q> {
         let at = text.starts[hit - 1];
         let query = self.query?;
         let root = self.tree.as_ref()?.root_node();
-        let mut node = root.named_descendant_for_byte_range(at + start, at + end)?;
-        let mut item = node;
-        while let Some(parent) = item.parent().filter(|parent| parent.parent().is_some()) {
-            item = parent;
+        let target = root.named_descendant_for_byte_range(at + start, at + end)?;
+        // Root first. `Node::parent` descends from the root on every call, so climbing with it is
+        // quadratic in depth: 25 s for one hit in 40 KB of nested JSON arrays.
+        let mut ancestors = vec![root];
+        while let Some(&last) = ancestors.last()
+            && last != target
+        {
+            let next = last
+                .child_with_descendant(target)
+                .filter(|next| *next != last)?;
+            ancestors.push(next);
         }
+        let item = ancestors.get(1).copied().unwrap_or(root);
         let items = self
             .content
             .get(..item.end_byte())
             .unwrap_or(self.content)
             .len();
         let mut holding: Option<((usize, usize), (usize, usize))> = None;
-        loop {
+        for &node in ancestors.iter().rev() {
             let rows = node.end_position().row - node.start_position().row + 1;
             if rows > EXPAND_SYMBOL_MAX_LINES + 1 {
                 return None;
@@ -1082,8 +1182,8 @@ impl<'a, 'q> Enclosing<'a, 'q> {
                     return Some(found);
                 }
             }
-            node = node.parent()?;
         }
+        None
     }
 
     /// The nearest heading above the hit that `symbols` also reads as one; a `#` in a fence is not.
@@ -1095,14 +1195,15 @@ impl<'a, 'q> Enclosing<'a, 'q> {
             if !(1..=6).contains(&level) || !line[level..].starts_with(char::is_whitespace) {
                 return None;
             }
-            let name = line[level..].trim();
-            let found = self.sections.entry(name.to_owned()).or_insert_with(|| {
-                symbols::resolve(Language::Markdown, self.content, &[name.to_owned()])
-                    .into_iter()
-                    .map(|found| (found.line, found.end_line))
-                    .collect()
+            let content = self.content;
+            let sections = self.sections.get_or_insert_with(|| {
+                let mut sections: BTreeMap<&str, Vec<(usize, usize)>> = BTreeMap::new();
+                for (name, first, last) in symbols::markdown_sections(content) {
+                    sections.entry(name).or_default().push((first, last));
+                }
+                sections
             });
-            smallest(found.iter().copied(), hit)
+            smallest(sections.get(line[level..].trim())?.iter().copied(), hit)
         })
     }
 }
@@ -1980,19 +2081,18 @@ mod tests {
             !rendered.contains("more file"),
             "no more-files line when every matched file is shown: {rendered}"
         );
-        // Three preview lines of 13 bytes are 39 bytes: ~9 tokens at ÷ 4.
+        // The preview holds no more than the cap of 2: two lines of 13 bytes, ~6 tokens at ÷ 4.
         assert_eq!(
             rendered,
             "\u{2500}\u{2500} z.txt\n\
              1:\t\u{ab}needle\u{bb} 1\n\
              2:\t\u{ab}needle\u{bb} 2\n\
-             3:\t\u{ab}needle\u{bb} 3\n\
              3\tz.txt\n\
              2\ta.txt\n\
              1\tm.txt\n\
              \u{2500}\u{2500} 6 hits in 3 files \u{b7} searched 3 files \u{b7} over the 2-hit \
-             cap \u{b7} narrow the pattern or the paths, or --files \u{b7} first 3 of 3 hits in \
-             the busiest file shown \u{b7} top 3 files shown \u{b7} ~9 tokens\n"
+             cap \u{b7} narrow the pattern or the paths, or --files \u{b7} first 2 of 3 hits in \
+             the busiest file shown \u{b7} top 3 files shown \u{b7} ~6 tokens\n"
         );
     }
 
@@ -4519,21 +4619,42 @@ mod tests {
 
         let outcome = run_find(&find_args("needle", &[]), &global_args());
 
+        // Six whole functions are 72 lines. The seventh (79-90) would make 84, but its hit's
+        // window, 75-85, adds only 78-85 past the sixth: the eight lines left. The last three
+        // hits then fit nothing.
         let block = only_block(&outcome);
-        let context = block.lines.len() - hit_numbers(block).len();
-        assert_eq!(hit_numbers(block).len(), 10);
-        assert_eq!(
-            block.lines.len(),
-            6 * 12 + 4,
-            "six whole functions fit in 80 lines, the seventh would make 84"
-        );
-        assert!(block.lines.len() - 4 <= EXPAND_MAX_LINES);
-        assert_eq!(context, 6 * 11);
-        assert_eq!(named(&outcome), [
-            "expanded 6 hits to enclosing symbols \u{b7} 4 hits not expanded (80-line cap)"
+        assert_eq!(hit_numbers(block), [
+            2, 15, 28, 41, 54, 67, 80, 93, 106, 119
         ]);
-        let bare: Vec<usize> = hit_numbers(block).into_iter().skip(6).collect();
-        assert_eq!(bare, [80, 93, 106, 119]);
+        let shown: Vec<usize> = (1..=77)
+            .filter(|line| line % 13 != 0)
+            .chain(78..=85)
+            .chain([93, 106, 119])
+            .collect();
+        assert_eq!(line_numbers(block), shown);
+        assert_eq!(named(&outcome), [
+            "expanded 6 hits to enclosing symbols \u{b7} 1 hit to \u{b1}5 lines \u{b7} 3 hits not \
+             expanded (80-line cap)"
+        ]);
+    }
+
+    #[test]
+    fn with_room_for_every_symbol_no_hit_falls_back_or_stays_bare() {
+        let Some(dir) = repo() else { return };
+        let six: String =
+            ten_functions()
+                .lines()
+                .take(6 * 13)
+                .fold(String::new(), |mut text, line| {
+                    writeln!(text, "{line}").expect("a String write");
+                    text
+                });
+        write(&dir, "six.ts", &six);
+
+        let outcome = run_find(&find_args("needle", &[]), &global_args());
+
+        assert_eq!(only_block(&outcome).lines.len(), 6 * 12);
+        assert_eq!(named(&outcome), ["expanded 6 hits to enclosing symbols"]);
     }
 
     #[test]
@@ -4587,5 +4708,393 @@ mod tests {
         let block = only_block(&outcome);
         assert_eq!(line_numbers(block), (1..=10).collect::<Vec<_>>());
         assert_eq!(hit_numbers(block), line_numbers(block));
+    }
+
+    /// `[`×`depth`, a hit, then `]`×`depth`, inside a three-line `outer` pair when `keyed`.
+    fn deep_json(depth: usize, keyed: bool) -> String {
+        let (open, close) = ("[".repeat(depth), "]".repeat(depth));
+        if keyed {
+            format!("{{\"outer\": {open}\n\"needle\"\n{close}\n}}\n")
+        } else {
+            format!("{open}\n\"needle\"\n{close}\n")
+        }
+    }
+
+    #[test]
+    fn a_hit_twenty_thousand_arrays_deep_finds_the_pair_above_them_in_linear_time() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "deep.json", &deep_json(20_000, true));
+
+        let started = std::time::Instant::now();
+        let outcome = run_find(&find_args("needle", &["deep.json"]), &global_args());
+
+        // Climbing one `Node::parent` at a time took 25 s here in a release build.
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        // The pair runs from its key to the last `]`; the window would add the object's `}` too.
+        assert_eq!(line_numbers(only_block(&outcome)), [1, 2, 3]);
+        assert_eq!(named(&outcome)[0], "expanded 1 hit to enclosing symbols");
+    }
+
+    #[test]
+    fn the_same_depth_with_no_pair_above_gets_five_lines_either_side() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "deep.json", &deep_json(20_000, false));
+
+        let outcome = run_find(&find_args("needle", &["deep.json"]), &global_args());
+
+        // Every node spans the file's 3 lines and none is a definition: the window is the file.
+        assert_eq!(line_numbers(only_block(&outcome)), [1, 2, 3]);
+        assert_eq!(named(&outcome)[0], "expanded 1 hit to \u{b1}5 lines");
+    }
+
+    /// `bytes` long: expression statements, then a 12-line function holding `needle` on its 2nd
+    /// line.
+    fn padded_function(bytes: usize) -> String {
+        let function = "export function f(x: number): number {\n  const needle = x\n".to_owned()
+            + &"  x = x + 1\n".repeat(9)
+            + "}\n";
+        let filler = "00000000;\n";
+        let mut text = String::new();
+        while text.len() + function.len() + filler.len() + 3 <= bytes {
+            text.push_str(filler);
+        }
+        text.push_str(&"0".repeat(bytes - text.len() - function.len() - 2));
+        text.push_str(";\n");
+        text + &function
+    }
+
+    #[test]
+    fn a_file_one_byte_over_the_parse_ceiling_gets_five_lines_and_the_footer_says_why() {
+        let Some(dir) = repo() else { return };
+        let text = padded_function(EXPAND_PARSE_MAX_BYTES + 1);
+        assert_eq!(text.len(), EXPAND_PARSE_MAX_BYTES + 1);
+        write(&dir, "big.ts", &text);
+        let total = text.lines().count();
+
+        let outcome = run_find(&find_args("needle", &["big.ts"]), &global_args());
+
+        let hit = total - 10;
+        assert_eq!(hit_numbers(only_block(&outcome)), [hit]);
+        assert_eq!(
+            line_numbers(only_block(&outcome)),
+            (hit - 5..=hit + 5).collect::<Vec<_>>()
+        );
+        assert_eq!(named(&outcome), [
+            "expanded 1 hit to \u{b1}5 lines (1 not parsed: file over 128 KiB)"
+        ]);
+    }
+
+    #[test]
+    fn a_file_at_the_parse_ceiling_is_parsed_and_its_hit_prints_the_function() {
+        let Some(dir) = repo() else { return };
+        let text = padded_function(EXPAND_PARSE_MAX_BYTES);
+        assert_eq!(text.len(), EXPAND_PARSE_MAX_BYTES);
+        write(&dir, "big.ts", &text);
+        let total = text.lines().count();
+
+        let outcome = run_find(&find_args("needle", &["big.ts"]), &global_args());
+
+        assert_eq!(
+            line_numbers(only_block(&outcome)),
+            (total - 11..=total).collect::<Vec<_>>()
+        );
+        assert_eq!(named(&outcome), ["expanded 1 hit to enclosing symbols"]);
+    }
+
+    /// Two 31-line functions, a hit on the second line of each: lines 2 and 34.
+    fn two_functions() -> String {
+        let mut text = String::new();
+        for f in 0..2 {
+            writeln!(text, "fn f{f}() {{").expect("a String write");
+            writeln!(
+                text,
+                "    let needle_{f} = \"padding padding padding padding padding\";"
+            )
+            .expect("a String write");
+            for n in 0..28 {
+                writeln!(
+                    text,
+                    "    let v{n} = \"{n} padding padding padding padding padding padding\";"
+                )
+                .expect("a String write");
+            }
+            text.push_str("}\n\n");
+        }
+        text
+    }
+
+    fn with_budget(budget: usize) -> Global {
+        Global {
+            budget: Some(budget),
+            ..global_args()
+        }
+    }
+
+    #[test]
+    fn a_budget_with_room_for_the_hits_alone_keeps_every_hit_and_names_both_unexpanded() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "two.rs", &two_functions());
+
+        let outcome = run_find(&find_args("needle_", &[]), &with_budget(60));
+
+        // 240 bytes: the two hit lines take 132, and each hit's window adds about 340 more, so
+        // nothing but the hits fits and nothing is trimmed.
+        let block = only_block(&outcome);
+        assert_eq!(line_numbers(block), [2, 34]);
+        assert_eq!(hit_numbers(block), [2, 34]);
+        assert_eq!(named(&outcome), ["2 hits not expanded (budget 60)"]);
+    }
+
+    #[test]
+    fn a_budget_with_room_for_one_function_expands_the_first_and_gives_the_second_its_window() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "two.rs", &two_functions());
+
+        let outcome = run_find(&find_args("needle_", &[]), &with_budget(700));
+
+        // 2,800 bytes: the hits (132) and the first function (1,896) fit, the second function
+        // does not, and its window, 29-39, adds 32-39 past the first: 341 bytes.
+        let block = only_block(&outcome);
+        assert_eq!(hit_numbers(block), [2, 34]);
+        assert_eq!(line_numbers(block), (1..=39).collect::<Vec<_>>());
+        assert!(window::content_bytes(&block.lines) <= 700 * window::BYTES_PER_TOKEN);
+        assert_eq!(named(&outcome), [
+            "expanded 1 hit to enclosing symbols \u{b7} 1 hit to \u{b1}5 lines"
+        ]);
+    }
+
+    #[test]
+    fn a_budget_with_room_for_both_functions_expands_both_and_trims_nothing() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "two.rs", &two_functions());
+
+        let outcome = run_find(&find_args("needle_", &[]), &with_budget(2000));
+
+        let block = only_block(&outcome);
+        assert_eq!(
+            line_numbers(block),
+            (1..=31).chain(33..=63).collect::<Vec<_>>()
+        );
+        assert_eq!(named(&outcome), ["expanded 2 hits to enclosing symbols"]);
+    }
+
+    #[test]
+    fn max_bytes_with_room_for_the_hits_alone_names_them_unexpanded() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "two.rs", &two_functions());
+        let global = Global {
+            max_bytes: 300,
+            ..global_args()
+        };
+
+        let outcome = run_find(&find_args("needle_", &[]), &global);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(line_numbers(only_block(&outcome)), [2, 34]);
+        assert_eq!(named(&outcome), ["2 hits not expanded (max-bytes 300)"]);
+    }
+
+    #[test]
+    fn the_default_max_bytes_leaves_room_to_expand_both_functions() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "two.rs", &two_functions());
+
+        let outcome = run_find(&find_args("needle_", &[]), &global_args());
+
+        assert_eq!(only_block(&outcome).lines.len(), 62);
+        assert_eq!(named(&outcome), ["expanded 2 hits to enclosing symbols"]);
+    }
+
+    fn preview_of(cap: usize, global: &Global) -> (Option<Vec<usize>>, Vec<String>) {
+        let mut args = find_args("needle", &[]);
+        args.cap = cap;
+        let outcome = run_find(&args, global);
+        assert!(matches!(outcome.error, Some(Error::OverCap { .. })));
+        let lines = match &outcome.response.body {
+            Body::Targets(blocks) => match blocks.as_slice() {
+                [block] => Some(line_numbers(block)),
+                _ => None,
+            },
+            _ => None,
+        };
+        (lines, named(&outcome))
+    }
+
+    #[test]
+    fn a_cap_under_ten_previews_no_more_hits_than_the_cap() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "n.txt", &many_hits(30));
+
+        let (lines, named) = preview_of(5, &global_args());
+
+        assert_eq!(lines, Some(vec![1, 2, 3, 4, 5]));
+        assert!(named.contains(&"first 5 of 30 hits in the busiest file shown".to_owned()));
+    }
+
+    #[test]
+    fn a_cap_of_zero_previews_nothing_and_names_no_preview() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "n.txt", &many_hits(30));
+
+        let (lines, named) = preview_of(0, &global_args());
+
+        assert_eq!(lines, None);
+        assert!(
+            !named.iter().any(|named| named.contains("busiest file")),
+            "{named:?}"
+        );
+    }
+
+    #[test]
+    fn a_cap_over_ten_previews_ten() {
+        let Some(dir) = repo() else { return };
+        write(&dir, "n.txt", &many_hits(30));
+
+        let (lines, named) = preview_of(20, &global_args());
+
+        assert_eq!(lines, Some((1..=10).collect()));
+        assert!(named.contains(&"first 10 of 30 hits in the busiest file shown".to_owned()));
+    }
+
+    fn twenty_long_hits(dir: &Workdir) {
+        for name in ["a", "b", "c"] {
+            let text = (0..20).fold(String::new(), |mut text, n| {
+                writeln!(text, "needle {name} {n} {}", "x".repeat(50)).expect("a String write");
+                text
+            });
+            write(dir, &format!("{name}.txt"), &text);
+        }
+        write(dir, "z.txt", "needle z\nneedle z\nneedle z\n");
+    }
+
+    #[test]
+    fn a_budget_that_trims_the_preview_names_the_lines_it_kept() {
+        let Some(dir) = repo() else { return };
+        twenty_long_hits(&dir);
+
+        let (lines, named) = preview_of(50, &with_budget(30));
+
+        // 120 bytes hold one 65-byte preview line, not two.
+        assert_eq!(lines, Some(vec![1]));
+        assert!(
+            named.contains(&"first 1 of 20 hits in the busiest file shown".to_owned()),
+            "{named:?}"
+        );
+    }
+
+    #[test]
+    fn with_no_budget_the_same_preview_names_all_ten() {
+        let Some(dir) = repo() else { return };
+        twenty_long_hits(&dir);
+
+        let (lines, named) = preview_of(50, &global_args());
+
+        assert_eq!(lines, Some((1..=10).collect()));
+        assert!(named.contains(&"first 10 of 20 hits in the busiest file shown".to_owned()));
+    }
+
+    #[test]
+    fn a_hit_in_a_one_line_function_gets_five_lines_either_side() {
+        let Some(dir) = repo() else { return };
+        write(
+            &dir,
+            "one.rs",
+            "use a;\nuse b;\n\nfn one() -> u32 { NEEDLE }\n\nfn two() {\n    3\n}\n",
+        );
+
+        let outcome = run_find(&find_args("NEEDLE", &["one.rs"]), &global_args());
+
+        assert_eq!(
+            line_numbers(only_block(&outcome)),
+            (1..=8).collect::<Vec<_>>()
+        );
+        assert_eq!(named(&outcome), ["expanded 1 hit to \u{b1}5 lines"]);
+    }
+
+    #[test]
+    fn a_leaf_key_in_yaml_toml_and_json_gets_five_lines_either_side() {
+        let Some(dir) = repo() else { return };
+        let above = "a1: 1\na2: 2\na3: 3\na4: 3\na5: 5\na6: 6\n";
+        write(&dir, "c.yaml", &format!("{above}x: NEEDLE\n{above}"));
+        write(
+            &dir,
+            "c.toml",
+            &format!(
+                "[package]\n{}version = \"NEEDLE\"\n",
+                above.replace(':', " =")
+            ),
+        );
+        write(
+            &dir,
+            "c.json",
+            "{\n\"a\": 1,\n\"b\": 2,\n\"c\": 3,\n\"x\": \"NEEDLE\",\n\"d\": 4\n}\n",
+        );
+
+        let outcome = run_find(&find_args("NEEDLE", &[]), &global_args());
+
+        let Body::Targets(blocks) = &outcome.response.body else {
+            panic!("expected Body::Targets");
+        };
+        let shown: Vec<(&str, Vec<usize>)> = blocks
+            .iter()
+            .map(|block| (block.target.as_str(), line_numbers(block)))
+            .collect();
+        assert_eq!(shown, [
+            ("c.json", (1..=7).collect::<Vec<_>>()),
+            ("c.toml", (3..=8).collect()),
+            ("c.yaml", (2..=12).collect()),
+        ]);
+        assert_eq!(named(&outcome), ["expanded 3 hits to \u{b1}5 lines"]);
+    }
+
+    #[test]
+    fn a_three_line_function_prints_whole_and_a_two_line_one_gets_its_window() {
+        let Some(dir) = repo() else { return };
+        let pad = "0;\n1;\n2;\n3;\n4;\n5;\n";
+        write(
+            &dir,
+            "three.ts",
+            &format!("{pad}function f() {{\n  needle()\n}}\n{pad}"),
+        );
+        write(
+            &dir,
+            "two.ts",
+            &format!("{pad}function g() {{ needle()\n}}\n{pad}"),
+        );
+
+        let outcome = run_find(&find_args("needle", &[]), &global_args());
+
+        let Body::Targets(blocks) = &outcome.response.body else {
+            panic!("expected Body::Targets");
+        };
+        assert_eq!(line_numbers(&blocks[0]), [7, 8, 9], "{}", blocks[0].target);
+        assert_eq!(
+            line_numbers(&blocks[1]),
+            (2..=12).collect::<Vec<_>>(),
+            "{}",
+            blocks[1].target
+        );
+        assert_eq!(named(&outcome), [
+            "expanded 1 hit to enclosing symbols \u{b7} 1 hit to \u{b1}5 lines"
+        ]);
+    }
+
+    #[test]
+    fn a_toml_table_expands_to_its_own_lines_and_not_the_next_header() {
+        let Some(dir) = repo() else { return };
+        write(
+            &dir,
+            "c.toml",
+            "[package]\nname = \"x\"\nversion = \"1\"\n\n[deps]\na = \"1\"\n",
+        );
+
+        let outcome = run_find(&find_args("package", &["c.toml"]), &global_args());
+
+        assert_eq!(line_numbers(only_block(&outcome)), [1, 2, 3, 4]);
+        assert_eq!(named(&outcome), ["expanded 1 hit to enclosing symbols"]);
     }
 }

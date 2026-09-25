@@ -7,7 +7,6 @@ $ lets edit 'usage.ts#usage' --old 'cap = 20' --new 'cap = 30'
 1 	export function usage(n: number): number {
 2~	  const cap = 30;
 3 	  return Math.min(n, cap);
-4 	}
 ── check: structure ok · sha:[..]→[..]
 
 $ lets edit 'usage.ts#usage' --old 'cap = 30' --new 'cap = 40' --json

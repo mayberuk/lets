@@ -52,6 +52,12 @@ pub fn resolve(lang: Language, content: &str, path: &[String]) -> Vec<SymbolMatc
     }
 }
 
+/// Every Markdown heading's text with its section's 1-based first and last lines: what `resolve`
+/// reads for each name, from one pass.
+pub fn markdown_sections(content: &str) -> Vec<(&str, usize, usize)> {
+    markdown::spans(content)
+}
+
 /// `None` for Markdown: its sections come from headings, not a syntax tree.
 pub fn query(lang: Language) -> Option<Query> {
     let source = match lang {
@@ -105,9 +111,20 @@ pub fn definitions<'a>(query: &Query, node: Node<'_>, content: &'a str) -> Vec<D
             name: definition.name,
             end: definition.node.end_byte(),
             line: definition.node.start_position().row + 1,
-            end_line: definition.node.end_position().row + 1,
+            end_line: end_line(definition.node),
         })
         .collect()
+}
+
+/// 1-based. A node ending at column 0 holds only the newline before that row: a TOML table runs
+/// to the next table's header, which is not its own.
+fn end_line(node: Node<'_>) -> usize {
+    let end = node.end_position();
+    if end.column == 0 && end.row > node.start_position().row {
+        end.row
+    } else {
+        end.row + 1
+    }
 }
 
 struct Definition<'a, 'tree> {
@@ -139,7 +156,7 @@ fn resolve_query(
             let span = definition.node.byte_range();
             SymbolMatch {
                 line: definition.node.start_position().row + 1,
-                end_line: definition.node.end_position().row + 1,
+                end_line: end_line(definition.node),
                 text: line_text(content, span.start),
                 start: span.start,
                 end: span.end,
@@ -578,6 +595,26 @@ Something else.
             span: "func open() {}",
         },
     ];
+
+    const TWO_TABLES: &str = "[package]\nname = \"x\"\nversion = \"1\"\n\n[deps]\na = \"1\"\n";
+
+    #[test]
+    fn a_toml_table_ends_on_its_own_last_line_not_on_the_next_header() {
+        let found = find(Language::Toml, TWO_TABLES, &["package"]);
+        assert_eq!((found[0].line, found[0].end_line), (1, 4));
+        let last = find(Language::Toml, TWO_TABLES, &["deps"]);
+        assert_eq!(
+            (last[0].line, last[0].end_line),
+            (5, 6),
+            "not past the file"
+        );
+    }
+
+    #[test]
+    fn a_toml_key_ending_mid_line_keeps_its_line() {
+        let found = find(Language::Toml, TWO_TABLES, &["package", "version"]);
+        assert_eq!((found[0].line, found[0].end_line), (3, 3));
+    }
 
     #[test]
     fn every_bundled_language_resolves_a_symbol_of_its_own() {

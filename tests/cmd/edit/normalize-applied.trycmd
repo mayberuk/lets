@@ -1,7 +1,6 @@
 ```console
 $ lets edit notes.md --old 'the agent - not the user - decides' --new 'the agent decides' --normalize
 ── notes.md · 1 replacement · line 6 · normalized (– → -)
-4 	---
 5 	# Notes
 6~	In that case the agent decides.
 7 	Layer 2 is the validator for markdown.

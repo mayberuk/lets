@@ -1,7 +1,5 @@
 ── usage.ts · inserted 1 line after line 2
-1 	import { usageCap } from './config'
 2 	import { clock } from './clock'
 3+	import { total } from './total'
 4 	export function usage(id: string) {
-5 	  if (!id) return
 ── check: structure ok · sha:c5525cc20b61→fd3e7e41e809

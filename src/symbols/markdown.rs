@@ -7,29 +7,47 @@ pub(super) fn resolve(content: &str, path: &[String]) -> Vec<SymbolMatch> {
         return Vec::new();
     };
     let lines = line_spans(content);
-    let headings = headings(content, &lines);
-    let mut found = Vec::new();
-    for (i, &(index, level, text)) in headings.iter().enumerate() {
-        if text != wanted.as_str() {
-            continue;
-        }
-        let next = headings[i + 1..]
-            .iter()
-            .find(|(_, deeper, _)| *deeper <= level)
-            .map(|&(start, _, _)| start);
-        let last = next.map_or(lines.len() - 1, |start| start - 1);
-        let (start, _) = lines[index];
-        found.push(SymbolMatch {
-            start,
-            end: lines[last].1,
-            line: index + 1,
-            end_line: last + 1,
-            text: content[start..lines[index].1].to_owned(),
-            resolver: Resolver::Heuristic("heading"),
-            end_guessed: false,
-        });
-    }
-    found
+    sections(content, &lines)
+        .into_iter()
+        .filter(|(text, _, _)| *text == wanted.as_str())
+        .map(|(_, index, last)| {
+            let (start, end) = lines[index];
+            SymbolMatch {
+                start,
+                end: lines[last].1,
+                line: index + 1,
+                end_line: last + 1,
+                text: content[start..end].to_owned(),
+                resolver: Resolver::Heuristic("heading"),
+                end_guessed: false,
+            }
+        })
+        .collect()
+}
+
+/// Every heading's text with its section's 1-based first and last lines, in one pass.
+pub(super) fn spans(content: &str) -> Vec<(&str, usize, usize)> {
+    sections(content, &line_spans(content))
+        .into_iter()
+        .map(|(text, index, last)| (text, index + 1, last + 1))
+        .collect()
+}
+
+/// A section runs to the line before the next heading of its level or higher. A heading is
+/// passed over only by the nearest earlier heading of each shallower level, so the pass is linear.
+fn sections<'a>(content: &'a str, lines: &[(usize, usize)]) -> Vec<(&'a str, usize, usize)> {
+    let headings = headings(content, lines);
+    headings
+        .iter()
+        .enumerate()
+        .map(|(i, &(index, level, text))| {
+            let next = headings[i + 1..]
+                .iter()
+                .find(|(_, deeper, _)| *deeper <= level)
+                .map(|&(start, _, _)| start);
+            (text, index, next.map_or(lines.len() - 1, |start| start - 1))
+        })
+        .collect()
 }
 
 fn headings<'a>(content: &'a str, lines: &[(usize, usize)]) -> Vec<(usize, usize, &'a str)> {

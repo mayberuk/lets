@@ -20,7 +20,12 @@ use crate::{
 
 const VERB: &str = "edit";
 
-const CONTEXT_LINES: usize = 2;
+// Opus's edit echo had a median of 2,392 bytes against 92 for the Edit tool, and re-reads after
+// an edit did not fall: trimmed context and a truncated span keep the verification without the
+// bulk.
+const CONTEXT_LINES: usize = 1;
+const SPAN_TRUNCATE_LINES: usize = 6;
+const SPAN_EDGE_LINES: usize = 2;
 
 const BOM: &[u8] = b"\xef\xbb\xbf";
 
@@ -1488,7 +1493,14 @@ fn region(
     for (first, last) in changed {
         let from = first.saturating_sub(CONTEXT_LINES).max(1);
         let to = (last + CONTEXT_LINES).min(all.len());
-        wanted.extend(from..=to);
+        if last - first + 1 > SPAN_TRUNCATE_LINES {
+            let head_end = (first + SPAN_EDGE_LINES - 1).min(*last);
+            let tail_start = last.saturating_sub(SPAN_EDGE_LINES - 1).max(*first);
+            wanted.extend(from..=head_end);
+            wanted.extend(tail_start..=to);
+        } else {
+            wanted.extend(from..=to);
+        }
     }
     let (start, end) = (*wanted.first()?, *wanted.last()?);
     let annotated = changed.first().map(|(first, _)| *first);
@@ -2260,7 +2272,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("3~\t  const cap = 20"), "{text}");
-        assert!(text.contains("1 \texport function usage"), "{text}");
+        assert!(text.contains("2 \t  const now = Date.now()"), "{text}");
         assert!(text.contains("check: structure ok \u{b7} sha:"), "{text}");
     }
 
@@ -3542,8 +3554,8 @@ mod tests {
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         let text = rendered(&outcome);
-        assert!(text.contains("\u{b7}\t:4-39 not shown"), "{text}");
-        assert!(text.contains("\u{b7} :4-39 not shown \u{b7}"), "{text}");
+        assert!(text.contains("\u{b7}\t:3-40 not shown"), "{text}");
+        assert!(text.contains("\u{b7} :3-40 not shown \u{b7}"), "{text}");
         let Body::Edit(results) = &outcome.response.body else {
             panic!("a replacement renders as Body::Edit");
         };

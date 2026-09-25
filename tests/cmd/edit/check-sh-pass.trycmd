@@ -1,7 +1,6 @@
 ```console
 $ lets edit run.sh --old 'echo "$name"' --new 'printf "%s" "$name"'
 ── run.sh · 1 replacement · line 3 · exact
-1 	#!/bin/sh
 2 	for name in one two; do
 3~	  printf "%s" "$name"
 4 	done

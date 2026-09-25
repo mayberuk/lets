@@ -1,15 +1,12 @@
 ```console
 $ lets edit usage.ts --old 'usageCap' --new 'usageLimit' --all
 ── usage.ts · 2 replacements · lines 1, 8 · exact
- 1~	import { usageLimit } from './config'
- 2 	import { clock } from './clock'
- 3 	export function usage(id: string) {
-  ·	:4-5 not shown
- 6 	  const cap = 10
- 7 	  if (now > cap) return
- 8~	  const total = usageLimit + id.length
- 9 	  return total
-10 	}
-── check: structure ok · sha:c5525cc20b61→0e1115009972 · :4-5 not shown
+1~	import { usageLimit } from './config'
+2 	import { clock } from './clock'
+ ·	:3-6 not shown
+7 	  if (now > cap) return
+8~	  const total = usageLimit + id.length
+9 	  return total
+── check: structure ok · sha:c5525cc20b61→0e1115009972 · :3-6 not shown
 
 ```

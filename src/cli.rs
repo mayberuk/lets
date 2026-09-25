@@ -191,8 +191,8 @@ pub struct ShowArgs {
     // Unlike edit/transform, `show` has no `--from -` batch form to stand in for targets.
     #[arg(required = true)]
     pub targets: Vec<String>,
-    // 200: the corpus's measured p75 full-read is 211 lines.
-    #[arg(long, default_value_t = 200)]
+    // 100: Opus's lets reads had a median of 138 lines against 55 for raw reads.
+    #[arg(long, default_value_t = 100)]
     pub window: usize,
     #[arg(long)]
     pub all: bool,
@@ -453,12 +453,12 @@ mod tests {
     }
 
     #[test]
-    fn window_defaults_to_200() {
+    fn window_defaults_to_100() {
         let cli = Cli::try_parse_from(["lets", "show", "a.ts"]).unwrap();
         let Verb::Show(args) = cli.verb else {
             panic!("expected Verb::Show");
         };
-        assert_eq!(args.window, 200);
+        assert_eq!(args.window, 100);
     }
 
     #[test]

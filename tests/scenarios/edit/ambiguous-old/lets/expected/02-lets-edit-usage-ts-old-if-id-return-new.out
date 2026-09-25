@@ -1,7 +1,5 @@
 ── usage.ts · 1 replacement · line 4 · exact
-2 	import { clock } from './clock'
 3 	export function usage(id: string) {
 4~	  if (!id) return undefined
 5 	  const now = clock.now()
-6 	  const cap = 10
 ── check: structure ok · sha:c5525cc20b61→7efe0329c8e8

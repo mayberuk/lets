@@ -146,3 +146,5 @@ check-cargo-workspace-reverts.requires
 check-cargo-workspace-ok.trycmd
 check-cargo-workspace-ok.out
 check-cargo-workspace-ok.requires
+long-span-truncated.toml
+long-span-truncated.out

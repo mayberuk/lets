@@ -16,11 +16,9 @@ ERROR_CODE=ambiguous
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check @auto
 ── usage.ts · 1 replacement · line 6 · exact
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: skipped (@auto found no manifest)
 
 ```
@@ -52,11 +50,9 @@ A checker that already failed before the edit cannot judge it, so the edit is ke
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check checker-fail
 ── usage.ts · 1 replacement · line 6 · exact
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: checker-fail inconclusive (failed before and after)
 
 ```
@@ -64,11 +60,9 @@ $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check check
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check checker-pass
 ── usage.ts · 1 replacement · line 6 · exact
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── check: checker-pass ok · sha:c5525cc20b61→419c5d6249b3
 
 ```
@@ -88,11 +82,9 @@ A checker that is not installed is named in the footer, never silently dropped.
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check no-such-checker
 ── usage.ts · 1 replacement · line 6 · exact
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── check: structure ok · sha:c5525cc20b61→419c5d6249b3 · check: skipped (no-such-checker absent)
 
 ```
@@ -101,11 +93,9 @@ $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --check no-su
 $ lets edit notes.md --old 'date: 2026-09-19' --new 'date: [2026'
 ? 3
 ── notes.md · 1 replacement · line 3 · REVERTED
-1 	---
 2 	title: notes
 3~	date: [2026          ← invalid frontmatter
 4 	---
-5 	# Notes
 ── check: invalid → reverted · file unchanged · sha:a4f8537ddc9b
 structured check failed for notes.md: invalid
 ERROR_CODE=check_failed
@@ -117,11 +107,9 @@ An edit between the fences of a `.md` file is a YAML edit, and the footer names 
 ```console
 $ lets edit notes.md --old 'date: 2026-09-19' --new 'date: 2026-09-21'
 ── notes.md · 1 replacement · line 3 · exact
-1 	---
 2 	title: notes
 3~	date: 2026-09-21
 4 	---
-5 	# Notes
 ── check: frontmatter ok · sha:a4f8537ddc9b→d50c4ac20aa0
 
 ```
@@ -133,7 +121,6 @@ $ lets edit main.go --old 'func' --new 'fun'
 1 	package main
 2~	fun usage(id string) int {          ← parse error
 3 		cap := 10
-4 		return cap + len(id)
 ── check: failed → reverted · file unchanged · sha:db91a17c0af6
 structure check failed for main.go: failed
 ERROR_CODE=check_failed
@@ -143,11 +130,9 @@ ERROR_CODE=check_failed
 ```console
 $ lets edit main.go --old 'cap := 10' --new 'cap := 20'
 ── main.go · 1 replacement · line 3 · exact
-1 	package main
 2 	func usage(id string) int {
 3~		cap := 20
 4 		return cap + len(id)
-5 	}
 ── check: structure ok · sha:db91a17c0af6→723cc9310c11
 
 ```
@@ -158,7 +143,6 @@ $ lets edit app.js --old 'function' --new 'functio'
 ── app.js · 1 replacement · line 1 · REVERTED
 1~	export functio usage(id) {          ← parse error
 2 	  const cap = 10
-3 	  return cap + id.length
 ── check: failed → reverted · file unchanged · sha:0edfd9883665
 structure check failed for app.js: failed
 ERROR_CODE=check_failed
@@ -171,7 +155,6 @@ $ lets edit app.js --old 'const cap = 10' --new 'const cap = 20'
 1 	export function usage(id) {
 2~	  const cap = 20
 3 	  return cap + id.length
-4 	}
 ── check: structure ok · sha:0edfd9883665→4ab3906a3bfd
 
 ```
@@ -183,7 +166,6 @@ $ lets edit config.json --old '"window": 200,' --new '"window": 200'
 1 	{
 2~	  "window": 200          ← invalid json
 3 	  "threads": 4
-4 	}
 ── check: invalid → reverted · file unchanged · sha:e44762446524
 structured check failed for config.json: invalid
 ERROR_CODE=check_failed
@@ -196,7 +178,6 @@ $ lets edit config.json --old '"window": 200' --new '"window": 100'
 1 	{
 2~	  "window": 100,
 3 	  "threads": 4
-4 	}
 ── check: json ok · sha:e44762446524→21a40c895946
 
 ```
@@ -204,7 +185,6 @@ $ lets edit config.json --old '"window": 200' --new '"window": 100'
 ```console
 $ lets edit notes.md --old 'Layer 2 is the validator for markdown.' --new 'Layer 2 is the validator here.'
 ── notes.md · 1 replacement · line 7 · exact
-5 	# Notes
 6 	In that case the agent – not the user – decides.
 7~	Layer 2 is the validator here.
 ── check: structure ok · sha:a4f8537ddc9b→983c07fb7869
@@ -216,7 +196,6 @@ The markdown block grammar has no error state: an unterminated fence that would 
 ```console
 $ lets edit notes.md --old 'Layer 2 is the validator for markdown.' --new '```'
 ── notes.md · 1 replacement · line 7 · exact
-5 	# Notes
 6 	In that case the agent – not the user – decides.
 7~	```
 ── check: structure ok · sha:a4f8537ddc9b→e5d43c02dbf4
@@ -254,7 +233,6 @@ $ lets edit cap.py --old 'def' --new 'dof'
 ── cap.py · 1 replacement · line 1 · REVERTED
 1~	dof usage(id):          ← parse error
 2 	    cap = 10
-3 	    return cap + len(id)
 ── check: failed → reverted · file unchanged · sha:d0139c7b27dc
 structure check failed for cap.py: failed
 ERROR_CODE=check_failed
@@ -266,7 +244,6 @@ ERROR_CODE=check_failed
 ```console
 $ lets edit m.py --old 'limit = 10' --new 'limit = 20' --check @py
 ── m.py · 1 replacement · line 3 · exact
-1 	def total():
 2 	    return 1
 3~	limit = 20
 ── check: python3 -m py_compile {} ok · sha:[..]
@@ -299,7 +276,6 @@ $ lets edit lib.rs --old 'fn' --new 'f'
 ── lib.rs · 1 replacement · line 1 · REVERTED
 1~	pub f usage(id: &str) -> usize {          ← parse error
 2 	    let cap = 10;
-3 	    cap + id.len()
 ── check: failed → reverted · file unchanged · sha:4524d71069e8
 structure check failed for lib.rs: failed
 ERROR_CODE=check_failed
@@ -312,7 +288,6 @@ $ lets edit lib.rs --old 'let cap = 10;' --new 'let cap = 20;'
 1 	pub fn usage(id: &str) -> usize {
 2~	    let cap = 20;
 3 	    cap + id.len()
-4 	}
 ── check: structure ok · sha:4524d71069e8→0822e5131981
 
 ```
@@ -321,7 +296,6 @@ $ lets edit lib.rs --old 'let cap = 10;' --new 'let cap = 20;'
 $ lets edit run.sh --old 'done' --new 'don'
 ? 3
 ── run.sh · 1 replacement · line 4 · REVERTED
-2 	for name in one two; do
 3 	  echo "$name"
 4~	don          ← parse error
 ── check: failed → reverted · file unchanged · sha:1a0659d2422d
@@ -333,7 +307,6 @@ ERROR_CODE=check_failed
 ```console
 $ lets edit run.sh --old 'echo "$name"' --new 'printf "%s" "$name"'
 ── run.sh · 1 replacement · line 3 · exact
-1 	#!/bin/sh
 2 	for name in one two; do
 3~	  printf "%s" "$name"
 4 	done
@@ -345,7 +318,6 @@ $ lets edit run.sh --old 'echo "$name"' --new 'printf "%s" "$name"'
 $ lets edit config.toml --old 'threads = 4' --new 'threads = 4x'
 ? 3
 ── config.toml · 1 replacement · line 3 · REVERTED
-1 	[package]
 2 	name = "lets"
 3~	threads = 4x          ← invalid toml
 ── check: invalid → reverted · file unchanged · sha:96cdbcfee3f4
@@ -357,7 +329,6 @@ ERROR_CODE=check_failed
 ```console
 $ lets edit config.toml --old 'threads = 4' --new 'threads = 8'
 ── config.toml · 1 replacement · line 3 · exact
-1 	[package]
 2 	name = "lets"
 3~	threads = 8
 ── check: toml ok · sha:96cdbcfee3f4→d1e6d9f7f737
@@ -368,7 +339,6 @@ $ lets edit config.toml --old 'threads = 4' --new 'threads = 8'
 $ lets edit usage.ts --old 'return total' --new 'return total)'
 ? 3
 ── usage.ts · 1 replacement · line 9 · REVERTED
- 7 	  if (now > cap) return
  8 	  const total = usageCap + id.length
  9~	  return total)          ← parse error
 10 	}
@@ -381,7 +351,6 @@ ERROR_CODE=check_failed
 ```console
 $ lets edit usage.ts --old 'return total' --new 'return total * 2'
 ── usage.ts · 1 replacement · line 9 · exact
- 7 	  if (now > cap) return
  8 	  const total = usageCap + id.length
  9~	  return total * 2
 10 	}
@@ -395,7 +364,6 @@ $ lets edit badge.tsx --old 'const' --new 'cons'
 ── badge.tsx · 1 replacement · line 1 · REVERTED
 1~	export cons Badge = () => (          ← parse error
 2 	  <span className="badge" />
-3 	)
 ── check: failed → reverted · file unchanged · sha:09a8548c52f6
 structure check failed for badge.tsx: failed
 ERROR_CODE=check_failed
@@ -418,7 +386,6 @@ $ lets edit config.yaml --old 'name: lets' --new 'name: lets:'
 ── config.yaml · 1 replacement · line 1 · REVERTED
 1~	name: lets:          ← invalid yaml
 2 	items:
-3 	  - one
 ── check: invalid → reverted · file unchanged · sha:e1046ecc996b
 structured check failed for config.yaml: invalid
 ERROR_CODE=check_failed
@@ -430,7 +397,6 @@ $ lets edit config.yaml --old 'name: lets' --new 'name: lets-cli'
 ── config.yaml · 1 replacement · line 1 · exact
 1~	name: lets-cli
 2 	items:
-3 	  - one
 ── check: yaml ok · sha:e1046ecc996b→c3a6db4757bd
 
 ```
@@ -471,11 +437,9 @@ Lines locate, content confirms: the range is replaced only because line 6 is the
 ```console
 $ lets edit usage.ts:6 --expect 'const cap = 10' --new '  const cap = 20'
 ── usage.ts · 1 replacement · line 6 · expect matched
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── check: structure ok · sha:c5525cc20b61→419c5d6249b3
 
 ```
@@ -529,11 +493,9 @@ The control for the stale hash above: the same edit, with the hash the file actu
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --if sha:c5525cc20b61
 ── usage.ts · 1 replacement · line 6 · exact
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── check: structure ok · sha:c5525cc20b61→419c5d6249b3
 
 ```
@@ -563,7 +525,6 @@ The anchor, typed with its quotes as the guide shows it, joins the file name as 
 ```console
 $ lets edit C#.md --insert-after "@'^b'" --new 'c'
 ── C#.md · inserted 1 line after line 2
-1 	a
 2 	b
 3+	c
 ── check: structure ok · sha:[..]→[..]
@@ -578,11 +539,9 @@ ERROR_CODE=not_found
 ```console
 $ lets edit usage.ts --insert-before '#usage' --new '/** Returns the running total for id. */'
 ── usage.ts · inserted 1 line before #usage (line 3)
-1 	import { usageCap } from './config'
 2 	import { clock } from './clock'
 3+	/** Returns the running total for id. */
 4 	export function usage(id: string) {
-5 	  if (!id) return
 ── check: structure ok · sha:c5525cc20b61→45b5b2745608
 
 ```
@@ -616,6 +575,20 @@ $ lets edit lf.txt --old beta --new $'BETA\r\nGAMMA' --literal-newlines
 3~	GAMMA
 4 	gamma
 ── sha:ed8b7a779a4a→c2b975bba63b · check: skipped (no grammar for .txt)
+
+```
+
+```console
+$ lets edit block.txt --old $'line 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\nline 24\nline 25\nline 26\nline 27\nline 28\nline 29\nline 30\nline 31\nline 32\nline 33\nline 34\nline 35\nline 36\nline 37\nline 38\nline 39\nline 40\nline 41\nline 42\nline 43\nline 44\nline 45' --new $'line 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED\nline 10 EDITED\nline 11 EDITED\nline 12 EDITED\nline 13 EDITED\nline 14 EDITED\nline 15 EDITED\nline 16 EDITED\nline 17 EDITED\nline 18 EDITED\nline 19 EDITED\nline 20 EDITED\nline 21 EDITED\nline 22 EDITED\nline 23 EDITED\nline 24 EDITED\nline 25 EDITED\nline 26 EDITED\nline 27 EDITED\nline 28 EDITED\nline 29 EDITED\nline 30 EDITED\nline 31 EDITED\nline 32 EDITED\nline 33 EDITED\nline 34 EDITED\nline 35 EDITED\nline 36 EDITED\nline 37 EDITED\nline 38 EDITED\nline 39 EDITED\nline 40 EDITED\nline 41 EDITED\nline 42 EDITED\nline 43 EDITED\nline 44 EDITED\nline 45 EDITED'
+── block.txt · 1 replacement · lines 6-45 · exact
+ 5 	line 5
+ 6~	line 6 EDITED
+ 7~	line 7 EDITED
+  ·	:8-43 not shown
+44~	line 44 EDITED
+45~	line 45 EDITED
+46 	line 46
+── sha:[..]→[..] · check: skipped (no grammar for .txt) · :8-43 not shown
 
 ```
 
@@ -675,16 +648,13 @@ ERROR_CODE=usage
 ```console
 $ lets edit usage.ts app.js --old 'const cap = 10' --new 'const cap = 20'
 ── usage.ts · 1 replacement · line 6 · exact
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── app.js · 1 replacement · line 2 · exact
 1 	export function usage(id) {
 2~	  const cap = 20
 3 	  return cap + id.length
-4 	}
 ── 2 files · 2 edits · all applied · checks: structure ok ×2
 
 ```
@@ -692,11 +662,9 @@ $ lets edit usage.ts app.js --old 'const cap = 10' --new 'const cap = 20'
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --no-check
 ── usage.ts · 1 replacement · line 6 · exact
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── sha:c5525cc20b61→419c5d6249b3 · check: skipped (--no-check)
 
 ```
@@ -704,7 +672,6 @@ $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20' --no-check
 ```console
 $ lets edit notes.md --old 'the agent - not the user - decides' --new 'the agent decides' --normalize
 ── notes.md · 1 replacement · line 6 · normalized (– → -)
-4 	---
 5 	# Notes
 6~	In that case the agent decides.
 7 	Layer 2 is the validator for markdown.
@@ -733,11 +700,9 @@ ERROR_CODE=not_found
 ```console
 $ lets edit usage.ts --old 'const cap = 10' --new 'const cap = 20'
 ── usage.ts · 1 replacement · line 6 · exact
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── check: structure ok · sha:c5525cc20b61→419c5d6249b3
 
 ```
@@ -756,11 +721,9 @@ The same plaintext match, `#greet`, has a brace-matched end (`end_guessed` false
 ```console
 $ lets edit greet.kt --insert-after '#greet' --new '// end greet'
 ── greet.kt · inserted 1 line after #greet (line 6)
-5 	    return "$prefix $name"
 6 	}
 7+	// end greet
 8 	
-9 	val limit = 20
 ── sha:[..]→[..] · check: skipped (no grammar for .kt)
 
 ```
@@ -786,11 +749,9 @@ match applies like any tree-sitter symbol.
 ```console
 $ lets edit greet.kt --insert-before '#greet' --new '// prints a greeting'
 ── greet.kt · inserted 1 line before #greet (line 3)
-1 	package demo
 2 	
 3+	// prints a greeting
 4 	fun greet(name: String): String {
-5 	    val prefix = "hi"
 ── sha:[..]→[..] · check: skipped (no grammar for .kt)
 
 ```
@@ -813,7 +774,6 @@ its heuristic, and `--json` carries it under the same `resolver` key.
 ```console
 $ lets edit 'greet.kt#limit' --old 20 --new 30
 ── greet.kt · 1 replacement · line 8 · exact · span guessed (plaintext heuristic)
-6 	}
 7 	
 8~	val limit = 30
 ── sha:[..]→[..] · check: skipped (no grammar for .kt)
@@ -826,16 +786,13 @@ $ lets edit 'greet.kt#limit' --old 30 --new 40 --json
 ```console
 $ lets edit usage.ts --old 'usageCap' --new 'usageLimit' --all
 ── usage.ts · 2 replacements · lines 1, 8 · exact
- 1~	import { usageLimit } from './config'
- 2 	import { clock } from './clock'
- 3 	export function usage(id: string) {
-  ·	:4-5 not shown
- 6 	  const cap = 10
- 7 	  if (now > cap) return
- 8~	  const total = usageLimit + id.length
- 9 	  return total
-10 	}
-── check: structure ok · sha:c5525cc20b61→0e1115009972 · :4-5 not shown
+1~	import { usageLimit } from './config'
+2 	import { clock } from './clock'
+ ·	:3-6 not shown
+7 	  if (now > cap) return
+8~	  const total = usageLimit + id.length
+9 	  return total
+── check: structure ok · sha:c5525cc20b61→0e1115009972 · :3-6 not shown
 
 ```
 
@@ -848,7 +805,6 @@ $ lets edit 'usage.ts#usage' --old 'cap = 20' --new 'cap = 30'
 1 	export function usage(n: number): number {
 2~	  const cap = 30;
 3 	  return Math.min(n, cap);
-4 	}
 ── check: structure ok · sha:[..]→[..]
 
 $ lets edit 'usage.ts#usage' --old 'cap = 30' --new 'cap = 40' --json

@@ -1,7 +1,6 @@
 ```console
 $ lets edit config.toml --old 'threads = 4' --new 'threads = 8'
 ── config.toml · 1 replacement · line 3 · exact
-1 	[package]
 2 	name = "lets"
 3~	threads = 8
 ── check: toml ok · sha:96cdbcfee3f4→d1e6d9f7f737

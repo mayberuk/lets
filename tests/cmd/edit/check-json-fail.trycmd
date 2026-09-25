@@ -5,7 +5,6 @@ $ lets edit config.json --old '"window": 200,' --new '"window": 200'
 1 	{
 2~	  "window": 200          ← invalid json
 3 	  "threads": 4
-4 	}
 ── check: invalid → reverted · file unchanged · sha:e44762446524
 structured check failed for config.json: invalid
 ERROR_CODE=check_failed

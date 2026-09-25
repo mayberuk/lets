@@ -1,16 +1,13 @@
 ```console
 $ lets edit usage.ts app.js --old 'const cap = 10' --new 'const cap = 20'
 ── usage.ts · 1 replacement · line 6 · exact
-4 	  if (!id) return
 5 	  const now = clock.now()
 6~	  const cap = 20
 7 	  if (now > cap) return
-8 	  const total = usageCap + id.length
 ── app.js · 1 replacement · line 2 · exact
 1 	export function usage(id) {
 2~	  const cap = 20
 3 	  return cap + id.length
-4 	}
 ── 2 files · 2 edits · all applied · checks: structure ok ×2
 
 ```

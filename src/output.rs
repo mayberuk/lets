@@ -554,34 +554,73 @@ pub enum Omission {
     },
 }
 
-/// `find` hits printed with their enclosing symbol or `around` lines either side; `unexpanded`
-/// hits stayed bare once the expanded lines reached `line_cap`.
+/// `find` hits printed with their enclosing symbol or `around` lines either side. `unparsed` of
+/// the `windows` lie in a file over `parse_max_kib`, which is never parsed for its symbols.
+/// `unexpanded` hits stayed bare once the expanded lines reached `line_cap`, and `over_limit`
+/// ones because their context would have pushed a hit line out of `limit`.
 #[derive(Debug, Serialize)]
 pub struct ExpandedHits {
     pub symbols: usize,
     pub windows: usize,
     pub around: usize,
+    pub unparsed: usize,
+    pub parse_max_kib: usize,
     pub unexpanded: usize,
     pub line_cap: usize,
+    pub over_limit: usize,
+    pub limit: ByteLimit,
+}
+
+/// What bounds a `find` answer: `--budget`, else `--max-bytes`.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub enum ByteLimit {
+    Budget(usize),
+    MaxBytes(usize),
+}
+
+impl fmt::Display for ByteLimit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ByteLimit::Budget(budget) => write!(f, "budget {budget}"),
+            ByteLimit::MaxBytes(bytes) => write!(f, "max-bytes {bytes}"),
+        }
+    }
 }
 
 /// A zero part is left out, as in `write_parts`.
 impl fmt::Display for ExpandedHits {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let windows = match self.unparsed {
+            0 => format!("to \u{b1}{} lines", self.around),
+            unparsed => format!(
+                "to \u{b1}{} lines ({unparsed} not parsed: file over {} KiB)",
+                self.around, self.parse_max_kib
+            ),
+        };
         let parts = [
-            (self.symbols, "to enclosing symbols".to_owned()),
-            (self.windows, format!("to \u{b1}{} lines", self.around)),
+            (self.symbols, true, "to enclosing symbols".to_owned()),
+            (self.windows, true, windows),
             (
                 self.unexpanded,
+                false,
                 format!("not expanded ({}-line cap)", self.line_cap),
+            ),
+            (
+                self.over_limit,
+                false,
+                format!("not expanded ({})", self.limit),
             ),
         ];
         let mut open = false;
-        for (n, what) in parts {
+        for (n, expanded, what) in parts {
             if n == 0 {
                 continue;
             }
-            f.write_str(if open { " \u{b7} " } else { "expanded " })?;
+            if open {
+                f.write_str(" \u{b7} ")?;
+            } else if expanded {
+                f.write_str("expanded ")?;
+            }
             write!(f, "{n} hit{} {what}", plural_suffix(n))?;
             open = true;
         }
