@@ -20,13 +20,16 @@ or a blocked heredoc-to-stdin, is a dealbreaker.
 - Pass: `cat a | jq`, `$(cat f)`, `<(cat f)`, `xargs cat | sort`, `head -c`, `tail -f`, any
   `cmd - <<'EOF'` heredoc-to-stdin, any `lets …` call.
 - Block: a bare displayed `cat`, `head`, `tail` or `sed -n` of a repo file (including last in an
-  `&&` chain, and after a `lets` call in the same command), displayed `grep`/`rg`, `sed -i`,
-  `cat > file <<`, `python -c` writing a file, `xargs cat` displayed.
+  `&&` chain, and after a `lets` call in the same command), a displayed `grep`/`rg` search whose
+  exit status is read after it (`&&`, `||`, `set -e`, an `ERR` trap) or that `lets find` would not
+  translate exactly, `sed -i`, `cat > file <<`, `python -c` writing a file, `xargs cat` displayed.
 - Rewrite (`updatedInput`, no `permissionDecision`) only on Claude Code, and only when one
   `lets show` prints every line the original would, of named in-tree files that are not dotfiles,
-  keys or credentials; deny everything else a block covers, and always fail open. "Prints every
-  line" is checked on the file itself, after any `cd` and symlink resolves: under `--max-bytes`,
-  no line `show` cuts, no range starting past the end.
+  keys or credentials, or when one `lets find` call reproduces a `grep`/`rg` search exactly —
+  alone, or as one or more segments of a `&&`/`||`/`;` chain, with every other byte kept as typed;
+  deny everything else a block covers, and always fail open. "Prints every line" is checked on the
+  file itself, after any `cd` and symlink resolves: under `--max-bytes`, no line `show` cuts, no
+  range starting past the end.
 - Before a rewrite, or a block whose `run:` line names a path, match every named path against
   the `Read` and `Edit` deny and ask rules of each Claude Code settings tier (managed, user,
   project, local). A match, or a settings file or rule that cannot be read, is allow: Claude
@@ -46,7 +49,8 @@ or a blocked heredoc-to-stdin, is a dealbreaker.
 ```text
 ✅ DO    cat src/a.ts && cat src/b.ts            → Claude Code rewrite: "lets show src/a.ts src/b.ts --all"
 ✅ DO    the same command from Codex             → block: "run: lets show src/a.ts src/b.ts"
-✅ DO    rg cap src                              → block: "run: lets find 'cap' src"
+✅ DO    rg cap src                              → Claude Code rewrite: "lets find -s 'cap' src"
+✅ DO    set -e; grep -n x src/a.ts              → block: "run: set -e; lets find -s 'x' src/a.ts"  (exit status read)
 ✅ DO    jq . - <<'JSON'                          → allow  (heredoc-to-stdin)
 ❌ DON'T $(cat VERSION)                          → block  (data flow; must allow)
 ❌ DON'T cat f.ts                                → block: "use lets"  (no runnable command)

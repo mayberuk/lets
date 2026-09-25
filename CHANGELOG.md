@@ -32,6 +32,9 @@ All notable changes to `lets` are documented here. Format:
   steps aside wherever a Read/Edit deny or ask rule in settings already covers the path. The
   installed hook command is guarded by `command -v lets` so a missing or broken install never
   blocks a command.
+- The `PreToolUse` hook also rewrites an exact `grep`/`rg` search into `lets find`, alone or as a
+  segment of a chain, unless a later `&&`, `||` or `set -e` reads its exit status — `lets find`
+  exits 1 over its hit cap and when every hit lands in a skipped file, where `grep`/`rg` exit 0.
 - The Claude Code `SessionStart` paragraph is shorter and gives a runnable batch-edit example
   again.
 
@@ -43,6 +46,8 @@ All notable changes to `lets` are documented here. Format:
   nested reading, and exits 2 naming every candidate when the key is ambiguous.
 - A TOML table's span ends at its own last key, not the next table's header, so a comment
   introducing the next table stays with that table instead of the one before it.
+- A batch `@@` header now covers every edit block listed under it, where before a second block
+  under one header was rejected.
 
 ### Performance
 

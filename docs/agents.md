@@ -141,20 +141,27 @@ no longer used, on every following install.
 
 ## Rewrite versus deny
 
-The `PreToolUse` hook (`lets hook classify`) rewrites only an exact `cat`, `head -n` or `sed -n`
-read that a single `lets show` would reproduce line for line. A recognized `grep`/`rg` search, a
-`sed -i 's/…/…/g'` global substitution, a heredoc-fed `cat > file`, a sensitive path (a dotfile,
-key or credential), and any read `lets show` would not print exactly, all keep the deny instead,
-which always names a runnable `lets` command. Everything the classifier does not recognize — an
-`awk`, `less`, `nl` or `tee` read, `tail -n`, `echo >`, an unrecognized `grep`/`rg` flag, or a
-`sed -i` substitution missing its trailing `g` — is not classified at all and runs exactly as
-typed, neither rewritten nor denied. Codex always gets the deny — a rewrite is Claude
-Code only. Before a rewrite, or before naming a path in a deny, the hook reads the `Read` and
-`Edit` deny and ask rules from every Claude Code settings tier (managed, user, project, local) and
-steps aside — allowing the original command through — when one of those rules already covers the
-path, so Claude Code's own rule decides, not the hook's. The limit: a rule passed only through
-`--settings`, `--disallowedTools`, or set for one session, is invisible to the hook, which reads
-only the settings files on disk.
+On Claude Code, the `PreToolUse` hook (`lets hook classify`) rewrites (`updatedInput`, no
+`permissionDecision`) an exact `cat`, `head -n` or `sed -n` read that a single `lets show` would
+reproduce line for line, and a `grep`/`rg` search that `lets find` translates exactly — alone, or
+as one or more segments of a `&&`/`||`/`;` chain, with every other byte of the command kept as
+typed. A search keeps the deny instead when an `&&`, `||`, `set -e` or an `ERR` trap after it reads
+its exit status: `lets find` exits 1 over its hit cap and when every hit lands in a file it skips,
+where `grep`/`rg` exit 0, so a chain that branches on that status could take a different branch
+after the rewrite.
+
+A `sed -i 's/…/…/g'` global substitution, a heredoc-fed `cat > file`, a sensitive path (a dotfile,
+key or credential), any read `lets show` would not print exactly, and the exit-status search case
+above all keep the deny, which always names a runnable `lets` command and keeps every other segment
+of the chain. Everything the classifier does not recognize — an `awk`, `less`, `nl` or `tee` read,
+`tail -n`, `echo >`, an unrecognized `grep`/`rg` flag, or a `sed -i` substitution missing its
+trailing `g` — is not classified at all and runs exactly as typed, neither rewritten nor denied.
+Codex always gets the deny — a rewrite is Claude Code only. Before a rewrite, or before naming a
+path in a deny, the hook reads the `Read` and `Edit` deny and ask rules from every Claude Code
+settings tier (managed, user, project, local) and steps aside — allowing the original command
+through — when one of those rules already covers the path, so Claude Code's own rule decides, not
+the hook's. The limit: a rule passed only through `--settings`, `--disallowedTools`, or set for one
+session, is invisible to the hook, which reads only the settings files on disk.
 
 ## The SubagentStart line
 
