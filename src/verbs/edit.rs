@@ -938,10 +938,7 @@ fn replace(
         .collect();
 
     let replacement = joined(new, before, spec.literal_newlines);
-    let mut after = before.to_vec();
-    for span in spans.iter().rev() {
-        after = matcher::splice(&after, *span, &replacement);
-    }
+    let after = splice_all(before, &spans, &replacement);
 
     let mut changed = Vec::with_capacity(spans.len());
     let (mut grown_new, mut grown_old) = (0usize, 0usize);
@@ -1499,7 +1496,8 @@ fn region(
     omitted: &mut Vec<Omission>,
 ) -> Option<Region> {
     let text = String::from_utf8_lossy(after);
-    let all: Vec<&str> = text.lines().collect();
+    let mut all: Vec<&str> = Vec::with_capacity(fs::count_byte(after, b'\n') + 1);
+    all.extend(text.lines());
     let mut wanted: BTreeSet<usize> = BTreeSet::new();
     for (first, last) in changed {
         let from = first.saturating_sub(CONTEXT_LINES).max(1);
@@ -1531,7 +1529,7 @@ fn region(
             lines.push(Line {
                 number: 0,
                 marker: Marker::Gap,
-                text: format!(":{}-{} not shown", gap.0, gap.1),
+                text: format!(":{}-{} not shown", gap.0, gap.1).into(),
             });
         }
         let touched = changed
@@ -1545,7 +1543,7 @@ fn region(
         lines.push(Line {
             number,
             marker: if touched { marker } else { Marker::None },
-            text,
+            text: text.into(),
         });
         previous = Some(number);
     }
@@ -1556,6 +1554,21 @@ fn region(
         });
     }
     Some(Region { start, end, lines })
+}
+
+/// `spans` are disjoint and ascending. One pass into a buffer sized up front: splicing one span
+/// at a time copied the whole file once per span.
+fn splice_all(before: &[u8], spans: &[matcher::Span], replacement: &[u8]) -> Vec<u8> {
+    let removed: usize = spans.iter().map(|span| span.end - span.start).sum();
+    let mut after = Vec::with_capacity(before.len() - removed + spans.len() * replacement.len());
+    let mut kept_from = 0;
+    for span in spans {
+        after.extend_from_slice(&before[kept_from..span.start]);
+        after.extend_from_slice(replacement);
+        kept_from = span.end;
+    }
+    after.extend_from_slice(&before[kept_from..]);
+    after
 }
 
 fn span_lines(after: &[u8], start: usize, len: usize) -> (usize, usize) {
@@ -1570,7 +1583,8 @@ fn line_starts(bytes: &[u8]) -> Vec<usize> {
     if bytes.is_empty() {
         return Vec::new();
     }
-    let mut starts = vec![0];
+    let mut starts = Vec::with_capacity(fs::count_byte(bytes, b'\n') + 1);
+    starts.push(0);
     for (index, byte) in bytes.iter().enumerate() {
         if *byte == b'\n' && index + 1 < bytes.len() {
             starts.push(index + 1);
@@ -2213,6 +2227,24 @@ mod tests {
 
     fn read(path: &Path) -> String {
         std::fs::read_to_string(path).expect("fixture is readable")
+    }
+
+    #[test]
+    fn splice_all_replaces_every_span_and_keeps_every_other_byte() {
+        let span = |start, end| matcher::Span { start, end };
+        assert_eq!(
+            splice_all(b"aXbXXc", &[span(1, 2), span(3, 5)], b"--"),
+            b"a--b--c"
+        );
+        assert_eq!(
+            splice_all(b"abcdef", &[span(0, 1), span(5, 6)], b""),
+            b"bcde"
+        );
+        assert_eq!(
+            splice_all(b"\r\nkeep\r\n", &[span(2, 6)], b"k"),
+            b"\r\nk\r\n"
+        );
+        assert_eq!(splice_all(b"same", &[], b"unused"), b"same");
     }
 
     fn edit_args(target: &str) -> EditArgs {

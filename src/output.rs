@@ -1,6 +1,7 @@
 //! The footer is a contract: a narrowing it does not name did not happen. Its counts live only in
 //! `Response::omitted` and `Response::stats`, so no second count can disagree.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fmt;
@@ -357,7 +358,7 @@ pub enum WriteOutcome {
 pub struct Line {
     pub number: usize,
     pub marker: Marker,
-    pub text: String,
+    pub text: Cow<'static, str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1590,7 +1591,7 @@ mod tests {
         Line {
             number,
             marker,
-            text: text.to_owned(),
+            text: text.to_owned().into(),
         }
     }
 

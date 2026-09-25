@@ -466,7 +466,7 @@ impl Sink for HitSink<'_> {
         let spans = self.spans;
         let line = self.push(mat.bytes(), mat.line_number(), Marker::Hit);
         let (wrapped, first) = wrap_matches(&line.text, spans);
-        line.text = wrapped;
+        line.text = wrapped.into();
         self.first_match.push(first);
         Ok(true)
     }
@@ -521,7 +521,7 @@ fn sink_line(bytes: &[u8], number: Option<u64>, marker: Marker) -> (Line, bool) 
     let line = Line {
         number: usize::try_from(number.unwrap_or(0)).unwrap_or(usize::MAX),
         marker,
-        text,
+        text: text.into(),
     };
     (line, lossy)
 }
@@ -2767,11 +2767,7 @@ mod tests {
         let Body::Targets(blocks) = &outcome.response.body else {
             panic!("expected Body::Targets");
         };
-        let texts: Vec<&str> = blocks[0]
-            .lines
-            .iter()
-            .map(|line| line.text.as_str())
-            .collect();
+        let texts: Vec<&str> = blocks[0].lines.iter().map(|line| &*line.text).collect();
         assert_eq!(texts, [
             "quiet",
             "\u{ab}needle\u{bb} and \u{ab}needle\u{bb} again",
@@ -2995,7 +2991,7 @@ mod tests {
         let texts: Vec<(usize, &str)> = blocks[0]
             .lines
             .iter()
-            .map(|line| (line.number, line.text.as_str()))
+            .map(|line| (line.number, &*line.text))
             .collect();
         assert_eq!(texts, [
             (2, "\u{ab}let s\u{bb} = \"\u{fffd}\u{fffd}\";"),

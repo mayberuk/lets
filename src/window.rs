@@ -74,7 +74,7 @@ pub fn cut_long_lines(lines: &mut [Line], hits: &[Option<Range<usize>>]) -> usiz
         if end < text.len() {
             kept.push(CUT_MARK);
         }
-        line.text = kept;
+        line.text = kept.into();
         cut += 1;
     }
     cut
@@ -252,7 +252,7 @@ mod tests {
         Line {
             number,
             marker: Marker::None,
-            text: text.to_owned(),
+            text: text.to_owned().into(),
         }
     }
 
@@ -276,7 +276,7 @@ mod tests {
     fn cut_one(text: &str, hit: Option<Range<usize>>) -> (String, usize) {
         let mut lines = vec![line(1, text)];
         let cut = cut_long_lines(&mut lines, &[hit]);
-        (lines.remove(0).text, cut)
+        (lines.remove(0).text.into_owned(), cut)
     }
 
     fn pair_at(start: usize, pair: &str) -> Range<usize> {
