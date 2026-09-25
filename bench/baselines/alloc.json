@@ -1,27 +1,27 @@
 {
   "edit_8mib_peak_bytes": {
-    "count": 152,
-    "bytes": 50330000,
-    "peak_bytes": 33550000
+    "count": 113,
+    "bytes": 33650666,
+    "peak_bytes": 28020000
   },
   "edit_from_stdin_10_files_proxy": {
-    "count": 1243,
-    "bytes": 410000,
-    "peak_bytes": 56710
+    "count": 1101,
+    "bytes": 290296,
+    "peak_bytes": 48950
   },
   "edit_structural_check_200_line_file": {
-    "count": 123,
-    "bytes": 22102,
-    "peak_bytes": 13200
+    "count": 111,
+    "bytes": 17850,
+    "peak_bytes": 11550
   },
   "hook_classify_200_char_command": {
-    "count": 162,
-    "bytes": 9763,
-    "peak_bytes": 2620
+    "count": 276,
+    "bytes": 10689,
+    "peak_bytes": 4426
   },
   "transform_set_multi_mib_json": {
-    "count": 156,
-    "bytes": 13637000,
-    "peak_bytes": 13630000
+    "count": 136,
+    "bytes": 12310692,
+    "peak_bytes": 12310000
   }
 }
