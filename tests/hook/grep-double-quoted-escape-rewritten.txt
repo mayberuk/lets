@@ -2,8 +2,7 @@ COMMAND
 grep "alpha\\|beta" src/grep.txt
 ===END===
 VERDICT rewrite
-REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find -s 'alpha|beta' src/grep.txt
+run: lets find 'alpha|beta' src/grep.txt --no-numbers
 ===END===
 COMPARE search

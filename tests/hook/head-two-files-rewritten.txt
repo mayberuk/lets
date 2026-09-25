@@ -2,9 +2,8 @@ COMMAND
 head -n 3 src/n.txt src/b.ts
 ===END===
 VERDICT rewrite
-REASON lets show reads several files and ranges in one call.
 REPLACEMENT
-run: lets show src/n.txt:1-3 src/b.ts:1-3
+run: lets show src/n.txt:1-3 src/b.ts:1-3 --no-numbers
 ===END===
 COMPARE read
 ORACLE

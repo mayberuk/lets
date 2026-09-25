@@ -1,0 +1,4 @@
+COMMAND
+sed -n '40,45p' src/a.ts
+===END===
+VERDICT allow

@@ -2,8 +2,7 @@ COMMAND
 cd src && cat ../notes.md
 ===END===
 VERDICT rewrite
-REASON `cd src` kept; lets show reads several files and ranges in one call.
 REPLACEMENT
-run: cd src && lets show ../notes.md --all
+run: cd src && lets show ../notes.md --all --no-header --no-numbers
 ===END===
 COMPARE read

@@ -1,0 +1,8 @@
+COMMAND
+rg -i -s zzz src/up.ts && echo y
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find -s 'zzz' src/up.ts --no-numbers --cap-exit-0 && echo y
+===END===
+COMPARE chain

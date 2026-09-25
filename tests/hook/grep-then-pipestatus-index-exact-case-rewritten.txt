@@ -1,0 +1,8 @@
+COMMAND
+grep zzz src/up.ts; echo ${PIPESTATUS[0]}
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find 'zzz' src/up.ts --no-numbers -s --cap-exit-0; echo ${PIPESTATUS[0]}
+===END===
+COMPARE chain

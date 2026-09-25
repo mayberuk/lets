@@ -2,8 +2,7 @@ COMMAND
 cat src/a.ts 2>/dev/null
 ===END===
 VERDICT rewrite
-REASON lets show reads several files and ranges in one call.
 REPLACEMENT
-run: lets show src/a.ts --all
+run: lets show src/a.ts --all --no-header --no-numbers
 ===END===
 COMPARE read

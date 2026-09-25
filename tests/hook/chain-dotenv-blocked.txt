@@ -4,6 +4,6 @@ cat src/a.ts && cat .env && git status
 VERDICT block
 REASON lets show reads several files and ranges in one call.
 REPLACEMENT
-run: lets show src/a.ts --all && lets show .env && git status
+run: lets show src/a.ts --all --no-header --no-numbers && lets show .env && git status
 ===END===
 COMPARE chain

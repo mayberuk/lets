@@ -2,8 +2,7 @@ COMMAND
 lets show src/a.ts && cat src/b.ts
 ===END===
 VERDICT rewrite
-REASON `cat src/b.ts` ran as `lets show src/b.ts --all`; the rest ran as written; lets show reads several files and ranges in one call.
 REPLACEMENT
-run: lets show src/a.ts && lets show src/b.ts --all
+run: lets show src/a.ts && lets show src/b.ts --all --no-header --no-numbers
 ===END===
 COMPARE chain

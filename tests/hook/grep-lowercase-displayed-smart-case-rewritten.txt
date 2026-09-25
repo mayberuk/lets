@@ -1,0 +1,12 @@
+COMMAND
+grep zzz src/up.ts
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find 'zzz' src/up.ts --no-numbers
+===END===
+COMPARE search
+ORACLE
+# lets find is smart case: a pattern with no capital matches any case, as grep -i does.
+grep -i zzz src/up.ts
+===END===

@@ -2,8 +2,7 @@ COMMAND
 grep -n '^| row\|^| none' src/grep.txt
 ===END===
 VERDICT rewrite
-REASON grep pattern translated to lets regex; lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find -s '^[|] row|^[|] none' src/grep.txt
+run: lets find '^[|] row|^[|] none' src/grep.txt
 ===END===
 COMPARE search

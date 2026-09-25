@@ -1,0 +1,8 @@
+COMMAND
+rg --case-sensitive zzz src/up.ts || echo MISSING
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find -s 'zzz' src/up.ts --no-numbers --cap-exit-0 || echo MISSING
+===END===
+COMPARE chain

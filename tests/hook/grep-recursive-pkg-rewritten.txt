@@ -2,8 +2,7 @@ COMMAND
 grep -rn 'Transition' pkg/
 ===END===
 VERDICT rewrite
-REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find 'Transition' pkg/
+run: lets find --hidden --no-ignore --exclude '.git/**' 'Transition' pkg/
 ===END===
 COMPARE search

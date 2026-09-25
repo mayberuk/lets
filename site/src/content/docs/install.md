@@ -94,6 +94,11 @@ $ lets version --json
 above), or it can be done separately at any time with `lets hooks install claude-code` or `lets
 hooks install codex`. See [the hooks reference](/docs/hooks/) for what each hook does and how to uninstall it.
 
+A Codex install needs one more step Claude Code's does not: Codex requires a human to trust a hook
+before it runs, so open Codex and choose "Trust all and continue" when prompted, or press `t` in
+the hooks browser — `lets hooks install codex` reports the current trust status on every run,
+naming any entry Codex does not trust yet.
+
 ## Uninstall
 
 ```console

@@ -9,3 +9,5 @@ func Inc() { foo++ }
 var leader string
 
 func Transition(to string) { leader = to }
+
+// Leader, capitalised: a hit only ignoring case.

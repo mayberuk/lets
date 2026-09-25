@@ -1,0 +1,8 @@
+COMMAND
+grep zzz src/up.ts && echo FOUND
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find 'zzz' src/up.ts --no-numbers -s --cap-exit-0 && echo FOUND
+===END===
+COMPARE chain

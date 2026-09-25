@@ -8,7 +8,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use lets::hook::{self, Verdict};
+use lets::hook::{self, Answer, Verdict};
 use proptest::prelude::*;
 use proptest::test_runner::{TestCaseError, TestRunner};
 use regex::Regex;
@@ -22,16 +22,27 @@ struct Run {
 }
 
 fn run_hook(event: &[u8]) -> Run {
+    run_hook_with(event, &[])
+}
+
+fn run_hook_with(event: &[u8], env: &[(&str, &str)]) -> Run {
     let home = TempDir::new().expect("a temp HOME");
+    run_hook_in(event, home.path(), env)
+}
+
+/// `home` is the child's HOME and working directory.
+fn run_hook_in(event: &[u8], home: &Path, env: &[(&str, &str)]) -> Run {
     let mut child = Command::new(env!("CARGO_BIN_EXE_lets"))
         .args(["hook", "classify"])
-        .current_dir(home.path())
-        .env("HOME", home.path())
-        .env("XDG_RUNTIME_DIR", home.path())
+        .current_dir(home)
+        .env("HOME", home)
+        .env("XDG_RUNTIME_DIR", home)
         .env("LETS_NO_STATS", "1")
         // Either would point the classifier at the runner's own Claude Code settings.
         .env_remove("CLAUDE_PROJECT_DIR")
         .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("LETS_HOOK_LOG")
+        .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -88,6 +99,8 @@ fn display(path: &Path) -> &str {
 #[derive(Clone, Copy)]
 enum Compare {
     Read,
+    /// The original printed `cat -n`/`nl -ba` lines: each number and its line must match.
+    NumberedRead,
     Search,
     SearchFiles,
     SearchCount,
@@ -96,8 +109,9 @@ enum Compare {
     Chain,
 }
 
+/// `reason` is a block's first reason line; a rewrite carries none, since it runs silently.
 struct Replacement {
-    reason: String,
+    reason: Option<String>,
     runs: Vec<String>,
     compare: Compare,
     oracle: Option<String>,
@@ -106,7 +120,7 @@ struct Replacement {
 enum Expected {
     Allow,
     Block(Replacement),
-    /// Its one `run: ` line is the command `updatedInput` carries.
+    /// Its one `run: ` line is the command `updatedInput` carries, on Claude Code and Codex alike.
     Rewrite(Replacement),
 }
 
@@ -185,10 +199,17 @@ fn parse_replacement<'a, I: Iterator<Item = &'a str>>(
     lines: &mut std::iter::Peekable<I>,
     verdict: &str,
 ) -> Result<Replacement, String> {
-    let Some(reason_line) = lines.next_if(|line| line.starts_with("REASON ")) else {
-        return Err(format!("a {verdict} case names its REASON"));
+    let reason_line = lines.next_if(|line| line.starts_with("REASON "));
+    let reason = match (verdict, reason_line) {
+        ("block", Some(line)) => Some(line["REASON ".len()..].to_owned()),
+        ("block", None) => return Err("a block case names its REASON".to_owned()),
+        (_, Some(_)) => {
+            return Err(format!(
+                "a {verdict} case has no REASON: a rewrite runs with no message"
+            ));
+        },
+        (_, None) => None,
     };
-    let reason = reason_line["REASON ".len()..].to_owned();
     if lines.next() != Some("REPLACEMENT") {
         return Err(format!("a {verdict} case names its REPLACEMENT"));
     }
@@ -201,6 +222,7 @@ fn parse_replacement<'a, I: Iterator<Item = &'a str>>(
     }
     let compare = match lines.next().and_then(|line| line.strip_prefix("COMPARE ")) {
         Some("read") => Compare::Read,
+        Some("numbered-read") => Compare::NumberedRead,
         Some("search") => Compare::Search,
         Some("search-files") => Compare::SearchFiles,
         Some("search-count") => Compare::SearchCount,
@@ -243,7 +265,8 @@ fn check_case(case: &Case) -> Vec<String> {
             run.code, run.err
         )];
     }
-    let (expected, reason, runs) = match &case.expected {
+    let mut failures = Vec::new();
+    let (expected, runs) = match &case.expected {
         Expected::Allow => {
             return if run.out.is_empty() {
                 Vec::new()
@@ -256,34 +279,33 @@ fn check_case(case: &Case) -> Vec<String> {
                 Ok(reason) => reason,
                 Err(failure) => return vec![failure],
             };
+            if reason.lines().next() != expected.reason.as_deref() {
+                failures.push(format!(
+                    "the reason's first line is not {:?}:\n{reason}",
+                    expected.reason
+                ));
+            }
             let runs: Vec<String> = reason
                 .lines()
                 .filter(|line| line.starts_with("run: "))
                 .map(str::to_owned)
                 .collect();
-            (expected, reason, runs)
+            (expected, runs)
         },
         Expected::Rewrite(expected) => {
-            let (reason, command) = match rewrite_of(&run.out, &case.command) {
-                Ok(rewrite) => rewrite,
+            let command = match rewrite_of(&run.out, &case.command) {
+                Ok(command) => command,
                 Err(failure) => return vec![failure],
             };
-            let mut failures = codex_still_denies(&tree, &case.command);
-            if !failures.is_empty() {
-                failures.insert(0, "the Codex-shaped event:".to_owned());
-                return failures;
+            let codex = codex_rewrites_the_same(&tree, &case.command, &command);
+            if !codex.is_empty() {
+                failures.push("the Codex-shaped event:".to_owned());
+                failures.extend(codex);
             }
-            (expected, reason, vec![format!("run: {command}")])
+            (expected, vec![format!("run: {command}")])
         },
     };
 
-    let mut failures = Vec::new();
-    if reason.lines().next() != Some(expected.reason.as_str()) {
-        failures.push(format!(
-            "the reason's first line is not {:?}:\n{reason}",
-            expected.reason
-        ));
-    }
     if runs != expected.runs {
         failures.push(format!(
             "the run lines differ from REPLACEMENT\n--- expected\n{}\n--- actual\n{}",
@@ -293,19 +315,33 @@ fn check_case(case: &Case) -> Vec<String> {
     }
     let oracle = expected.oracle.as_deref().unwrap_or(&case.command);
     let runs: Vec<&str> = runs.iter().map(String::as_str).collect();
+    let status = match case.expected {
+        Expected::Rewrite(_) => Status::Same,
+        _ => Status::Zero,
+    };
     failures.extend(execute(
         expected.compare,
         oracle,
         &case.command,
         &tree,
         &runs,
+        status,
     ));
     failures
 }
 
-/// The rewrite's context and command, after checking the JSON carries no permission decision and
-/// hands back every other field of the tool input unchanged.
-fn rewrite_of(stdout: &str, original: &str) -> Result<(String, String), String> {
+/// A rewrite runs in the original's place, so it must exit as the original did, zero or not: a
+/// chain or `set -e` that stops on a failed search is legitimate. A block's `run:` lines run on
+/// their own, so each must succeed.
+#[derive(Clone, Copy)]
+enum Status {
+    Same,
+    Zero,
+}
+
+/// The rewrite's command, after checking the JSON carries no permission decision and no message,
+/// and hands back every other field of the tool input unchanged.
+fn rewrite_of(stdout: &str, original: &str) -> Result<String, String> {
     let value: serde_json::Value = serde_json::from_str(stdout)
         .map_err(|error| format!("expected a rewrite, stdout is not JSON ({error}):\n{stdout}"))?;
     let output = &value["hookSpecificOutput"];
@@ -314,42 +350,60 @@ fn rewrite_of(stdout: &str, original: &str) -> Result<(String, String), String> 
             "a rewrite carries no permissionDecision, so the user's rules still judge it:\n{stdout}"
         ));
     }
+    let kept = serde_json::json!({ "description": "corpus case", "timeout": 60000 });
+    rewritten_command(output, stdout, original, kept)
+}
+
+/// Codex honours `updatedInput` only beside "allow", and sends no field but `command`.
+fn codex_rewrites_the_same(tree: &Sandbox, original: &str, command: &str) -> Vec<String> {
+    let run = run_hook(&codex_event(tree.path(), original));
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&run.out) else {
+        return vec![format!(
+            "expected a rewrite, stdout is not JSON:\n{}",
+            run.out
+        )];
+    };
+    let output = &value["hookSpecificOutput"];
+    if output["permissionDecision"] != "allow" {
+        return vec![format!(
+            "a Codex rewrite carries permissionDecision \"allow\":\n{}",
+            run.out
+        )];
+    }
+    match rewritten_command(output, &run.out, original, serde_json::json!({})) {
+        Ok(codex) if codex == command => Vec::new(),
+        Ok(codex) => vec![format!("Codex got `{codex}`, Claude Code got `{command}`")],
+        Err(failure) => vec![failure],
+    }
+}
+
+/// `kept` is every tool input field but `command`, which must come back unchanged.
+fn rewritten_command(
+    output: &serde_json::Value,
+    stdout: &str,
+    original: &str,
+    kept: serde_json::Value,
+) -> Result<String, String> {
     if output["hookEventName"] != "PreToolUse" {
         return Err(format!("hookEventName is not PreToolUse:\n{stdout}"));
+    }
+    for silent in ["additionalContext", "permissionDecisionReason"] {
+        if output.get(silent).is_some() {
+            return Err(format!("a rewrite carries no {silent}:\n{stdout}"));
+        }
     }
     let input = &output["updatedInput"];
     let Some(command) = input["command"].as_str() else {
         return Err(format!("no updatedInput.command:\n{stdout}"));
     };
-    let kept = serde_json::json!({
-        "command": command,
-        "description": "corpus case",
-        "timeout": 60000,
-    });
+    let mut kept = kept;
+    kept["command"] = command.into();
     if *input != kept {
         return Err(format!(
             "updatedInput dropped or changed a field of the tool input `{original}` sent:\n{stdout}"
         ));
     }
-    let Some(context) = output["additionalContext"].as_str() else {
-        return Err(format!("a rewrite tells the agent what ran:\n{stdout}"));
-    };
-    Ok((context.to_owned(), command.to_owned()))
-}
-
-fn codex_still_denies(tree: &Sandbox, command: &str) -> Vec<String> {
-    let run = run_hook(&codex_event(tree.path(), command));
-    match deny_reason(&run.out) {
-        Ok(reason)
-            if reason
-                .lines()
-                .any(|line| line.starts_with("run: ") && line.contains("lets ")) =>
-        {
-            Vec::new()
-        },
-        Ok(reason) => vec![format!("a deny with no `lets` run line:\n{reason}")],
-        Err(failure) => vec![failure],
-    }
+    Ok(command.to_owned())
 }
 
 fn deny_reason(stdout: &str) -> Result<String, String> {
@@ -377,6 +431,7 @@ fn execute(
     command: &str,
     replaced: &Sandbox,
     runs: &[&str],
+    status: Status,
 ) -> Vec<String> {
     let original = hook_tree();
     let expected = match compare {
@@ -384,35 +439,132 @@ fn execute(
         _ => original.bash(oracle),
     };
     let mut failures = Vec::new();
-    if expected.code != 0 {
+    if matches!(status, Status::Zero) && expected.code != 0 {
         failures.push(format!(
             "the oracle `{oracle}` exited {}, stderr:\n{}",
             expected.code, expected.err
         ));
     }
     let mut answer = String::new();
+    let mut numbered = String::new();
     for run in runs {
         let line = run.strip_prefix("run: ").unwrap_or(run);
         let script = with_heredoc(line, command);
         let step = replaced.bash(&script);
-        if step.code != 0 {
+        let wanted = match status {
+            Status::Same => expected.code,
+            Status::Zero => 0,
+        };
+        if step.code != wanted {
             failures.push(format!(
-                "`{line}` exited {}, stderr:\n{}",
+                "`{line}` exited {}, the original {wanted}, stderr:\n{}",
                 step.code, step.err
             ));
         }
         answer.push_str(&step.out);
+        if script.contains(NO_NUMBERS) {
+            numbered.push_str(&replaced.bash(&script.replace(NO_NUMBERS, "")).out);
+        } else {
+            numbered.push_str(&step.out);
+        }
     }
+    let unnumbered = runs.iter().all(|run| run.contains(NO_NUMBERS));
+    let headerless = unnumbered && runs.iter().all(|run| run.contains(" --no-header"));
     let mismatch = match compare {
+        Compare::Read if headerless => compare_exact(&expected.out, &answer),
+        Compare::Read if unnumbered => compare_unnumbered_read(&expected.out, &answer),
         Compare::Read => compare_read(&expected.out, &answer),
-        Compare::Search => compare_search(&expected.out, &answer),
-        Compare::SearchFiles => compare_search_files(&expected.out, &answer),
-        Compare::SearchCount => compare_search_count(&expected.out, &answer),
+        Compare::NumberedRead => compare_numbered_read(&expected.out, &answer),
+        Compare::Search => compare_search(&expected.out, &numbered),
+        Compare::SearchFiles => compare_search_files(&expected.out, &numbered),
+        Compare::SearchCount => compare_search_count(&expected.out, &numbered),
         Compare::Write => compare_write(&tree_bytes(original.path()), &tree_bytes(replaced.path())),
         Compare::Chain => compare_chain(&expected.out, &answer),
     };
     failures.extend(mismatch.err());
+    if runs.iter().any(|run| run.contains(NO_NUMBERS)) {
+        failures.extend(compare_gutter_only(&numbered, &answer).err());
+    }
     failures
+}
+
+const NO_NUMBERS: &str = " --no-numbers";
+
+/// `--no-numbers` only drops each gutter and separates non-adjacent hit groups with `--`, as
+/// grep does; every other byte matches the numbered run.
+fn compare_gutter_only(numbered: &str, unnumbered: &str) -> Result<(), String> {
+    let gutter = Regex::new(r"^ *\d+[ :-]\t").expect("a valid pattern");
+    let plain = |output: &str| -> Vec<String> {
+        output
+            .lines()
+            .filter(|line| *line != "--")
+            .map(|line| gutter.replace(line, "").into_owned())
+            .collect()
+    };
+    let (stripped, shown) = (plain(numbered), plain(unnumbered));
+    if stripped == shown {
+        return Ok(());
+    }
+    Err(format!(
+        "--no-numbers changed more than the gutter\n--- numbered, gutter stripped\n{}\n--- \
+         unnumbered\n{}",
+        stripped.join("\n"),
+        shown.join("\n")
+    ))
+}
+
+/// A read of one file with no header and no gutter prints exactly what the original printed.
+fn compare_exact(oracle: &str, replacement: &str) -> Result<(), String> {
+    if oracle == replacement {
+        return Ok(());
+    }
+    Err(format!(
+        "read mismatch\n--- the original printed\n{oracle:?}\n--- the replacement printed\n{replacement:?}"
+    ))
+}
+
+/// Several files keep their `── ` headers; every other line is the original's.
+fn compare_unnumbered_read(oracle: &str, replacement: &str) -> Result<(), String> {
+    let printed: Vec<&str> = oracle.lines().collect();
+    let shown: Vec<&str> = replacement
+        .lines()
+        .filter(|line| !line.starts_with("── "))
+        .collect();
+    if printed == shown {
+        return Ok(());
+    }
+    Err(format!(
+        "read mismatch\n--- the original printed\n{}\n--- the replacement shows\n{}",
+        printed.join("\n"),
+        shown.join("\n")
+    ))
+}
+
+/// `cat -n` and `nl -ba` print `%6d\t`; `lets show` right-aligns the number, then a marker
+/// column, then a tab.
+fn compare_numbered_read(oracle: &str, replacement: &str) -> Result<(), String> {
+    let original = Regex::new(r"^ *(\d+)\t(.*)$").expect("a valid pattern");
+    let lets = Regex::new(r"^ *(\d+) \t(.*)$").expect("a valid pattern");
+    let pairs = |output: &str, pattern: &Regex| -> Result<Vec<(u64, String)>, String> {
+        output
+            .lines()
+            .filter(|line| !line.starts_with("── "))
+            .map(|line| {
+                pattern
+                    .captures(line)
+                    .map(|found| (number(&found[1]), found[2].to_owned()))
+                    .ok_or_else(|| format!("numbered read mismatch: {line:?} has no number"))
+            })
+            .collect()
+    };
+    let (printed, shown) = (pairs(oracle, &original)?, pairs(replacement, &lets)?);
+    if printed == shown {
+        return Ok(());
+    }
+    Err(format!(
+        "numbered read mismatch\n--- the original printed\n{printed:?}\n--- the replacement \
+         shows\n{shown:?}"
+    ))
 }
 
 /// A heredoc write's replacement means the same only when handed the same heredoc.
@@ -465,19 +617,38 @@ fn compare_read(oracle: &str, replacement: &str) -> Result<(), String> {
     ))
 }
 
-/// Both sides lose every `── ` header and footer and every `lets show` gutter, so a kept `lets`
-/// call reads the same in each, and only a line the rewrite added, dropped or changed is a
-/// mismatch.
+/// Both sides lose every `── ` header and footer, and a `cat -n` or `lets show` gutter becomes its
+/// bare number and a tab. A `lets show` gutter the original did not print is dropped, since a
+/// deny's replacement may number a read the original did not; one it did print must carry the same
+/// number. Only a line or a number the replacement added, dropped or changed is a mismatch.
 fn compare_chain(oracle: &str, replacement: &str) -> Result<(), String> {
-    let gutter = Regex::new(r"^ *\d+ \t").expect("a valid pattern");
-    let plain = |output: &str| -> Vec<String> {
+    let gutter = Regex::new(r"^ *(\d+) ?\t").expect("a valid pattern");
+    let lets_gutter = Regex::new(r"^ *(\d+) \t(.*)$").expect("a valid pattern");
+    let lines = |output: &str| -> Vec<String> {
         output
             .lines()
             .filter(|line| !line.starts_with("── "))
-            .map(|line| gutter.replace(line, "").into_owned())
+            .map(|line| gutter.replace(line, "$1\t").into_owned())
             .collect()
     };
-    let (printed, shown) = (plain(oracle), plain(replacement));
+    let printed = lines(oracle);
+    let shown: Vec<String> = replacement
+        .lines()
+        .filter(|line| !line.starts_with("── "))
+        .zip(
+            printed
+                .iter()
+                .map(String::as_str)
+                .chain(std::iter::repeat("")),
+        )
+        .map(|(line, original)| match lets_gutter.captures(line) {
+            Some(gutter) if original == format!("{}\t{}", &gutter[1], &gutter[2]) => {
+                original.to_owned()
+            },
+            Some(gutter) => gutter[2].to_owned(),
+            None => line.to_owned(),
+        })
+        .collect();
     if printed == shown {
         return Ok(());
     }
@@ -734,13 +905,13 @@ fn case_root_holding(name: &str, case: &str) -> TempDir {
     root
 }
 
-const SHOW_A: &str = "COMMAND\ncat src/a.ts\n===END===\nVERDICT rewrite\nREASON lets show reads \
-                      several files and ranges in one call.\nREPLACEMENT\nrun: lets show \
-                      src/a.ts --all\n===END===\nCOMPARE read\n";
+const SHOW_A: &str = "COMMAND\ncat src/a.ts\n===END===\nVERDICT rewrite\nREPLACEMENT\nrun: lets \
+                      show src/a.ts --all --no-header --no-numbers\n===END===\nCOMPARE read\n";
 
-const FIND_FOO: &str = "COMMAND\nrg foo src/e.ts && ls\n===END===\nVERDICT block\nREASON lets \
-                        find returns every hit numbered and grouped by file.\nREPLACEMENT\nrun: \
-                        lets find -s 'foo' src/e.ts && ls\n===END===\nCOMPARE search\n";
+const EDIT_C: &str = "COMMAND\nsed -i 's/foo/baz/g' src/c.ts\n===END===\nVERDICT block\nREASON \
+                      lets edit replaces the exact text and shows the changed lines.\nREPLACEMENT\n\
+                      run: lets edit src/c.ts --old 'foo' --new 'baz' --all\n===END===\nCOMPARE \
+                      write\n";
 
 /// A stale xfail marker would hide the day a case starts passing.
 #[test]
@@ -782,31 +953,46 @@ fn a_failing_case_fails_by_name_unless_it_is_marked_xfail() {
 }
 
 #[test]
-fn a_block_or_rewrite_case_with_no_reason_fails_by_name() {
-    for (case, verdict) in [(FIND_FOO, "block"), (SHOW_A, "rewrite")] {
-        let passing = case_root_holding("with-reason", case);
-        assert_eq!(corpus_failures(passing.path()), Vec::<String>::new());
+fn a_block_case_with_no_reason_fails_by_name() {
+    let passing = case_root_holding("with-reason", EDIT_C);
+    assert_eq!(corpus_failures(passing.path()), Vec::<String>::new());
 
-        let no_reason: String = case
-            .split_inclusive('\n')
-            .filter(|line| !line.starts_with("REASON "))
-            .collect();
-        let root = case_root_holding("no-reason", &no_reason);
+    let no_reason: String = EDIT_C
+        .split_inclusive('\n')
+        .filter(|line| !line.starts_with("REASON "))
+        .collect();
+    let root = case_root_holding("no-reason", &no_reason);
 
-        let failures = corpus_failures(root.path());
+    let failures = corpus_failures(root.path());
 
-        assert_eq!(failures, vec![format!(
-            "no-reason: a {verdict} case names its REASON"
-        )]);
-    }
+    assert_eq!(failures, vec![
+        "no-reason: a block case names its REASON".to_owned()
+    ]);
+}
+
+#[test]
+fn a_rewrite_case_with_a_reason_fails_by_name() {
+    let with_reason = SHOW_A.replace(
+        "VERDICT rewrite\n",
+        "VERDICT rewrite\nREASON lets show reads several files and ranges in one call.\n",
+    );
+    assert_ne!(with_reason, SHOW_A);
+    let root = case_root_holding("with-reason", &with_reason);
+
+    let failures = corpus_failures(root.path());
+
+    assert_eq!(failures, vec![
+        "with-reason: a rewrite case has no REASON: a rewrite runs with no message".to_owned()
+    ]);
 }
 
 #[test]
 fn a_rewrite_case_with_two_run_lines_fails_by_name() {
     let two = SHOW_A.replace(
-        "run: lets show src/a.ts --all\n",
+        "run: lets show src/a.ts --all --no-header --no-numbers\n",
         "run: lets show src/a.ts --all\nrun: lets show src/b.ts --all\n",
     );
+    assert_ne!(two, SHOW_A);
     let root = case_root_holding("two-runs", &two);
 
     let failures = corpus_failures(root.path());
@@ -821,9 +1007,14 @@ fn a_rewrite_case_with_two_run_lines_fails_by_name() {
 fn a_windowed_show_of_a_file_over_the_window_is_a_read_mismatch() {
     let command = "cat long.txt";
     let replaced = hook_tree();
-    let failures = execute(Compare::Read, command, command, &replaced, &[
-        "run: lets show long.txt",
-    ]);
+    let failures = execute(
+        Compare::Read,
+        command,
+        command,
+        &replaced,
+        &["run: lets show long.txt"],
+        Status::Zero,
+    );
     assert!(
         failures
             .iter()
@@ -832,56 +1023,141 @@ fn a_windowed_show_of_a_file_over_the_window_is_a_read_mismatch() {
     );
 
     let replaced = hook_tree();
-    let failures = execute(Compare::Read, command, command, &replaced, &[
-        "run: lets show long.txt --all",
-    ]);
+    let failures = execute(
+        Compare::Read,
+        command,
+        command,
+        &replaced,
+        &["run: lets show long.txt --all"],
+        Status::Zero,
+    );
     assert_eq!(failures, Vec::<String>::new());
 }
 
-/// Claude Code rewrites this command; the same command from Codex is today's deny.
+/// Claude Code leaves the rewritten command to the user's permission rules; Codex needs "allow"
+/// beside `updatedInput` and still runs its own approval on the result.
 #[test]
-fn a_codex_event_for_a_rewritten_read_denies_with_the_replacement() {
+fn a_codex_event_gets_the_rewrite_claude_code_gets_with_allow() {
     let tree = hook_tree();
-    assert!(
-        rewrite_of(
-            &run_hook(&event(tree.path(), "cat src/a.ts")).out,
-            "cat src/a.ts"
-        )
-        .is_ok_and(|(_, command)| command == "lets show src/a.ts --all")
+    let claude = run_hook(&event(tree.path(), "cat src/a.ts"));
+    assert_eq!(
+        rewrite_of(&claude.out, "cat src/a.ts"),
+        Ok("lets show src/a.ts --all --no-header --no-numbers".to_owned())
     );
 
-    let run = run_hook(&codex_event(tree.path(), "cat src/a.ts"));
+    let codex = run_hook(&codex_event(tree.path(), "cat src/a.ts"));
 
-    assert_eq!(run.code, Some(0));
+    assert_eq!(codex.code, Some(0));
+    let parsed: serde_json::Value = serde_json::from_str(&codex.out).expect("one JSON line");
+    assert_eq!(
+        parsed,
+        serde_json::json!({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {"command": "lets show src/a.ts --all --no-header --no-numbers"},
+        }})
+    );
+    assert_eq!(
+        codex_rewrites_the_same(
+            &tree,
+            "cat src/a.ts",
+            "lets show src/a.ts --all --no-header --no-numbers"
+        ),
+        Vec::<String>::new()
+    );
+}
+
+/// A command with no rewrite is still Codex's deny, with its runnable replacement.
+#[test]
+fn a_codex_event_with_no_rewrite_denies_with_the_replacement() {
+    let tree = hook_tree();
+    let run = run_hook(&codex_event(tree.path(), "sed -i 's/foo/baz/g' src/c.ts"));
+
     assert_eq!(
         deny_reason(&run.out),
         Ok(
-            "lets show reads several files and ranges in one call.\nrun: lets show \
-            src/a.ts\nthe command above replaces the original"
+            "lets edit replaces the exact text and shows the changed lines.\nrun: lets edit \
+             src/c.ts --old 'foo' --new 'baz' --all\nthe command above replaces the original"
                 .to_owned()
         )
     );
 }
 
 #[test]
-fn rewrite_json_that_decides_permission_or_drops_an_input_field_is_refused() {
-    let good = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"lets show a.ts --all","description":"corpus case","timeout":60000},"additionalContext":"ran instead: lets show a.ts --all"}}"#;
+fn rewrite_json_that_decides_permission_speaks_or_drops_an_input_field_is_refused() {
+    let good = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"lets show a.ts --all","description":"corpus case","timeout":60000}}}"#;
     assert_eq!(
         rewrite_of(good, "cat a.ts"),
-        Ok((
-            "ran instead: lets show a.ts --all".to_owned(),
-            "lets show a.ts --all".to_owned()
-        ))
+        Ok("lets show a.ts --all".to_owned())
     );
 
     let allow = good.replace(
         r#""hookEventName":"PreToolUse","#,
         r#""hookEventName":"PreToolUse","permissionDecision":"allow","#,
     );
+    let context = good.replace(
+        r#""hookEventName":"PreToolUse","#,
+        r#""hookEventName":"PreToolUse","additionalContext":"ran instead: lets show a.ts --all","#,
+    );
     let dropped = good.replace(r#","description":"corpus case""#, "");
-    for bad in [allow, dropped] {
+    for bad in [allow, context, dropped] {
         assert!(rewrite_of(&bad, "cat a.ts").is_err(), "{bad}");
     }
+}
+
+#[test]
+fn hook_log_names_a_file_that_gets_one_verdict_line_per_call() {
+    let tree = hook_tree();
+    let logs = TempDir::new().expect("a temp log directory");
+    let log = logs.path().join("hook.jsonl");
+
+    for command in ["cat src/a.ts", "ls", "sed -i 's/foo/baz/g' src/c.ts"] {
+        let run = run_hook_with(&event(tree.path(), command), &[(
+            "LETS_HOOK_LOG",
+            log.to_str().expect("a utf-8 temp path"),
+        )]);
+        assert_eq!(run.code, Some(0));
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(&log).expect("the log was created"),
+        "{\"verdict\":\"rewrite\"}\n{\"verdict\":\"allow\"}\n{\"verdict\":\"block\"}\n"
+    );
+}
+
+#[test]
+fn without_hook_log_no_file_is_written() {
+    let tree = hook_tree();
+    let home = TempDir::new().expect("a temp HOME");
+
+    let run = run_hook_in(&event(tree.path(), "cat src/a.ts"), home.path(), &[]);
+
+    assert!(run.out.contains("updatedInput"), "{}", run.out);
+    assert_eq!(
+        std::fs::read_dir(home.path())
+            .expect("the temp HOME is readable")
+            .count(),
+        0,
+        "the hook wrote into its working directory"
+    );
+}
+
+#[test]
+fn a_hook_log_that_cannot_be_written_changes_nothing() {
+    let tree = hook_tree();
+    let logs = TempDir::new().expect("a temp log directory");
+    let unwritable = logs.path().join("missing/hook.jsonl");
+    let event = event(tree.path(), "cat src/a.ts");
+
+    let logged = run_hook_with(&event, &[(
+        "LETS_HOOK_LOG",
+        unwritable.to_str().expect("a utf-8 temp path"),
+    )]);
+    let plain = run_hook(&event);
+
+    assert_eq!(logged.code, Some(0));
+    assert_eq!(logged.out, plain.out);
+    assert_eq!(logged.err, plain.err);
 }
 
 /// A whole-file `show` is the replacement the classifier gives for `sed -n '5p'` today.
@@ -889,9 +1165,14 @@ fn rewrite_json_that_decides_permission_or_drops_an_input_field_is_refused() {
 fn a_single_line_sed_replaced_by_a_whole_file_show_is_a_read_mismatch() {
     let command = "sed -n '5p' src/n.txt";
     let replaced = hook_tree();
-    let failures = execute(Compare::Read, command, command, &replaced, &[
-        "run: lets show src/n.txt",
-    ]);
+    let failures = execute(
+        Compare::Read,
+        command,
+        command,
+        &replaced,
+        &["run: lets show src/n.txt"],
+        Status::Zero,
+    );
     assert!(
         failures
             .iter()
@@ -900,9 +1181,14 @@ fn a_single_line_sed_replaced_by_a_whole_file_show_is_a_read_mismatch() {
     );
 
     let replaced = hook_tree();
-    let failures = execute(Compare::Read, command, command, &replaced, &[
-        "run: lets show src/n.txt:5",
-    ]);
+    let failures = execute(
+        Compare::Read,
+        command,
+        command,
+        &replaced,
+        &["run: lets show src/n.txt:5"],
+        Status::Zero,
+    );
     assert_eq!(failures, Vec::<String>::new());
 }
 
@@ -921,13 +1207,81 @@ fn a_read_whose_content_differs_by_one_line_is_a_mismatch() {
 }
 
 #[test]
+fn a_chain_replacement_that_drops_or_shifts_a_cat_n_number_is_a_mismatch() {
+    let command = "cat -n src/a.ts; git status";
+    for wrong in [
+        "run: lets show src/a.ts --all --no-header --no-numbers; git status",
+        "run: lets show src/a.ts:2-30 --no-header; git status",
+    ] {
+        let failures = execute(
+            Compare::Chain,
+            command,
+            command,
+            &hook_tree(),
+            &[wrong],
+            Status::Same,
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.starts_with("chain mismatch")),
+            "{wrong}: {failures:#?}"
+        );
+    }
+
+    let failures = execute(
+        Compare::Chain,
+        command,
+        command,
+        &hook_tree(),
+        &["run: lets show src/a.ts --all --no-header; git status"],
+        Status::Same,
+    );
+    assert_eq!(failures, Vec::<String>::new());
+}
+
+/// grep exits 0 on any hit, so what `&&` runs after it must still run when `lets find` passes its
+/// 50-hit cap: 59 lines under `src/` hold an `e`.
+#[test]
+fn a_rewritten_search_past_the_cap_lets_the_chain_run_on_as_grep_did() {
+    let original = "grep -rn e src && echo ran-after";
+    let tree = hook_tree();
+    let rewritten =
+        rewrite_of(&run_hook(&event(tree.path(), original)).out, original).expect("a rewrite");
+    assert!(rewritten.contains(" --cap-exit-0 && "), "{rewritten}");
+
+    let grep = tree.bash(original);
+    let lets = tree.bash(&rewritten);
+
+    assert_eq!((grep.code, grep.out.ends_with("ran-after\n")), (0, true));
+    assert_eq!(
+        (lets.code, lets.out.ends_with("ran-after\n")),
+        (0, true),
+        "{}",
+        lets.err
+    );
+    let uncapped = tree.bash(&rewritten.replace(" --cap-exit-0", ""));
+    assert_eq!(
+        (uncapped.code, uncapped.out.contains("ran-after")),
+        (1, false)
+    );
+}
+
+#[test]
 fn a_chain_replacement_that_drops_a_statement_or_changes_a_line_is_a_mismatch() {
     let command = "cat src/a.ts; git status";
     for dropped in [
         "run: lets show src/a.ts --all",
         "run: lets show src/b.ts --all; git status",
     ] {
-        let failures = execute(Compare::Chain, command, command, &hook_tree(), &[dropped]);
+        let failures = execute(
+            Compare::Chain,
+            command,
+            command,
+            &hook_tree(),
+            &[dropped],
+            Status::Same,
+        );
         assert!(
             failures
                 .iter()
@@ -936,9 +1290,44 @@ fn a_chain_replacement_that_drops_a_statement_or_changes_a_line_is_a_mismatch() 
         );
     }
 
-    let failures = execute(Compare::Chain, command, command, &hook_tree(), &[
-        "run: lets show src/a.ts --all; git status",
-    ]);
+    let failures = execute(
+        Compare::Chain,
+        command,
+        command,
+        &hook_tree(),
+        &["run: lets show src/a.ts --all; git status"],
+        Status::Same,
+    );
+    assert_eq!(failures, Vec::<String>::new());
+}
+
+/// The replacements print the same lines; only the exit status tells them apart.
+#[test]
+fn a_rewrite_that_exits_otherwise_than_the_original_is_a_mismatch() {
+    let command = "cat src/a.ts && false";
+    let failures = execute(
+        Compare::Chain,
+        command,
+        command,
+        &hook_tree(),
+        &["run: lets show src/a.ts --all --no-header --no-numbers && true"],
+        Status::Same,
+    );
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.contains("exited 0, the original 1")),
+        "{failures:#?}"
+    );
+
+    let failures = execute(
+        Compare::Chain,
+        command,
+        command,
+        &hook_tree(),
+        &["run: lets show src/a.ts --all --no-header --no-numbers && false"],
+        Status::Same,
+    );
     assert_eq!(failures, Vec::<String>::new());
 }
 
@@ -1062,7 +1451,7 @@ fn a_replaced_grep_whose_literal_matches_nothing_finds_nothing_too() {
         assert!(
             matches!(
                 hook::classify(&event(tree.path(), &command)),
-                Verdict::Rewrite { .. }
+                Answer::Decision(Verdict::Rewrite { .. })
             ),
             "{command} is rewritten, so its replacement is what runs"
         );
@@ -1075,9 +1464,9 @@ fn a_replaced_grep_whose_literal_matches_nothing_finds_nothing_too() {
 fn agrees_with_grep(tree: &Sandbox, dialect: &str, pattern: &str) -> Result<(), TestCaseError> {
     let command = format!("grep {dialect}'{pattern}' src/grep.txt");
     let replacement = match hook::classify(&event(tree.path(), &command)) {
-        Verdict::Allow => return Ok(()),
-        Verdict::Rewrite { command, .. } => command,
-        Verdict::Block { reason } => {
+        Answer::Decision(Verdict::Allow) => return Ok(()),
+        Answer::Decision(Verdict::Rewrite { command, .. }) => command,
+        Answer::Decision(Verdict::Block { reason }) => {
             let runs: Vec<&str> = reason
                 .lines()
                 .filter_map(|line| line.strip_prefix("run: "))
@@ -1089,9 +1478,22 @@ fn agrees_with_grep(tree: &Sandbox, dialect: &str, pattern: &str) -> Result<(), 
             };
             (*run).to_owned()
         },
+        Answer::Context(text) => {
+            return Err(TestCaseError::fail(format!(
+                "{command}: a Bash PreToolUse event does not answer with a PostToolUse note:\n{text}"
+            )));
+        },
     };
-    let grep = tree.bash(&format!("grep -Hn {dialect}'{pattern}' src/grep.txt"));
-    let found = tree.bash(&replacement);
+    // `lets find` is smart case: a pattern with no uppercase letter matches ignoring case.
+    let smart_case = if pattern.chars().any(char::is_uppercase) {
+        ""
+    } else {
+        "-i "
+    };
+    let grep = tree.bash(&format!(
+        "grep -Hn {smart_case}{dialect}'{pattern}' src/grep.txt"
+    ));
+    let found = tree.bash(&replacement.replace(NO_NUMBERS, ""));
     prop_assert!(
         matches!(grep.code, 0 | 1),
         "{command} replaced, but grep rejects the pattern (exit {}): {}",
@@ -1106,7 +1508,10 @@ fn agrees_with_grep(tree: &Sandbox, dialect: &str, pattern: &str) -> Result<(), 
         replacement,
         found.err
     );
-    compare_search(&grep.out, &found.out)
+    let shown = tree.bash(&replacement);
+    prop_assert_eq!(shown.code, found.code, "{} → `{}`", command, replacement);
+    compare_gutter_only(&found.out, &shown.out)
+        .and_then(|()| compare_search(&grep.out, &found.out))
         .map_err(|mismatch| TestCaseError::fail(format!("{command} → `{replacement}`: {mismatch}")))
 }
 
@@ -1210,7 +1615,7 @@ fn heredoc_delimiter(line: &str) -> Option<String> {
         return None;
     }
     let after = after.trim_start();
-    for quote in ['\'', '"'] {
+    for quote in ['\'', '\"'] {
         if let Some(rest) = after.strip_prefix(quote) {
             return rest.split_once(quote).map(|(word, _)| word.to_owned());
         }
@@ -1247,27 +1652,42 @@ fn today_failures(cases: &Path, scenarios: &Path) -> Vec<String> {
             if listed {
                 used.insert(id.clone());
             }
-            let verdict = hook::classify(&event(tree.path(), &statement));
-            match verdict {
-                Verdict::Allow if listed => {},
-                Verdict::Allow => failures.push(format!(
+            let answer = hook::classify(&event(tree.path(), &statement));
+            match answer {
+                Answer::Decision(Verdict::Allow) if listed => {},
+                Answer::Decision(Verdict::Allow) => failures.push(format!(
                     "{id}: the classifier allows it, but it is not named in \
                      tests/hook/today-allow.txt:\n{statement}"
                 )),
-                Verdict::Block { reason } | Verdict::Rewrite { reason, .. } if listed => {
+                Answer::Decision(
+                    Verdict::Block {
+                        reason: replacement,
+                    }
+                    | Verdict::Rewrite {
+                        command: replacement,
+                    },
+                ) if listed => {
                     failures.push(format!(
                         "{id}: named in tests/hook/today-allow.txt as allow, but the classifier \
-                         intercepts it:\n{statement}\nreason: {reason}"
+                         intercepts it:\n{statement}\nreplacement: {replacement}"
                     ));
                 },
-                Verdict::Block { reason } | Verdict::Rewrite { reason, .. }
-                    if reason.is_empty() =>
-                {
+                Answer::Decision(
+                    Verdict::Block {
+                        reason: replacement,
+                    }
+                    | Verdict::Rewrite {
+                        command: replacement,
+                    },
+                ) if !replacement.contains("lets ") => {
                     failures.push(format!(
-                        "{id}: intercepted with an empty reason:\n{statement}"
+                        "{id}: intercepted with no lets command:\n{statement}"
                     ));
                 },
-                Verdict::Block { .. } | Verdict::Rewrite { .. } => {},
+                Answer::Decision(Verdict::Block { .. } | Verdict::Rewrite { .. }) => {},
+                Answer::Context(text) => failures.push(format!(
+                    "{id}: a Bash PreToolUse event does not answer with a PostToolUse note:\n{text}"
+                )),
             }
         }
     }
@@ -1329,4 +1749,359 @@ fn a_verb_named_in_today_verbs_with_no_today_script_fails_by_name() {
         "edit: no tests/scenarios/edit/*/today/script.sh found — its part has not merged yet"
             .to_owned()
     ]);
+}
+
+/// `PostToolUse` has no command to classify, so its corpus shape names the event kind, the file
+/// and the expected `additionalContext` instead of stretching the `COMMAND`/`VERDICT` format built
+/// for `PreToolUse`.
+fn post_tool_use_event(cwd: &Path, tool_name: &str, tool_input: &serde_json::Value) -> Vec<u8> {
+    serde_json::json!({
+        "session_id": "corpus",
+        "cwd": display(cwd),
+        "hook_event_name": "PostToolUse",
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+    })
+    .to_string()
+    .into_bytes()
+}
+
+fn additional_context(stdout: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(stdout).ok()?;
+    value["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .map(str::to_owned)
+}
+
+#[test]
+fn an_edit_on_a_clean_file_reports_ok() {
+    let tree = hook_tree();
+    let event = post_tool_use_event(
+        tree.path(),
+        "Edit",
+        &serde_json::json!({
+            "file_path": tree.path().join("clean.rs"),
+        }),
+    );
+
+    let run = run_hook(&event);
+
+    assert_eq!(run.code, Some(0));
+    assert_eq!(
+        additional_context(&run.out).as_deref(),
+        Some("check: structure ok")
+    );
+}
+
+#[test]
+fn an_edit_that_leaves_a_syntax_error_reports_failed() {
+    let tree = hook_tree();
+    let file = tree.path().join("clean.rs");
+    std::fs::write(&file, "fn main( {\n").expect("the edit already landed on disk");
+    let event = post_tool_use_event(
+        tree.path(),
+        "Edit",
+        &serde_json::json!({
+            "file_path": file,
+        }),
+    );
+
+    let run = run_hook(&event);
+
+    assert_eq!(run.code, Some(0));
+    assert_eq!(
+        additional_context(&run.out).as_deref(),
+        Some("check: structure failed")
+    );
+}
+
+#[test]
+fn an_edit_on_an_unrecognized_extension_reports_no_additional_context() {
+    let tree = hook_tree();
+    let event = post_tool_use_event(
+        tree.path(),
+        "Edit",
+        &serde_json::json!({
+            "file_path": tree.path().join("long.txt"),
+        }),
+    );
+
+    let run = run_hook(&event);
+
+    assert_eq!(run.code, Some(0));
+    assert!(run.out.is_empty(), "{}", run.out);
+}
+
+/// Codex 0.154 hands `apply_patch`'s patch to a hook as `tool_input.command`
+/// (codex-rs/core/src/tools/handlers/apply_patch.rs, `post_tool_use_payload`); the control sends
+/// the same patch under a field Codex never uses.
+#[test]
+fn a_codex_apply_patch_event_on_the_same_clean_file_gets_the_same_ok_result() {
+    let tree = hook_tree();
+    let patch = "*** Begin Patch\n*** Update File: clean.rs\n*** End Patch\n";
+    let codex_event = |tool_input: serde_json::Value| {
+        let mut event: serde_json::Value = serde_json::from_slice(&post_tool_use_event(
+            tree.path(),
+            "apply_patch",
+            &tool_input,
+        ))
+        .expect("a JSON event");
+        event["turn_id"] = "corpus-turn".into();
+        event.to_string().into_bytes()
+    };
+
+    let run = run_hook(&codex_event(serde_json::json!({ "command": patch })));
+    let misnamed = run_hook(&codex_event(serde_json::json!({ "input": patch })));
+
+    assert_eq!(run.code, Some(0));
+    assert_eq!(
+        additional_context(&run.out).as_deref(),
+        Some("check: structure ok")
+    );
+    assert_eq!(misnamed.code, Some(0));
+    assert!(misnamed.out.is_empty(), "{}", misnamed.out);
+}
+
+/// nextest runs each test as its own process, so a `OnceLock` cannot share a warm build cache
+/// across them; a fixed directory under the OS temp root does, keeping every Go test but the
+/// first well under the 10 s timeout.
+fn go_build_cache() -> PathBuf {
+    let dir = std::env::temp_dir().join("lets-hook-go-build-cache");
+    std::fs::create_dir_all(&dir).expect("a shared go build cache directory");
+    dir
+}
+
+/// `gomod/` carries its own `go.mod`, so an edit inside it runs the real build instead of the
+/// structural (tree-sitter) fallback.
+#[test]
+fn an_edit_on_a_clean_go_file_inside_a_module_runs_go_build_and_reports_ok() {
+    let tree = hook_tree();
+    let event = post_tool_use_event(
+        tree.path(),
+        "Edit",
+        &serde_json::json!({
+            "file_path": tree.path().join("gomod/main.go"),
+        }),
+    );
+
+    let cache = go_build_cache();
+    let run = run_hook_with(&event, &[(
+        "GOCACHE",
+        cache.to_str().expect("a utf-8 cache path"),
+    )]);
+
+    assert_eq!(run.code, Some(0));
+    assert_eq!(
+        additional_context(&run.out).as_deref(),
+        Some("go build: ok")
+    );
+}
+
+/// Parses cleanly, so only the compiler sees what is wrong.
+const GO_TYPE_ERROR: &str = "\nfunc helper() int { return \"s\" }\n";
+
+/// Writes `file` under `gomod/`, then runs the `PostToolUse` check on it with a shared build
+/// cache.
+fn check_go_file(file: &str, content: &str) -> Option<String> {
+    check_go_file_with(file, content, &[])
+}
+
+fn check_go_file_with(file: &str, content: &str, env: &[(&str, &str)]) -> Option<String> {
+    let tree = hook_tree();
+    check_go_file_in(&tree, file, content, env)
+}
+
+fn check_go_file_in(
+    tree: &Sandbox,
+    file: &str,
+    content: &str,
+    env: &[(&str, &str)],
+) -> Option<String> {
+    let path = tree.path().join("gomod").join(file);
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("a package directory");
+    std::fs::write(&path, content).expect("the edit already landed on disk");
+    let event = post_tool_use_event(
+        tree.path(),
+        "Edit",
+        &serde_json::json!({
+            "file_path": path,
+        }),
+    );
+    let cache = go_build_cache();
+    let mut env = env.to_vec();
+    env.push(("GOCACHE", cache.to_str().expect("a utf-8 cache path")));
+    let run = run_hook_with(&event, &env);
+    assert_eq!(run.code, Some(0));
+    additional_context(&run.out)
+}
+
+#[test]
+fn an_edit_that_breaks_go_compilation_reports_the_compilers_error() {
+    let context = check_go_file(
+        "main.go",
+        &format!("package main\n\nfunc main() {{}}\n{GO_TYPE_ERROR}"),
+    )
+    .expect("a failing build reports its output");
+
+    assert!(context.starts_with("go build:\n"), "{context}");
+    assert!(context.contains("main.go"), "{context}");
+}
+
+/// A file that does not parse is reported as the structural check found it, before any build.
+#[test]
+fn a_go_file_that_does_not_parse_reports_the_structural_failure_without_a_build() {
+    let context = check_go_file(
+        "main.go",
+        "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"ok\"\n}\n",
+    );
+
+    assert_eq!(context.as_deref(), Some("check: structure failed"));
+}
+
+/// `go build` compiles no `_test.go` file, so it would report ok on a broken one.
+#[test]
+fn a_go_test_file_that_does_not_type_check_reports_go_vets_error() {
+    let context = check_go_file("main_test.go", &format!("package main\n{GO_TYPE_ERROR}"))
+        .expect("a failing vet reports its output");
+
+    assert!(context.starts_with("go vet:\n"), "{context}");
+    assert!(context.contains("main_test.go"), "{context}");
+}
+
+#[test]
+fn a_clean_go_test_file_reports_go_vet_ok() {
+    let context = check_go_file(
+        "main_test.go",
+        "package main\n\nimport \"testing\"\n\nfunc TestClean(t *testing.T) {}\n",
+    );
+
+    assert_eq!(context.as_deref(), Some("go vet: ok"));
+}
+
+/// Each file here is one `go build .` leaves out, so "go build: ok" would be a claim about code
+/// nothing compiled; the build-tag case above is the fourth way.
+#[test]
+fn a_go_file_the_build_leaves_out_reports_the_structural_result() {
+    let broken = format!("package main\n{GO_TYPE_ERROR}");
+    let other_os = if cfg!(target_os = "windows") {
+        "bad_linux.go"
+    } else {
+        "bad_windows.go"
+    };
+    for file in [other_os, "_draft.go", ".draft.go"] {
+        assert_eq!(
+            check_go_file(file, &broken).as_deref(),
+            Some("check: structure ok"),
+            "{file}"
+        );
+    }
+    assert_eq!(
+        check_go_file(
+            "old.go",
+            &format!("// +build ignore\n\npackage main\n{GO_TYPE_ERROR}")
+        )
+        .as_deref(),
+        Some("check: structure ok")
+    );
+    let cgo = format!("package main\n\nimport \"C\"\n{GO_TYPE_ERROR}");
+    assert_eq!(
+        check_go_file_with("cgo.go", &cgo, &[("CGO_ENABLED", "0")]).as_deref(),
+        Some("check: structure ok")
+    );
+}
+
+/// go prints each failing package as it finishes, so without an order of its own the 20-line cut
+/// keeps different errors from run to run. Each package has 13 errors, of which go prints 10 and
+/// "too many errors": 12 lines a block, 36 in all.
+#[test]
+fn errors_across_packages_come_back_in_the_same_order_every_run() {
+    let tree = hook_tree();
+    for package in ["aa", "bb", "cc"] {
+        let source: String = std::iter::once(format!("package {package}\n"))
+            .chain((1..=13).map(|n| format!("\nfunc f{n}() int {{ return \"s\" }}\n")))
+            .collect();
+        std::fs::create_dir_all(tree.path().join("gomod").join(package)).expect("a package");
+        std::fs::write(
+            tree.path()
+                .join("gomod")
+                .join(package)
+                .join(format!("{package}.go")),
+            source,
+        )
+        .expect("a failing package");
+    }
+    let main = "package main\n\nimport (\n\t_ \"lets-hook-fixture/aa\"\n\t_ \
+                \"lets-hook-fixture/bb\"\n\t_ \"lets-hook-fixture/cc\"\n)\n\nfunc main() {}\n";
+
+    let runs: Vec<String> = (0..4)
+        .map(|_| check_go_file_in(&tree, "main.go", main, &[]).expect("a failing build"))
+        .collect();
+
+    let lines: Vec<&str> = runs[0].lines().collect();
+    assert_eq!(lines.len(), 22, "{}", runs[0]);
+    assert_eq!(lines[0], "go build:");
+    assert_eq!(lines[1], "# lets-hook-fixture/aa");
+    assert_eq!(lines[13], "# lets-hook-fixture/bb");
+    assert_eq!(lines[21], "\u{2026} 16 more lines");
+    assert!(!runs[0].contains("lets-hook-fixture/cc"), "{}", runs[0]);
+    assert!(runs.iter().all(|run| *run == runs[0]), "{runs:#?}");
+}
+
+/// `//go:build ignore` keeps the file out of the default build, which then says nothing about it.
+#[test]
+fn a_go_file_behind_a_build_constraint_reports_the_structural_result() {
+    let context = check_go_file(
+        "tagged.go",
+        &format!("//go:build ignore\n\npackage main\n{GO_TYPE_ERROR}"),
+    );
+
+    assert_eq!(context.as_deref(), Some("check: structure ok"));
+}
+
+/// A `.go` file outside any module falls back to the structural check the way every other
+/// language uses: `go build` would itself fail to find a module here, so nothing is spawned.
+#[test]
+fn an_edit_on_a_go_file_outside_any_module_falls_back_to_the_structural_check() {
+    let tree = hook_tree();
+    let event = post_tool_use_event(
+        tree.path(),
+        "Edit",
+        &serde_json::json!({
+            "file_path": tree.path().join("a.go"),
+        }),
+    );
+
+    let run = run_hook(&event);
+
+    assert_eq!(run.code, Some(0));
+    assert_eq!(
+        additional_context(&run.out).as_deref(),
+        Some("check: structure ok")
+    );
+}
+
+/// The negative control for the Go build path: with no `go` on `PATH`, the hook still answers,
+/// falling back to the same structural result a module-less file gets.
+#[test]
+fn a_missing_go_binary_falls_back_to_the_structural_check() {
+    let tree = hook_tree();
+    let empty_path = TempDir::new().expect("a temp directory with no `go` on it");
+    let event = post_tool_use_event(
+        tree.path(),
+        "Edit",
+        &serde_json::json!({
+            "file_path": tree.path().join("gomod/main.go"),
+        }),
+    );
+
+    let run = run_hook_with(&event, &[(
+        "PATH",
+        empty_path.path().to_str().expect("a utf-8 temp path"),
+    )]);
+
+    assert_eq!(run.code, Some(0));
+    assert_eq!(
+        additional_context(&run.out).as_deref(),
+        Some("check: structure ok")
+    );
 }

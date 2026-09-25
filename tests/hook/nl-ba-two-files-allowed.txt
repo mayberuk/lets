@@ -1,0 +1,4 @@
+COMMAND
+nl -ba src/a.ts src/b.ts
+===END===
+VERDICT allow

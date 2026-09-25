@@ -1,0 +1,8 @@
+COMMAND
+grep -Hc leader pkg/x/metrics.go
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find -s --count 'leader' pkg/x/metrics.go
+===END===
+COMPARE search-count

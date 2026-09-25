@@ -1,0 +1,8 @@
+COMMAND
+grep -n 'leader' pkg/x/metrics.go || ls pkg
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find 'leader' pkg/x/metrics.go -s --cap-exit-0 || ls pkg
+===END===
+COMPARE search

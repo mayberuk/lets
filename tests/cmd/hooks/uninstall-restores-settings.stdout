@@ -1,4 +1,5 @@
 removed the PreToolUse hook
 removed the SubagentStart hook
 removed the SessionStart hook
+removed the PostToolUse hook
 settings.json byte-identical after install then uninstall

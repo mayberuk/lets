@@ -5,6 +5,7 @@ use tempfile::TempDir;
 
 const GUIDE: &str = include_str!("../docs/guide.md");
 const AGENTS: &str = include_str!("../docs/agents.md");
+const HOOKS_RS: &str = include_str!("../src/verbs/hooks.rs");
 
 struct Run {
     code: Option<i32>,
@@ -184,44 +185,43 @@ fn help_exits_0_on_stdout() {
     assert!(run.err.is_empty(), "{}", run.err);
 }
 
+/// `CLAUDE_CODE_PARAGRAPH` in src/verbs/hooks.rs is `pub(crate)`, unreachable from this
+/// integration-test crate, so its text is recovered from the raw string literal itself.
+fn claude_code_paragraph() -> &'static str {
+    let marker = "pub(crate) const CLAUDE_CODE_PARAGRAPH: &str = r\"";
+    let start = HOOKS_RS
+        .find(marker)
+        .expect("src/verbs/hooks.rs defines CLAUDE_CODE_PARAGRAPH as a bare r\"...\" literal")
+        + marker.len();
+    let rest = &HOOKS_RS[start..];
+    let end = rest
+        .find("\";\n")
+        .expect("the raw string literal is closed with \";");
+    &rest[..end]
+}
+
+fn quote_as_markdown(paragraph: &str) -> String {
+    paragraph
+        .lines()
+        .map(|line| {
+            if line.is_empty() {
+                ">".to_string()
+            } else {
+                format!("> {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn agents_md_quotes_its_own_discovery_paragraph_verbatim() {
-    let claude_code_paragraph = r#"> # File work: use `lets` through Bash
->
-> | Instead of | Run |
-> |---|---|
-> | `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |
-> | `sed -n '40,80p' f.ts` | `lets show f.ts:40-80` |
-> | find one function | `lets show f.ts#computeFee` |
-> | `grep -n -A 5 'x' f.ts` | `lets show "f.ts@'x'" -A 5` |
-> | `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` |
-> | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
-> | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
-> | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
->
-> Several edits in one call; each `old` is exact text that occurs once:
->
-> ```
-> lets edit --from - <<'LETS'
-> @@ a.ts
-> <<<<<<< old
-> cap = 10
-> ======= new
-> cap = 20
-> >>>>>>>
-> <<<<<<< old
-> floor = 1
-> ======= new
-> floor = 2
-> >>>>>>>
-> LETS
-> ```
->
-> Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files."#;
+    let quoted = quote_as_markdown(claude_code_paragraph());
 
     assert!(
-        AGENTS.contains(claude_code_paragraph),
-        "docs/agents.md's Claude Code excerpt has drifted from its own text"
+        AGENTS.contains(&quoted),
+        "docs/agents.md's Claude Code excerpt has drifted from CLAUDE_CODE_PARAGRAPH \
+         in src/verbs/hooks.rs"
     );
 
     let subagent_start = AGENTS
@@ -229,7 +229,7 @@ fn agents_md_quotes_its_own_discovery_paragraph_verbatim() {
         .nth(1)
         .expect("docs/agents.md has a SubagentStart section");
     assert!(
-        subagent_start.contains(claude_code_paragraph),
+        subagent_start.contains(&quoted),
         "the SubagentStart section must quote the same paragraph as the Claude Code section, \
          not a separately authored paraphrase"
     );

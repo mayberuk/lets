@@ -2,8 +2,7 @@ COMMAND
 grep -r fooBar src
 ===END===
 VERDICT rewrite
-REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find 'fooBar' src
+run: lets find --hidden --no-ignore --exclude '.git/**' 'fooBar' src --no-numbers
 ===END===
 COMPARE search

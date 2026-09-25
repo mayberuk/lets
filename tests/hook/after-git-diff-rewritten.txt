@@ -2,8 +2,7 @@ COMMAND
 git diff && cat src/a.ts
 ===END===
 VERDICT rewrite
-REASON `cat src/a.ts` ran as `lets show src/a.ts --all`; the rest ran as written; lets show reads several files and ranges in one call.
 REPLACEMENT
-run: git diff && lets show src/a.ts --all
+run: git diff && lets show src/a.ts --all --no-header --no-numbers
 ===END===
 COMPARE chain

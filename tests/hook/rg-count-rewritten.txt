@@ -2,7 +2,6 @@ COMMAND
 rg -c foo src
 ===END===
 VERDICT rewrite
-REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
 run: lets find -s --count 'foo' src
 ===END===

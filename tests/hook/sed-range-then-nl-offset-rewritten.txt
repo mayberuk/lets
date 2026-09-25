@@ -1,0 +1,8 @@
+COMMAND
+sed -n '5,8p' src/a.ts | nl -ba -v5
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets show src/a.ts:5-8 --no-header
+===END===
+COMPARE numbered-read

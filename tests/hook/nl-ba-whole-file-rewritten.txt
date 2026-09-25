@@ -1,0 +1,8 @@
+COMMAND
+nl -ba src/a.ts
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets show src/a.ts --all --no-header
+===END===
+COMPARE numbered-read

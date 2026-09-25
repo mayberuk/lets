@@ -2,12 +2,7 @@ COMMAND
 cat -n src/a.ts | head -n 5
 ===END===
 VERDICT rewrite
-REASON lets show reads several files and ranges in one call.
 REPLACEMENT
-run: lets show src/a.ts:1-5
+run: lets show src/a.ts:1-5 --no-header
 ===END===
-COMPARE read
-ORACLE
-# cat -n prefixes each line with its number, which the read comparison would take as content.
-head -n 5 src/a.ts
-===END===
+COMPARE numbered-read

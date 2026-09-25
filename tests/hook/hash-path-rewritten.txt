@@ -2,8 +2,7 @@ COMMAND
 cat C#.md
 ===END===
 VERDICT rewrite
-REASON lets show reads several files and ranges in one call.
 REPLACEMENT
-run: lets show 'C#.md' --all
+run: lets show 'C#.md' --all --no-header --no-numbers
 ===END===
 COMPARE read

@@ -2,8 +2,7 @@ COMMAND
 sed -n '5p' src/n.txt
 ===END===
 VERDICT rewrite
-REASON lets show reads several files and ranges in one call.
 REPLACEMENT
-run: lets show src/n.txt:5
+run: lets show src/n.txt:5 --no-header --no-numbers
 ===END===
 COMPARE read

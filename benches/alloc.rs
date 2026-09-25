@@ -18,7 +18,7 @@ use std::process::{Command, ExitCode, Stdio};
 use clap::Parser as _;
 use divan::counter::BytesFormat;
 use lets::cli::{Cli, OpKind, Verb};
-use lets::hook::{self, Verdict};
+use lets::hook::{self, Answer, Verdict};
 use lets::output::{self, Format, RenderOptions};
 use lets::{Outcome, verbs};
 use tempfile::TempDir;
@@ -118,7 +118,10 @@ fn edit_8mib_peak_bytes(bencher: divan::Bencher) {
 /// Warms the lazily initialised grammars so no sample pays for them, and proves each run succeeds.
 fn prime() {
     assert!(
-        matches!(hook::classify(&hook_payload()), Verdict::Block { .. }),
+        matches!(
+            hook::classify(&hook_payload()),
+            Answer::Decision(Verdict::Block { .. })
+        ),
         "hook_classify_200_char_command: the payload must block, or the bash parse is not measured"
     );
     let source = nearest_typescript(EDIT_FILE_LINES);

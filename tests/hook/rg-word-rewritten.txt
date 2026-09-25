@@ -2,8 +2,11 @@ COMMAND
 rg -w foo src
 ===END===
 VERDICT rewrite
-REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find -s -w 'foo' src
+run: lets find -w 'foo' src --no-numbers
 ===END===
 COMPARE search
+ORACLE
+# lets find is smart case: a pattern with no capital matches any case, as rg -i does.
+rg -w -i foo src
+===END===
