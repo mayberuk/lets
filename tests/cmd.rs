@@ -601,3 +601,84 @@ fn generating_examples_under_two_collations_produces_byte_identical_output() {
         );
     }
 }
+
+/// Each case's `$` line in `docs/examples` must give a shell the case's own argv when pasted.
+#[test]
+fn every_generated_command_line_pastes_as_its_case_args() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out = TempDir::new().expect("a temp output directory");
+    let status = std::process::Command::new("sh")
+        .arg(manifest.join("scripts/gen-examples.sh"))
+        .arg(out.path())
+        .env("LETS_GEN_EXAMPLES_SKIP_TEST", "1")
+        .current_dir(manifest)
+        .status()
+        .expect("gen-examples.sh runs");
+    assert!(status.success(), "gen-examples.sh exited non-zero");
+
+    // Every `$` line is evaluated, trycmd ones too, so PATH is emptied and the cwd is scratch: a
+    // pipe or redirect in one of them reaches nothing but bash builtins and a throwaway directory.
+    let scratch = TempDir::new().expect("a scratch cwd");
+    let bash = std::env::split_paths(&std::env::var_os("PATH").expect("PATH is set"))
+        .map(|dir| dir.join("bash"))
+        .find(|path| path.is_file())
+        .expect("bash on PATH");
+    let mut wrong = Vec::new();
+    for dir in verb_dirs() {
+        let verb = dir
+            .file_name()
+            .expect("a verb dir")
+            .to_string_lossy()
+            .into_owned();
+        let Ok(doc) = std::fs::read_to_string(out.path().join(format!("{verb}.md"))) else {
+            continue;
+        };
+        let lines: Vec<&str> = doc
+            .lines()
+            .filter_map(|line| line.strip_prefix("$ "))
+            .map(|line| line.strip_suffix(" <<'EOF'").unwrap_or(line))
+            .collect();
+        let parsed = std::process::Command::new(&bash)
+            .args(["-c", "f() { printf '%s\\0' \"$@\"; printf '\\036'; }; for l in \"$@\"; do eval \"f $l\" 2>/dev/null || printf '\\036'; done", "_"])
+            .args(&lines)
+            .env("PATH", "")
+            .current_dir(scratch.path())
+            .output()
+            .expect("bash runs");
+        let pasted: Vec<Vec<String>> = String::from_utf8_lossy(&parsed.stdout)
+            .split('\u{1e}')
+            .map(|rec| rec.split_terminator('\0').map(str::to_owned).collect())
+            .collect();
+
+        let mut cases: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .expect("the verb dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .filter(|path| !path.with_extension("requires").exists())
+            .collect();
+        cases.sort();
+        for case in cases {
+            let doc: toml_edit::DocumentMut = std::fs::read_to_string(&case)
+                .expect("the case file")
+                .parse()
+                .expect("the case parses as TOML");
+            let mut argv = vec![doc["bin"]["name"].as_str().expect("bin.name").to_owned()];
+            argv.extend(
+                doc["args"]
+                    .as_array()
+                    .expect("args is an array")
+                    .iter()
+                    .map(|arg| arg.as_str().expect("every arg is a string").to_owned()),
+            );
+            if !pasted.contains(&argv) {
+                wrong.push(format!("{}: expected {argv:?}", case.display()));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "no generated `$` line pastes as:\n{}",
+        wrong.join("\n")
+    );
+}

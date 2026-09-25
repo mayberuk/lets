@@ -310,7 +310,7 @@ $ lets transform c.yaml --set version=3.10
 ```
 
 ```console
-$ lets transform c.json --set editor.formatOnSave
+$ lets transform c.json --set '"editor.formatOnSave"=true'
 ── c.json · json · set "editor.formatOnSave" · line 2
 1 	{
 2~	  "editor.formatOnSave": true,
@@ -342,7 +342,7 @@ ERROR_CODE=unsupported_file
 ```
 
 ```console
-$ lets transform Cargo.toml --append name b path src/b.rs
+$ lets transform Cargo.toml --append 'bin[]={"name":"b","path":"src/b.rs"}'
 ── Cargo.toml · toml · append bin · line 8
  5 	name = "a"
  6 	path = "src/a.rs"
@@ -363,7 +363,7 @@ ERROR_CODE=not_found
 ```
 
 ```console
-$ lets transform c.toml --append path b.rs name b
+$ lets transform c.toml --append 'plugins[]={"path":"b.rs","name":"b"}'
 ── c.toml · toml · append plugins · line 1
 1~	plugins = [{ name = "a" }, { path = "b.rs", name = "b" }]
 ── check: toml ok · sha:[..]→[..]
