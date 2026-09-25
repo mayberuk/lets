@@ -18,6 +18,11 @@ All notable changes to `lets` are documented here. Format:
 - `find` matches case-insensitively when the pattern has no uppercase letter, as `rg --smart-case`
   does; `-s`/`--case-sensitive` forces exact case.
 - `edit --help` documents the `--from -` batch format, and `lets guide` gives it in two lines.
+- `find --exclude GLOB` (repeatable) prunes a path from the walk, exactly `-g '!GLOB'`, in the
+  order given relative to other `-g`/`--exclude` flags.
+- `edit FILE --from -` applies a headerless batch (no `@@` line) to `FILE`, as if stdin opened
+  `@@ FILE`; a positional target together with an `@@` header on stdin is refused with a message
+  that says to pick one.
 
 ### Changed
 

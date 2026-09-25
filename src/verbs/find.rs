@@ -1883,6 +1883,7 @@ mod tests {
             files: false,
             count: false,
             globs: Vec::new(),
+            exclude: Vec::new(),
             hidden: false,
             after: None,
             before: None,

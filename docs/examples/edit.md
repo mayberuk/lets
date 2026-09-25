@@ -664,6 +664,20 @@ EOF
 ```
 
 ```console
+$ lets edit a.ts --from - <<'EOF'
+<<<<<<< old
+const cap = 10
+======= new
+const cap = 20
+>>>>>>>
+EOF
+── a.ts · 1 replacement · line 1 · exact
+1~	const cap = 20
+── check: structure ok · sha:68c7b7831721→d1f03fd922de
+
+```
+
+```console
 $ lets edit --from - <<'EOF'
 {"file":"usage.ts","old":"const cap = 10","neww":"x"}
 EOF
@@ -732,6 +746,21 @@ floor = 1
 floor = 2
 >>>>>>>
 LETS
+ERROR_CODE=usage
+
+```
+
+```console
+$ lets edit a.ts --from - <<'EOF'
+@@ b.ts
+<<<<<<< old
+const cap = 10
+======= new
+const cap = 20
+>>>>>>>
+EOF
+? 64
+`a.ts` and an `@@` header on stdin both name a file · pick one: drop the positional target, or drop the header
 ERROR_CODE=usage
 
 ```

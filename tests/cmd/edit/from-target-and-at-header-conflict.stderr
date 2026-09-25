@@ -1,0 +1,2 @@
+`a.ts` and an `@@` header on stdin both name a file · pick one: drop the positional target, or drop the header
+ERROR_CODE=usage

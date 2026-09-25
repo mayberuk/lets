@@ -19,3 +19,4 @@ binary-under-cap-named-binary.toml
 expand.trycmd
 expand-limits.trycmd
 smart-case.trycmd
+exclude-prunes-nested-vendor.trycmd

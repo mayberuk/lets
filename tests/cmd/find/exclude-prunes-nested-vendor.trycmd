@@ -1,0 +1,23 @@
+`--exclude GLOB` is `-g '!GLOB'`: it prunes a matching path at any depth, the way `rg -g
+'!vendor'` does. The second call proves the equivalence; the third is the negative control with
+no exclusion, where the nested vendor hit comes back.
+
+```console
+$ lets find needle --exclude vendor
+── a.ts
+1:	const «needle» = 1;
+── 1 hit in 1 file · searched 1 file · glob !vendor
+
+$ lets find needle -g '!vendor'
+── a.ts
+1:	const «needle» = 1;
+── 1 hit in 1 file · searched 1 file · glob !vendor
+
+$ lets find needle
+── a.ts
+1:	const «needle» = 1;
+── vendor/pkg/b.py
+1:	«needle» = 1
+── 2 hits in 2 files · searched 2 files
+
+```

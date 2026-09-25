@@ -39,6 +39,7 @@ matched only because case was ignored is named in the footer.
 | `-l, --files` | list matching files only, one bare path per line, no cap | off |
 | `-c, --count` | print the footer first, then one `<count>  <path>` row per file | off |
 | `-g, --glob <GLOB>` (alias `--include`) | narrow the walk to paths the glob matches; footer names it | — |
+| `--exclude <GLOB>` | prune a path from the walk; exactly `-g '!GLOB'`, interleaved with `-g` in argv order | — |
 | `--hidden` | include hidden files and directories | off |
 | `-A <N>` | lines of context after a hit | — |
 | `-B <N>` | lines of context before | — |

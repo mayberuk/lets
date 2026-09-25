@@ -34,6 +34,13 @@ impl Cli {
         {
             args.order = op_order(sub);
         }
+        if let (Verb::Find(args), Some(sub)) = (&mut cli.verb, matches.subcommand_matches("find")) {
+            args.globs = glob_order(
+                sub,
+                std::mem::take(&mut args.globs),
+                std::mem::take(&mut args.exclude),
+            );
+        }
         if let Verb::Find(args) = &cli.verb
             && args.grep.invert_match
         {
@@ -206,6 +213,20 @@ pub struct ShowArgs {
     pub no_numbers: bool,
 }
 
+/// `--exclude GLOB` is `-g '!GLOB'`; interleaved with `-g` by argv position so a later flag can
+/// still override an earlier one, the way ripgrep's overrides do.
+fn glob_order(sub: &ArgMatches, globs: Vec<String>, excludes: Vec<String>) -> Vec<String> {
+    let mut indexed: Vec<(usize, String)> = Vec::new();
+    if let Some(indices) = sub.indices_of("globs") {
+        indexed.extend(indices.zip(globs));
+    }
+    if let Some(indices) = sub.indices_of("exclude") {
+        indexed.extend(indices.zip(excludes.into_iter().map(|glob| format!("!{glob}"))));
+    }
+    indexed.sort_unstable_by_key(|(at, _)| *at);
+    indexed.into_iter().map(|(_, glob)| glob).collect()
+}
+
 #[derive(Debug, Args, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct FindArgs {
@@ -230,6 +251,9 @@ pub struct FindArgs {
     pub count: bool,
     #[arg(short = 'g', long = "glob", visible_alias = "include")]
     pub globs: Vec<String>,
+    /// Prune a path from the walk, exactly `-g '!GLOB'` in the order given relative to `-g`
+    #[arg(long)]
+    pub exclude: Vec<String>,
     #[arg(long)]
     pub hidden: bool,
     #[arg(short = 'A')]
@@ -742,6 +766,49 @@ mod tests {
             "*.ts"
         ]);
         assert!(find(&["lets", "find", "x"]).globs.is_empty());
+    }
+
+    #[test]
+    fn exclude_is_folded_into_globs_as_a_negated_glob() {
+        let args = find(&["lets", "find", "x", "--exclude", "vendor"]);
+        assert_eq!(args.globs, ["!vendor"]);
+        assert!(
+            args.exclude.is_empty(),
+            "exclude drains into globs, not left behind"
+        );
+    }
+
+    #[test]
+    fn exclude_and_glob_interleave_in_argv_order() {
+        let args = find(&[
+            "lets",
+            "find",
+            "x",
+            "-g",
+            "*.ts",
+            "--exclude",
+            "vendor",
+            "-g",
+            "*.tsx",
+        ]);
+        assert_eq!(args.globs, ["*.ts", "!vendor", "*.tsx"]);
+
+        let reversed = find(&["lets", "find", "x", "--exclude", "vendor", "-g", "*.ts"]);
+        assert_eq!(reversed.globs, ["!vendor", "*.ts"]);
+    }
+
+    #[test]
+    fn repeated_exclude_collects_every_value_in_order() {
+        let args = find(&[
+            "lets",
+            "find",
+            "x",
+            "--exclude",
+            "vendor",
+            "--exclude",
+            "dist",
+        ]);
+        assert_eq!(args.globs, ["!vendor", "!dist"]);
     }
 
     #[test]

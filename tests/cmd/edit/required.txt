@@ -170,3 +170,7 @@ from-fenced-second-block-not-found-reverts-both.out
 from-fenced-two-headers-across-two-files.toml
 from-fenced-two-headers-across-two-files.out
 from-fenced-block-with-no-header.toml
+from-headerless-with-one-target-applies.toml
+from-headerless-with-one-target-applies.out
+from-target-and-at-header-conflict.toml
+from-target-and-at-header-conflict.out

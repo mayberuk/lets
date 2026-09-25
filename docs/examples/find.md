@@ -125,6 +125,30 @@ $ lets find filler . --count
 
 ```
 
+`--exclude GLOB` is `-g '!GLOB'`: it prunes a matching path at any depth, the way `rg -g
+'!vendor'` does. The second call proves the equivalence; the third is the negative control with
+no exclusion, where the nested vendor hit comes back.
+
+```console
+$ lets find needle --exclude vendor
+── a.ts
+1:	const «needle» = 1;
+── 1 hit in 1 file · searched 1 file · glob !vendor
+
+$ lets find needle -g '!vendor'
+── a.ts
+1:	const «needle» = 1;
+── 1 hit in 1 file · searched 1 file · glob !vendor
+
+$ lets find needle
+── a.ts
+1:	const «needle» = 1;
+── vendor/pkg/b.py
+1:	«needle» = 1
+── 2 hits in 2 files · searched 2 files
+
+```
+
 Expansion never costs a hit line. With room for every symbol both functions expand; `--budget 20`
 (80 bytes) holds the two hit lines (52) and one function's context (28), so the second hit stays
 bare and the footer says why; `--budget 15` and `--max-bytes 60` hold the hits alone. Over the hit

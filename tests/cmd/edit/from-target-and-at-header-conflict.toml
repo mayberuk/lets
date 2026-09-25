@@ -1,0 +1,7 @@
+# The positional target and a `@@` header on stdin both name a file: rather than guess which one
+# wins, this stays a usage error, and the message says to pick one. The file is left untouched.
+bin.name = "lets"
+args = ["edit", "a.ts", "--from", "-"]
+
+[status]
+code = 64

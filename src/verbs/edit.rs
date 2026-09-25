@@ -1698,7 +1698,11 @@ fn joined(new: &[u8], before: &[u8], literal: bool) -> Vec<u8> {
 
 fn build_specs(args: &EditArgs) -> Result<Vec<EditSpec>, Error> {
     if let Some(from) = args.from.as_deref() {
-        if args.target.is_some() {
+        // The one-target exception: a lone `FILE --from -` stands in for `@@ FILE` on stdin, so
+        // it skips the refusal below and is resolved once stdin is in hand.
+        let one_target_with_dash =
+            from == "-" && args.target.is_some() && args.more_targets.is_empty();
+        if args.target.is_some() && !one_target_with_dash {
             return Err(usage(
                 "--from - takes no positional target \u{b7} put every edit in the batch on \
                  stdin"
@@ -1711,9 +1715,36 @@ fn build_specs(args: &EditArgs) -> Result<Vec<EditSpec>, Error> {
                 "an edit spec (`--from` reads `-`, stdin, only)".to_owned(),
             ));
         }
-        return parse_batch(&stdin_text("--from -")?).map_err(|error| with_batch_example(&error));
+        let text = stdin_text("--from -")?;
+        return match args.target.as_deref() {
+            Some(target) => batch_for_target(target, &text),
+            None => parse_batch(&text).map_err(|error| with_batch_example(&error)),
+        };
     }
     from_args(args)
+}
+
+/// A batch with no `@@` header and a lone positional target names the file the header would
+/// have; a JSONL batch already names its own file per line, so it keeps the usual refusal.
+fn batch_for_target(target: &str, text: &str) -> Result<Vec<EditSpec>, Error> {
+    match text
+        .lines()
+        .map(str::trim_start)
+        .find(|line| !line.is_empty())
+    {
+        None => parse_batch(text).map_err(|error| with_batch_example(&error)),
+        Some(line) if line.starts_with('{') => Err(usage(
+            "--from - takes no positional target \u{b7} put every edit in the batch on stdin"
+                .to_owned(),
+        )),
+        Some(line) if line.starts_with("@@") => Err(usage(format!(
+            "`{target}` and an `@@` header on stdin both name a file \u{b7} pick one: drop the \
+             positional target, or drop the header"
+        ))),
+        Some(_) => {
+            parse_batch(&format!("@@ {target}\n{text}")).map_err(|error| with_batch_example(&error))
+        },
+    }
 }
 
 /// Trial sessions that got the batch format wrong had only the parse failure to go on, called
@@ -3334,13 +3365,62 @@ mod tests {
     }
 
     #[test]
-    fn a_from_dash_with_a_positional_target_is_refused() {
-        let mut args = edit_args("a.ts");
+    fn a_from_dash_with_two_positional_targets_is_refused() {
+        let mut args = multi_target_args(&["a.ts", "b.ts"], "const cap = 10", "const cap = 20");
         args.from = Some("-".to_owned());
 
         let error = error_of(run(&args, &global(), Format::Text));
 
         assert_eq!(error.slug(), "usage");
+    }
+
+    #[test]
+    fn a_from_dash_with_a_non_dash_value_and_a_positional_target_is_refused() {
+        let mut args = edit_args("a.ts");
+        args.from = Some("edits.txt".to_owned());
+
+        let error = error_of(run(&args, &global(), Format::Text));
+
+        assert_eq!(error.slug(), "usage");
+    }
+
+    #[test]
+    fn one_target_with_a_headerless_batch_applies_every_block_to_it() {
+        let specs = batch_for_target(
+            "a.ts",
+            "<<<<<<< old\nconst cap = 10\n======= new\nconst cap = 20\n>>>>>>>\n",
+        )
+        .expect("a headerless batch resolves against the one target");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].file, std::path::Path::new("a.ts"));
+    }
+
+    #[test]
+    fn one_target_with_an_at_at_header_on_stdin_is_refused_and_says_pick_one() {
+        let error = batch_for_target(
+            "a.ts",
+            "@@ b.ts\n<<<<<<< old\ncap = 10\n======= new\ncap = 20\n>>>>>>>\n",
+        )
+        .expect_err("a positional target and an @@ header both naming a file must be refused");
+
+        assert_eq!(error.slug(), "usage");
+        assert!(error.to_string().contains("pick one"), "{error}");
+    }
+
+    #[test]
+    fn one_target_with_a_jsonl_batch_keeps_the_original_refusal() {
+        let error = batch_for_target(
+            "a.ts",
+            "{\"file\":\"a.ts\",\"old\":\"const cap = 10\",\"new\":\"const cap = 20\"}\n",
+        )
+        .expect_err("a positional target next to a JSONL batch is still ambiguous");
+
+        assert_eq!(error.slug(), "usage");
+        assert!(
+            error.to_string().contains("takes no positional target"),
+            "{error}"
+        );
     }
 
     #[test]
