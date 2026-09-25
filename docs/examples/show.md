@@ -213,6 +213,38 @@ $ lets show poem.txt --no-header
 
 ```
 
+CRLF stripping and lossy decoding are only ever named in the header; `--no-header` still owes the
+reader that fact, so it moves to the footer instead of vanishing:
+
+```console
+$ lets show crlf.txt --no-header --no-numbers
+one
+two
+── crlf.txt: crlf
+
+$ lets show lossy.txt --no-header
+1 	a�b
+2 	c
+── lossy.txt: non-UTF-8 line 1
+
+```
+
+A file whose last line has no trailing newline: `--no-header --no-numbers` matches `sed -n
+'1,3p'` byte for byte, with none of its own; numbers alone (the control) still add one, since that
+mode is not the byte-faithful one.
+
+```console
+$ lets show noeof.txt --no-header --no-numbers
+a
+b
+c
+$ lets show noeof.txt --no-header
+1 	a
+2 	b
+3 	c
+
+```
+
 A file with no bundled grammar has no definitions to list, so `--outline` exits 1 with
 `no_grammar`, while reading the same file whole still works. `--outline` reads whole files, so a
 `:line`, `:a-b`, `#symbol` or `@'regex'` target refuses the whole call as a usage error naming the
@@ -221,7 +253,7 @@ form, and prints nothing from either mode, even beside a target it could have ou
 ```console
 $ lets show page.vue --outline
 ? 1
-page.vue is unsupported: no grammar for .vue · use a :line, :a-b or @'regex' target
+page.vue is unsupported: no grammar for .vue · drop --outline
 ERROR_CODE=no_grammar
 
 $ lets show page.vue
@@ -262,7 +294,7 @@ control: a bound of exactly 125 bytes fits all three and names nothing.
 $ lets show lib.rs --outline --max-bytes 60
 ── lib.rs
 3-5	pub struct Store {
-── showed 1 target · 1 definition · output over --max-bytes 60: 2 lines not shown
+── showed 1 target · 1 definition · output over --max-bytes 60: 2 definitions not shown
 
 $ lets show lib.rs --outline --max-bytes 125
 ── lib.rs
@@ -298,6 +330,30 @@ $ lets show store.go --outline --no-header
 3-5	type Store struct {
 7-11	func Open(
 13-15	func (s *Store) Root() string {
+
+```
+
+Entries carry no file column, so `--no-header` on several targets at once would run one file's
+definitions into the next with nothing to tell them apart; refused rather than guessed at. The
+control is the same two targets with the header on, which prints both files' entries under their
+own headers:
+
+```console
+$ lets show lib.rs store.go --outline --no-header
+? 64
+--outline --no-header prints no file name, and several targets need one · pass one target at a time
+ERROR_CODE=usage
+
+$ lets show lib.rs store.go --outline
+── lib.rs
+3-5	pub struct Store {
+8-12	pub fn open(path: &Path) -> Store {
+15-17	pub fn wrapped(first: usize, second: usize) -> usize {
+── store.go
+3-5	type Store struct {
+7-11	func Open(
+13-15	func (s *Store) Root() string {
+── showed 2 targets · 6 definitions
 
 ```
 
