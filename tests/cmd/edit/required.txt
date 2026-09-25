@@ -148,3 +148,17 @@ check-cargo-workspace-ok.out
 check-cargo-workspace-ok.requires
 long-span-truncated.toml
 long-span-truncated.out
+long-span-reverted.toml
+long-span-reverted.out
+span-six-lines-whole.toml
+span-six-lines-whole.out
+span-seven-lines-truncated.toml
+span-seven-lines-truncated.out
+insert-after-long-truncated.toml
+insert-after-long-truncated.out
+toml-insert-after-table-scoped.trycmd
+toml-insert-after-table-scoped.out
+toml-insert-after-before-comment.trycmd
+toml-insert-after-before-comment.out
+batch-truncated-spans-name-their-files.toml
+batch-truncated-spans-name-their-files.out

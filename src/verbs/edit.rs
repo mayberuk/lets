@@ -511,6 +511,15 @@ fn merge_omissions(omitted: &mut Vec<Omission>, own: Vec<Omission>, path: &Path,
                 if omitted
                     .iter()
                     .any(|seen| matches!(seen, Omission::CrlfMatched)) => {},
+            Omission::RegionGap {
+                not_shown,
+                path: gap_path,
+            } if several && gap_path.is_none() => {
+                omitted.push(Omission::RegionGap {
+                    not_shown,
+                    path: Some(path.to_path_buf()),
+                });
+            },
             other => omitted.push(other),
         }
     }
@@ -703,6 +712,7 @@ fn one(
             &applied.changed,
             applied.marker,
             annotation.as_deref(),
+            failed,
             omitted,
         ),
         check: checked.as_ref().map(|layer1| CheckResult {
@@ -1485,6 +1495,7 @@ fn region(
     changed: &[(usize, usize)],
     marker: Marker,
     annotation: Option<&str>,
+    failed: bool,
     omitted: &mut Vec<Omission>,
 ) -> Option<Region> {
     let text = String::from_utf8_lossy(after);
@@ -1493,7 +1504,9 @@ fn region(
     for (first, last) in changed {
         let from = first.saturating_sub(CONTEXT_LINES).max(1);
         let to = (last + CONTEXT_LINES).min(all.len());
-        if last - first + 1 > SPAN_TRUNCATE_LINES {
+        // A reverted edit's `after` was never written, so a truncated range names lines `show`
+        // can never open: echo every attempted line instead.
+        if !failed && last - first + 1 > SPAN_TRUNCATE_LINES {
             let head_end = (first + SPAN_EDGE_LINES - 1).min(*last);
             let tail_start = last.saturating_sub(SPAN_EDGE_LINES - 1).max(*first);
             wanted.extend(from..=head_end);
@@ -1508,7 +1521,8 @@ fn region(
     let mut lines: Vec<Line> = Vec::new();
     let mut previous: Option<usize> = None;
     for number in wanted {
-        // A hole between two `--all` context windows is carried on the row and again in the footer.
+        // A hole between two `--all` context windows, or a truncated span's hidden middle, is
+        // carried on the row and again in the footer.
         if let Some(gap) = previous
             .filter(|p| number > p + 1)
             .map(|p| (p + 1, number - 1))
@@ -1536,7 +1550,10 @@ fn region(
         previous = Some(number);
     }
     if !not_shown.is_empty() {
-        omitted.push(Omission::RegionGap { not_shown });
+        omitted.push(Omission::RegionGap {
+            not_shown,
+            path: None,
+        });
     }
     Some(Region { start, end, lines })
 }

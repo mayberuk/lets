@@ -1,0 +1,8 @@
+# spec.md § edit finding 1: a reverted edit's `after` bytes were never written, so a truncated
+# echo would name a range `show` can never open. Every attempted line is echoed instead; the
+# control is long-span-truncated, whose successful edit still truncates at the same span length.
+bin.name = "lets"
+args = ["edit", "m.rs", "--old", "    let a = 1;", "--new", "    let v1 = 1;\n    let v2 = 2;\n    let v3 = 3;\n    let v4 = 4;\n    let v5 = 5;\n    let v6 = (7;\n    let v7 = 7;\n    let v8 = 8;\n    let v9 = 9;"]
+
+[status]
+code = 3

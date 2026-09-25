@@ -11,6 +11,65 @@ ERROR_CODE=ambiguous
 
 ```
 
+```console
+$ lets edit --from - <<'EOF'
+@@ p.txt
+<<<<<<< old
+line 4
+line 5
+line 6
+line 7
+line 8
+line 9
+line 10
+======= new
+line 4 EDITED
+line 5 EDITED
+line 6 EDITED
+line 7 EDITED
+line 8 EDITED
+line 9 EDITED
+line 10 EDITED
+>>>>>>>
+@@ q.txt
+<<<<<<< old
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+line 8
+======= new
+line 2 EDITED
+line 3 EDITED
+line 4 EDITED
+line 5 EDITED
+line 6 EDITED
+line 7 EDITED
+line 8 EDITED
+>>>>>>>
+EOF
+── p.txt · 1 replacement · lines 4-10 · exact
+ 3 	line 3
+ 4~	line 4 EDITED
+ 5~	line 5 EDITED
+  ·	:6-8 not shown
+ 9~	line 9 EDITED
+10~	line 10 EDITED
+11 	line 11
+── q.txt · 1 replacement · lines 2-8 · exact
+ 1 	line 1
+ 2~	line 2 EDITED
+ 3~	line 3 EDITED
+  ·	:4-6 not shown
+ 7~	line 7 EDITED
+ 8~	line 8 EDITED
+ 9 	line 9
+── 2 files · 2 edits · all applied · check: skipped (p.txt: no grammar for .txt) · p.txt:6-8 not shown · check: skipped (q.txt: no grammar for .txt) · q.txt:4-6 not shown
+
+```
+
 `@auto` walks up from the edited file to the tree root looking for a manifest. This tree has none, so the checker is skipped by name and the edit is kept, like any other skipped check.
 
 ```console
@@ -520,6 +579,20 @@ ERROR_CODE=usage
 
 ```
 
+```console
+$ lets edit s.txt --insert-after '@'\''^line 5$'\''' --new $'new 1\nnew 2\nnew 3\nnew 4\nnew 5\nnew 6\nnew 7'
+── s.txt · inserted 7 lines after line 5
+ 5 	line 5
+ 6+	new 1
+ 7+	new 2
+  ·	:8-10 not shown
+11+	new 6
+12+	new 7
+13 	line 6
+── sha:[..]→[..] · check: skipped (no grammar for .txt) · :8-10 not shown
+
+```
+
 The anchor, typed with its quotes as the guide shows it, joins the file name as `C#.md@'^b'`; the existing file `C#.md` is the prefix that wins, so only `@'^b'` is read as the anchor. A line-number anchor on the same file gets the anchor-form refusal every file gets, naming `C#.md` rather than a file `C`.
 
 ```console
@@ -575,6 +648,27 @@ $ lets edit lf.txt --old beta --new $'BETA\r\nGAMMA' --literal-newlines
 3~	GAMMA
 4 	gamma
 ── sha:ed8b7a779a4a→c2b975bba63b · check: skipped (no grammar for .txt)
+
+```
+
+```console
+$ lets edit m.rs --old '    let a = 1;' --new $'    let v1 = 1;\n    let v2 = 2;\n    let v3 = 3;\n    let v4 = 4;\n    let v5 = 5;\n    let v6 = (7;\n    let v7 = 7;\n    let v8 = 8;\n    let v9 = 9;'
+? 3
+── m.rs · 1 replacement · lines 2-10 · REVERTED
+ 1 	fn main() {
+ 2~	    let v1 = 1;          ← parse error
+ 3~	    let v2 = 2;
+ 4~	    let v3 = 3;
+ 5~	    let v4 = 4;
+ 6~	    let v5 = 5;
+ 7~	    let v6 = (7;
+ 8~	    let v7 = 7;
+ 9~	    let v8 = 8;
+10~	    let v9 = 9;
+11 	}
+── check: failed → reverted · file unchanged · sha:[..]
+structure check failed for m.rs: failed
+ERROR_CODE=check_failed
 
 ```
 
@@ -796,6 +890,35 @@ $ lets edit usage.ts --old 'usageCap' --new 'usageLimit' --all
 
 ```
 
+```console
+$ lets edit s.txt --old $'line 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10' --new $'line 4 EDITED\nline 5 EDITED\nline 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED\nline 10 EDITED'
+── s.txt · 1 replacement · lines 4-10 · exact
+ 3 	line 3
+ 4~	line 4 EDITED
+ 5~	line 5 EDITED
+  ·	:6-8 not shown
+ 9~	line 9 EDITED
+10~	line 10 EDITED
+11 	line 11
+── sha:[..]→[..] · check: skipped (no grammar for .txt) · :6-8 not shown
+
+```
+
+```console
+$ lets edit s.txt --old $'line 4\nline 5\nline 6\nline 7\nline 8\nline 9' --new $'line 4 EDITED\nline 5 EDITED\nline 6 EDITED\nline 7 EDITED\nline 8 EDITED\nline 9 EDITED'
+── s.txt · 1 replacement · lines 4-9 · exact
+ 3 	line 3
+ 4~	line 4 EDITED
+ 5~	line 5 EDITED
+ 6~	line 6 EDITED
+ 7~	line 7 EDITED
+ 8~	line 8 EDITED
+ 9~	line 9 EDITED
+10 	line 10
+── sha:[..]→[..] · check: skipped (no grammar for .txt)
+
+```
+
 The control for `plaintext-scoped-guessed-span`: a `#symbol` the TypeScript grammar resolves has
 a parsed end, so the same scoped edit names no guessed span in text or `--json`.
 
@@ -809,5 +932,32 @@ $ lets edit 'usage.ts#usage' --old 'cap = 20' --new 'cap = 30'
 
 $ lets edit 'usage.ts#usage' --old 'cap = 30' --new 'cap = 40' --json
 {"path":"usage.ts","replacements":1,"lines":[2],"match":"exact","region":[..]}
+
+```
+
+A comment describing the next table is a tree-sitter "extra" that would otherwise attach to the
+table before it; `[package]` still ends at its last key/value line, so the insert lands before
+the blank line and the comment, and the comment stays with `[deps]`.
+
+```console
+$ lets edit t2.toml --insert-after '#package' --new 'version = "2"'
+── t2.toml · inserted 1 line after #package (line 2)
+2 	name = "x"
+3+	version = "2"
+4 	
+── check: toml ok · sha:[..]→[..]
+
+```
+
+A table's span now stops before the next table's header (`src/symbols/mod.rs`'s `end_line`), so
+`--insert-after '#package'` lands inside `[package]`, not after `[deps]`.
+
+```console
+$ lets edit t.toml --insert-after '#package' --new 'version = "2"'
+── t.toml · inserted 1 line after #package (line 2)
+2 	name = "x"
+3+	version = "2"
+4 	[deps]
+── check: toml ok · sha:[..]→[..]
 
 ```

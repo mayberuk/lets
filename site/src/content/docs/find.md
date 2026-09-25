@@ -38,6 +38,7 @@ one of them. Replaces `grep -rn` and `rg` run directly in the shell.
 | `-A <N>` | lines of context after a hit | — |
 | `-B <N>` | lines of context before | — |
 | `-C <N>` | lines of context on both sides | — |
+| `--no-expand` | print hit lines only, never the enclosing symbol or the lines around a hit | off |
 | `--no-ignore` | do not honor `.gitignore`/`.ignore`/global excludes | off |
 | `--allow-outside` | permit a path outside the working tree | off |
 | `--json` / `--jsonl` | structured output | off |

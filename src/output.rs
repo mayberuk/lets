@@ -509,8 +509,11 @@ pub enum Omission {
         path: PathBuf,
     },
     Normalized,
+    /// `path` is `None` for a single-file result, where the row above already carries it.
     RegionGap {
         not_shown: Vec<(usize, usize)>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<PathBuf>,
     },
     PartialBatch {
         written: Vec<PathBuf>,
@@ -573,6 +576,7 @@ pub struct ExpandedHits {
 
 /// What bounds a `find` answer: `--budget`, else `--max-bytes`.
 #[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ByteLimit {
     Budget(usize),
     MaxBytes(usize),
@@ -696,10 +700,13 @@ impl fmt::Display for Omission {
             },
             Omission::XattrsDropped { .. } => f.write_str("xattrs dropped"),
             Omission::Normalized => f.write_str("normalized"),
-            Omission::RegionGap { not_shown } => {
+            Omission::RegionGap { not_shown, path } => {
                 for (i, (from, to)) in not_shown.iter().enumerate() {
                     if i > 0 {
                         f.write_str(" \u{b7} ")?;
+                    }
+                    if let Some(path) = path {
+                        write!(f, "{}", path.display())?;
                     }
                     write!(f, ":{from}-{to} not shown")?;
                 }

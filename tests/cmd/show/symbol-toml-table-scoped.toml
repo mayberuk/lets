@@ -1,0 +1,4 @@
+# A table's span stops before the next table's header: `#package` shows only its own two lines,
+# not `[deps]` too.
+bin.name = "lets"
+args = ["show", "t.toml#package"]

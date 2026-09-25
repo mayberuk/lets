@@ -23,7 +23,7 @@ pub mod plaintext;
 
 use std::collections::HashMap;
 
-use tree_sitter::{Node, Parser, Query, QueryCursor, QueryMatch, StreamingIterator as _};
+use tree_sitter::{Node, Parser, Point, Query, QueryCursor, QueryMatch, StreamingIterator as _};
 
 use crate::grammars::{self, Language};
 use crate::output::Resolver;
@@ -119,11 +119,31 @@ pub fn definitions<'a>(query: &Query, node: Node<'_>, content: &'a str) -> Vec<D
 /// 1-based. A node ending at column 0 holds only the newline before that row: a TOML table runs
 /// to the next table's header, which is not its own.
 fn end_line(node: Node<'_>) -> usize {
-    let end = node.end_position();
+    let end = table_end(node);
     if end.column == 0 && end.row > node.start_position().row {
         end.row
     } else {
         end.row + 1
+    }
+}
+
+/// A TOML table has no closing token, so a comment (or blanks around it) sitting before the next
+/// table's header is an "extra" tree-sitter attaches as the table's own trailing child; when that
+/// happens the table's end backs up to its last non-comment child, so the comment stays with the
+/// header it describes.
+fn table_end(node: Node<'_>) -> Point {
+    if node.kind() != "table" {
+        return node.end_position();
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node<'_>> = node.named_children(&mut cursor).collect();
+    match children.last() {
+        Some(last) if last.kind() == "comment" => children
+            .iter()
+            .rev()
+            .find(|child| child.kind() != "comment")
+            .map_or_else(|| node.start_position(), Node::end_position),
+        _ => node.end_position(),
     }
 }
 
@@ -607,6 +627,17 @@ Something else.
             (last[0].line, last[0].end_line),
             (5, 6),
             "not past the file"
+        );
+    }
+
+    #[test]
+    fn a_comment_naming_the_next_table_stays_out_of_the_one_before_it() {
+        const SOURCE: &str = "[package]\nname = \"x\"\n\n# the deps table\n[deps]\na = \"1\"\n";
+        let found = find(Language::Toml, SOURCE, &["package"]);
+        assert_eq!(
+            (found[0].line, found[0].end_line),
+            (1, 2),
+            "the comment on line 4 describes [deps], not [package]"
         );
     }
 

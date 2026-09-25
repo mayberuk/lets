@@ -1,0 +1,4 @@
+[package]
+name = "x"
+[deps]
+a = "1"

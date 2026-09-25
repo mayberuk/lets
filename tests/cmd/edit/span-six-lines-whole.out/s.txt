@@ -1,0 +1,12 @@
+line 1
+line 2
+line 3
+line 4 EDITED
+line 5 EDITED
+line 6 EDITED
+line 7 EDITED
+line 8 EDITED
+line 9 EDITED
+line 10
+line 11
+line 12

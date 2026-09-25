@@ -19,6 +19,7 @@ existing-file-prefix-regex.toml
 empty-file-zero-lines.toml
 latin1-lossy.toml
 symbol-plaintext-resolves.toml
+symbol-toml-table-scoped.toml
 long-line-cut.trycmd
 mistyped-range-comma.trycmd
 mistyped-unquoted-regex.trycmd

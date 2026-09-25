@@ -1,0 +1,6 @@
+[package]
+name = "x"
+
+# the deps table
+[deps]
+a = "1"

@@ -624,7 +624,10 @@ fn region(
         previous = Some(number);
     }
     if !not_shown.is_empty() {
-        omitted.push(Omission::RegionGap { not_shown });
+        omitted.push(Omission::RegionGap {
+            not_shown,
+            path: None,
+        });
     }
     Some(Region { start, end, lines })
 }
@@ -1298,7 +1301,7 @@ mod tests {
         region(&written, &rows, &[1, 12], &mut omitted).expect("a region");
 
         assert!(
-            matches!(omitted.as_slice(), [Omission::RegionGap { not_shown }] if not_shown == &[(4, 9)]),
+            matches!(omitted.as_slice(), [Omission::RegionGap { not_shown, .. }] if not_shown == &[(4, 9)]),
             "{omitted:?}"
         );
     }

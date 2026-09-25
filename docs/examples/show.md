@@ -262,6 +262,15 @@ $ lets show 'big.ts#usage'
 ```
 
 ```console
+$ lets show 't.toml#package'
+── t.toml#package  (1-2 of 4 · via tree-sitter) · sha:[..]
+1 	[package]
+2 	name = "x"
+── showed 1 target · 2 lines
+
+```
+
+```console
 $ lets show small.md
 ── small.md  (1-15 of 15) · sha:bc4ff3a9b973
 ...
