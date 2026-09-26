@@ -50,7 +50,7 @@ import '../styles/home.css';
     <section class="row" id="try" aria-labelledby="try-h">
       <div class="rd">
         <h2 id="try-h" class="ln">Try it on a two-file project.</h2>
-        <p class="ln">Run one of these in the terminal beside, or type your own. Each answer is output recorded from <code>lets</code> 0.0.1 on a demo project, replayed here.</p>
+        <p class="ln">Run one of these in the terminal beside, or type your own. Each answer is output recorded from <code>lets</code> 0.0.3 on a demo project, replayed here.</p>
         <ul class="try-list ln" style="--n:6">
           <li><code data-cmd="lets show src/usage.ts#usage">lets show src/usage.ts#usage</code><span>one function, found by parsing</span></li>
           <li><code data-cmd="lets find usageCap">lets find usageCap</code><span>every hit, grouped by file</span></li>
@@ -81,18 +81,14 @@ import '../styles/home.css';
         <p class="ln">Five tasks on a private 17.7k-file Go monorepo: a stock Claude Code session against one with the <code>lets</code> hook, nothing else changed.</p>
         <h3 class="ln">If the footer doesn’t name a cut, nothing was cut.</h3>
         <p class="ln">Hidden lines, capped hits and skipped checks are named on the last line, so your agent can trust the answer and skip the follow-up read.</p>
-<pre class="o ln" style="--n:12"><code><span class="after">$ lets edit usage.ts --old 'usageCap' --new 'usageLimit' --all</span>
-<span class="rl">── usage.ts · 2 replacements · lines 1, 8 · exact</span>
-<span class="chg"> 1~&#9;import &#123; usageLimit &#125; from './config'</span>
- 2 &#9;import &#123; clock &#125; from './clock'
- 3 &#9;export function usage(id: string) &#123;
-  ·&#9;<mark>:4-5 not shown</mark>
- 6 &#9;  const cap = 10
- 7 &#9;  if (now &gt; cap) return
-<span class="chg"> 8~&#9;  const total = usageLimit + id.length</span>
- 9 &#9;  return total
-10 &#9;&#125;
-<span class="rl">── check: structure ok · sha:c5525cc20b61→0e1115009972 · <mark>:4-5 not shown</mark></span></code></pre>
+<pre class="o ln" style="--n:12"><code><span class="after">$ lets show report.ts</span>
+<span class="rl">── report.ts  (1-100 of 138 · window 100 · <mark>:101-138 not shown</mark>)</span>
+  1 &#9;export const limits: Record&lt;string, number&gt; = &#123;
+  2 &#9;  usage1: 1,
+  3 &#9;  retries2: 2,
+  ...
+100 &#9;  floor99: 99,
+<span class="rl">── showed 1 target · 100 lines · <mark>:101-138 not shown</mark></span></code></pre>
       </div>
       <div class="side">
         <Sheet />
@@ -102,14 +98,14 @@ import '../styles/home.css';
     <section class="row" id="hook" aria-labelledby="hook-h">
       <div class="rd">
         <h2 id="hook-h" class="ln">Reach for <code>cat</code>, get handed <code>lets</code>.</h2>
-        <p class="ln"><code>lets hooks install claude-code</code> checks each shell command before it runs. A bare <code>cat</code>, <code>sed -n</code> or <code>grep</code> on a repo file is blocked and handed the <code>lets</code> command instead.</p>
+        <p class="ln"><code>lets hooks install claude-code</code> checks each shell command before it runs. A bare <code>cat</code>, <code>sed -n</code> or <code>grep</code> on a repo file is rewritten in place into the matching <code>lets</code> command, no permission prompt.</p>
         <p class="ln dim">If <code>lets</code> is missing or crashes, the hook lets the command through, so it can never wedge your agent. The old habits are in the Trash.</p>
         <details class="ln">
           <summary>What else it installs, and why a hook</summary>
           <ul>
             <li>A short note at session start, printed again after every compaction and to every subagent.</li>
             <li>Untouched: output piped into another program, a heredoc sent to a program’s stdin, files outside the repo.</li>
-            <li>Prose rules in CLAUDE.md get roughly 55% compliance. Replaying 1,502 sessions, the hook would block 28% of shell calls, carrying 45% of shell output bytes.</li>
+            <li>Prose rules in CLAUDE.md get roughly 55% compliance. Replaying 1,502 sessions, the hook would rewrite 28% of shell calls, carrying 45% of shell output bytes.</li>
             <li>For Codex: <code>lets hooks install codex</code>.</li>
           </ul>
         </details>
@@ -163,7 +159,7 @@ import '../styles/home.css';
   <footer class="foot">
     <p class="o">── index.html · the promise, the anatomy of one edit, one task with and without lets, a terminal to try it, 7 before/after pairs, the trial, the hook, the trash, the five verbs, 6 questions, llms.txt
 ── not shown here: every flag and exit code · they are in <a href="/docs/edit/">docs</a>, <a href="/docs/edit.md">/docs/*.md</a> and <a href="/llms-full.txt">/llms-full.txt</a></p>
-    <div class="meta"><span>lets 0.0.1 · MIT or Apache-2.0</span><a href="https://github.com/mayberuk/lets">github.com/mayberuk/lets</a><a href="/docs/">the lets Manual</a></div>
+    <div class="meta"><span>lets 0.0.3 · MIT or Apache-2.0</span><a href="https://github.com/mayberuk/lets">github.com/mayberuk/lets</a><a href="/docs/">the lets Manual</a></div>
   </footer>
 </div>
 </div>

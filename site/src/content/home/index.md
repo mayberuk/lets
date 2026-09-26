@@ -25,7 +25,7 @@ already runs `cat`.
 search hit, in a single call. An edit prints the changed lines and a syntax check in the same
 output, so the agent doesn't need to re-read the file to confirm the edit landed.
 
-**Output is bounded and honest.** 200 lines per file and 50 search hits by default. The last line
+**Output is bounded and honest.** 100 lines per file and 50 search hits by default. The last line
 — the footer — names everything left out: lines past the window, hits over the cap, files skipped
 by `.gitignore`. If the footer doesn't name a cut, nothing was cut, so the agent can trust the
 answer and skip the follow-up read.
@@ -44,7 +44,7 @@ Before — two turns, one file per call: `cat src/usage.ts` then `cat src/config
 
 ```console
 $ lets show src/usage.ts src/config.ts
-── src/usage.ts  (1-13 of 13) · sha:75d31d847ffb
+── src/usage.ts  (1-13 of 13)
  1   import { usageCap } from './config'
  2
  3   export function usage(id: string) {
@@ -52,10 +52,10 @@ $ lets show src/usage.ts src/config.ts
  5     const cap = 10
  ...
 13   }
-── src/config.ts  (1-2 of 2) · sha:4f49d457dfea
+── src/config.ts  (1-2 of 2)
  1   export const usageCap = 10
  2   export const retries = 3
-── showed 2 targets · 15 lines · ~74 tokens
+── showed 2 targets · 15 lines
 ```
 
 ### Read one function
@@ -65,7 +65,7 @@ src/usage.ts`, then `sed -n '3,20p' src/usage.ts` while guessing where the funct
 
 ```console
 $ lets show src/usage.ts#usage
-── src/usage.ts#usage  (3-9 of 13 · via tree-sitter) · sha:75d31d847ffb
+── src/usage.ts#usage  (3-9 of 13 · via tree-sitter)
 3   export function usage(id: string) {
 4     const now = Date.now()
 5     const cap = 10
@@ -73,7 +73,7 @@ $ lets show src/usage.ts#usage
 7     if (count(id) > cap) return
 8     return total(id, now)
 9   }
-── showed 1 target · 7 lines · ~38 tokens
+── showed 1 target · 7 lines
 ```
 
 ### Edit, and confirm it landed
@@ -82,16 +82,11 @@ Before — three turns: read for the exact text, edit, re-read to check it lande
 
 ```console
 $ lets edit src/usage.ts --old 'const cap = 10' --new 'const cap = 20'
-── src/usage.ts · 1 replacement · line 5 · exact
-3   export function usage(id: string) {
-4     const now = Date.now()
-5~    const cap = 20
-6     if (!id) return
-7     if (count(id) > cap) return
-── check: structure ok · sha:75d31d847ffb→93b5daea8ace · ~45 tokens
+── src/usage.ts · 1 replacement · line 5 · check: structure ok · sha:6fae9e67700e→06aa54dff860
 ```
 
-`~` marks a changed line. Don't `cat` after a `lets` edit — the proof is already in the output.
+An exact match with a passing check prints one line: the line it changed and the checked
+`sha:before→after`. Don't `cat` after a `lets` edit — the proof is already in the output.
 
 ### The text is there more than once
 
@@ -99,10 +94,11 @@ Before — the Edit tool fails with `Found 3 matches`, then the agent greps to p
 
 ```console
 $ lets edit src/usage.ts --old 'return' --new 'return undefined'
-src/usage.ts is ambiguous (3 candidates)
+src/usage.ts is ambiguous (4 candidates)
   src/usage.ts:6    if (!id) return
   src/usage.ts:7    if (count(id) > cap) return
   src/usage.ts:8    return total(id, now)
+  src/usage.ts:12   return now - count(id)
 ERROR_CODE=ambiguous
 ```
 
@@ -114,11 +110,10 @@ or never.
 ```console
 $ lets edit src/usage.ts --old 'return total(id, now)' --new 'return total(id, now))'
 ── src/usage.ts · 1 replacement · line 8 · REVERTED
- 6     if (!id) return
  7     if (count(id) > cap) return
  8~    return total(id, now))          ← parse error
  9   }
-── check: failed → reverted · file unchanged · sha:93b5daea8ace · ~40 tokens
+── check: failed → reverted · file unchanged · sha:06aa54dff860
 ERROR_CODE=check_failed
 ```
 
@@ -138,14 +133,22 @@ hold: prose rules get roughly 55% compliance in practice. `lets hooks install cl
   prompt does.
 - A `SubagentStart` hook delivers the same paragraph to subagents, which a system-prompt append
   never reaches.
-- A `PreToolUse` hook (`lets hook classify`) inspects each shell command before it runs. A bare
-  `cat`, `sed -n` or `grep` of a repo file is blocked with the exact `lets` command to run
-  instead:
+- A `PreToolUse` hook (`lets hook classify`) inspects each shell command before it runs, on both
+  Claude Code and Codex. A bare `cat`, `sed -n` or `grep` of a repo file is rewritten in place
+  into the matching `lets` command — no permission prompt, the agent just gets the bounded
+  answer back:
 
   ```console
-  agent runs:  sed -n '3,9p' src/usage.ts
-  hook says:   lets show reads several files and ranges in one call.
-               run: lets show src/usage.ts:3-9
+  agent runs: sed -n '3,9p' src/usage.ts
+  hook rewrites to: lets show src/usage.ts:3-9 --no-header --no-numbers
+  ```
+
+  It denies only what has no exact `lets` translation, such as an in-place edit, and puts the
+  runnable replacement in the block message:
+
+  ```console
+  agent runs:  sed -i 's/cap = 10/cap = 20/g' src/usage.ts
+  hook denies: lets edit src/usage.ts --old 'cap = 10' --new 'cap = 20' --all
   ```
 
   Output piped into another program, a heredoc sent to a program's stdin, and files outside the
@@ -181,7 +184,7 @@ $ curl -fsSL https://raw.githubusercontent.com/mayberuk/lets/main/install.sh | s
 $ lets hooks install claude-code
 ```
 
-Linux and macOS. MIT or Apache-2.0. Version 0.0.1. Repo:
+Linux and macOS. MIT or Apache-2.0. Version 0.0.3. Repo:
 [github.com/mayberuk/lets](https://github.com/mayberuk/lets).
 
 ---
