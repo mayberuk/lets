@@ -20,7 +20,7 @@ lets hook classify
 
 ## What `hooks install` does
 
-**`claude-code`** merges four hooks into `~/.claude/settings.json`:
+**`claude-code`** merges three hooks into `~/.claude/settings.json`:
 
 - A `SessionStart` hook (matcher `startup|resume|clear|compact|fork`) that prints a short
   paragraph explaining `lets` and its verbs at the start of every session — including after
@@ -36,23 +36,26 @@ lets hook classify
   `lets edit <path> --old '<OLD>' --new '<NEW>' --all`; a search whose exit status a later `&&`,
   `||`, `$?`/`PIPESTATUS`, `set -e` or `ERR` trap reads is rewritten too, with `-s` and `--cap-exit-0` added so
   its hits and exit code still match what `grep`/`rg` would have produced.
-- A `PostToolUse` hook on `Edit|Write` that checks the file the tool just wrote and hands the
-  result back as `additionalContext` (see below).
 
-**`codex`** merges four entries into `hooks.json` (default `$CODEX_HOME/hooks.json`, or
+A `PostToolUse` check hook (`Edit|Write` on Claude Code, `apply_patch` on Codex) is not installed
+by default any more: a 2026-09-26 trial found it cost 0.86% more with the model still running its
+own build in 21 of 23 hook-on sessions. `lets hook classify` still answers a `PostToolUse` event,
+so adding the entry by hand still works — see below.
+
+**`codex`** merges three entries into `hooks.json` (default `$CODEX_HOME/hooks.json`, or
 `~/.codex/hooks.json`): the same `PreToolUse` classifier, `SessionStart` and `SubagentStart`
-entries that print the file-work paragraph the same way Claude Code's do, and a `PostToolUse`
-entry on `apply_patch` that runs the same file check on the first file a patch names. Codex
-requires a human to trust a hook before it runs it, and trusts each entry separately: the install
-report names the current trust status on every run — "installed and approved" only when all four
-are trusted, otherwise "not yet approved", naming the entries still untrusted when some already
-are — until you open Codex and choose "Trust all and continue" when prompted, press `t` in the
-hooks browser, or pass `--dangerously-bypass-hook-trust` for one run.
+entries that print the file-work paragraph the same way Claude Code's do. Codex requires a human
+to trust a hook before it runs it, and trusts each entry separately: the install report names the
+current trust status on every run — "installed and approved" only when all three are trusted,
+otherwise "not yet approved", naming the entries still untrusted when some already are — until you
+open Codex and choose "Trust all and continue" when prompted, press `t` in the hooks browser, or
+pass `--dangerously-bypass-hook-trust` for one run.
 
 Both installers only ever write into the agent's own settings; nothing modifies your shell
 profile. Installing twice is a no-op — the settings file is byte-identical across a reinstall.
 `hooks uninstall` removes exactly what `hooks install` added and leaves any of the user's own
-hooks in the same file untouched.
+hooks in the same file untouched. Either installer also removes a `PostToolUse` check entry an
+earlier build installed, so upgrading drops it even if you never uninstall.
 
 ## What `lets hook classify` does
 
@@ -92,7 +95,10 @@ and substitutions, and rewrites or blocks only what it can translate with confid
 open: `lets` missing, crashing, or mid-update degrades every hook to allow, never an error that
 could wedge an agent's turn.
 
-For a `PostToolUse` event it checks the file an `Edit`/`Write` (`tool_input.file_path`) or a Codex
+Not installed by default (see above), but still answered when wired by hand — a `PostToolUse`
+entry matched on `Edit|Write` (Claude Code) or `apply_patch` (Codex), running the same guarded
+`lets hook classify` command the `PreToolUse` entry does. For a `PostToolUse` event it checks the
+file an `Edit`/`Write` (`tool_input.file_path`) or a Codex
 `apply_patch` (the first `*** Update File:`/`*** Add File:` path in `tool_input.command`) just
 wrote, and prints the result as `additionalContext` — the check a model would otherwise run by
 hand. Every recognized file gets the structural check `lets edit` runs (`check: structure ok`,
@@ -135,14 +141,13 @@ flag.
 
 ## Examples
 
-Installing for Claude Code adds all four hooks in one call:
+Installing for Claude Code adds all three hooks in one call:
 
 ```console
 $ lets hooks install claude-code
 added the PreToolUse hook
 added the SubagentStart hook
 added the SessionStart hook
-added the PostToolUse hook
 ```
 
 A second install is a no-op, reported as such, and the settings file does not change:
@@ -152,7 +157,6 @@ $ lets hooks install claude-code
 the PreToolUse hook was already installed
 the SubagentStart hook was already installed
 the SessionStart hook was already installed
-the PostToolUse hook was already installed
 ```
 
 Installing when a different `lets` shadows this one on `PATH` refuses and names it:
@@ -190,14 +194,13 @@ $ printf '{"session_id":"s","cwd":"%s","hook_event_name":"PreToolUse","tool_name
 
 (stdout is empty, exit code 0 — the command runs unmodified.)
 
-Installing for Codex adds all four entries and reports the trust status:
+Installing for Codex adds all three entries and reports the trust status:
 
 ```console
 $ lets hooks install codex
 added the PreToolUse hook
 added the SessionStart hook
 added the SubagentStart hook
-added the PostToolUse hook
 hook: installed, not yet approved · open Codex and choose 'Trust all and continue' when prompted, press t in the hooks browser, or pass --dangerously-bypass-hook-trust for one run
 For reading, finding and editing files, use `lets` (run `lets guide` once) instead of `cat`,
 `grep` or `sed -n`. It reads several files or ranges in one call, returns bounded numbered

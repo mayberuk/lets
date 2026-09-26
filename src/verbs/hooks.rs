@@ -21,7 +21,6 @@ pub(crate) const CLAUDE_CODE_PARAGRAPH: &str = r"# File work: use `lets` through
 | Instead of | Run |
 |---|---|
 | several `cat`/`sed -n`/`grep` calls, Read | `lets show a.ts b.ts:10-40 c.ts#computeFee` |
-| a definitions-only skim | `lets show f.ts --outline` |
 | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
 | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
@@ -227,12 +226,11 @@ pub(crate) fn hook_line(format: Format, label: &str, status: &InstallStatus) -> 
     }
 }
 
-fn hook_lines(format: Format, statuses: &[InstallStatus]) -> [String; 4] {
+fn hook_lines(format: Format, statuses: &[InstallStatus]) -> [String; 3] {
     [
         hook_line(format, "PreToolUse", &statuses[0]),
         hook_line(format, "SubagentStart", &statuses[1]),
         hook_line(format, "SessionStart", &statuses[2]),
-        hook_line(format, "PostToolUse", &statuses[3]),
     ]
 }
 
@@ -251,9 +249,15 @@ fn stale_system_append_note(format: Format, dir: &Path) -> Option<String> {
     })
 }
 
-fn report(format: Format, statuses: &[InstallStatus], stale_note: Option<&str>) -> String {
-    let [pre, sub, session, post] = hook_lines(format, statuses);
-    let mut lines = vec![pre, sub, session, post];
+fn report(
+    format: Format,
+    statuses: &[InstallStatus],
+    retired_note: Option<&str>,
+    stale_note: Option<&str>,
+) -> String {
+    let [pre, sub, session] = hook_lines(format, statuses);
+    let mut lines = vec![pre, sub, session];
+    lines.extend(retired_note.map(str::to_owned));
     lines.extend(stale_note.map(str::to_owned));
     lines.join("\n") + "\n"
 }
@@ -270,7 +274,7 @@ pub(crate) fn raw(text: String) -> Response {
 fn claude_code_entries<'a>(
     subagent_command: &'a str,
     session_command: &'a str,
-) -> [HookEntry<'a>; 4] {
+) -> [HookEntry<'a>; 3] {
     [
         HookEntry {
             event: "PreToolUse",
@@ -293,14 +297,28 @@ fn claude_code_entries<'a>(
             is_ours: is_guide,
             carry_over: settings::nothing_to_carry_over,
         },
-        HookEntry {
-            event: "PostToolUse",
-            matcher: Some("Edit|Write"),
-            command: GUARDED_CLASSIFY_COMMAND,
-            is_ours: is_classify,
-            carry_over: keep_absolute_path,
-        },
     ]
+}
+
+/// A paid trial found the `PostToolUse` check cost +0.86% [-3.46%, +3.01%] versus a model that
+/// still ran its own build in 21 of 23 hook-on sessions anyway, so a fresh install skips it. Kept
+/// only so `install` and `uninstall` can remove one an earlier build left behind.
+pub(crate) const RETIRED_POST_TOOL_USE: HookEntry<'static> = HookEntry {
+    event: "PostToolUse",
+    matcher: Some("Edit|Write"),
+    command: GUARDED_CLASSIFY_COMMAND,
+    is_ours: is_classify,
+    carry_over: keep_absolute_path,
+};
+
+/// `removed`: whether an earlier build's retired `PostToolUse` entry was just deleted.
+pub(crate) fn retired_post_tool_use_note(format: Format, removed: bool) -> Option<String> {
+    removed.then(|| match format {
+        Format::Text => "removed the PostToolUse hook \u{b7} the check trial showed no benefit, \
+                          so it is no longer installed by default"
+            .to_owned(),
+        Format::Json | Format::Jsonl => "PostToolUse=removed".to_owned(),
+    })
 }
 
 pub(crate) fn uninstall_report(format: Format, entries: &[HookEntry], removed: &[bool]) -> String {
@@ -343,14 +361,21 @@ fn install(format: Format, dir: &Path, path_var: &str, runtime: &Path) -> Outcom
         &claude_code_entries(&subagent_command, &session_command),
         runtime,
     );
-    match merged {
-        Ok(statuses) => Outcome::ok(raw(report(
-            format,
-            &statuses,
-            stale_system_append_note(format, dir).as_deref(),
-        ))),
-        Err(error) => Outcome::failed("hooks install", error),
-    }
+    let statuses = match merged {
+        Ok(statuses) => statuses,
+        Err(error) => return Outcome::failed("hooks install", error),
+    };
+    let retired = settings::remove_hook_entries(&settings_path, &[RETIRED_POST_TOOL_USE], runtime);
+    let removed = match retired {
+        Ok(removed) => removed[0],
+        Err(error) => return Outcome::failed("hooks install", error),
+    };
+    Outcome::ok(raw(report(
+        format,
+        &statuses,
+        retired_post_tool_use_note(format, removed).as_deref(),
+        stale_system_append_note(format, dir).as_deref(),
+    )))
 }
 
 /// No PATH check: removing the entries needs no working `lets`, and a machine where it broke is
@@ -358,7 +383,8 @@ fn install(format: Format, dir: &Path, path_var: &str, runtime: &Path) -> Outcom
 fn uninstall(format: Format, dir: &Path, runtime: &Path) -> Outcome {
     let subagent_command = subagent_start_command();
     let session_command = session_start_command();
-    let entries = claude_code_entries(&subagent_command, &session_command);
+    let [pre, subagent, session] = claude_code_entries(&subagent_command, &session_command);
+    let entries = [pre, subagent, session, RETIRED_POST_TOOL_USE];
     match settings::remove_hook_entries(&dir.join("settings.json"), &entries, runtime) {
         Ok(removed) => Outcome::ok(raw(uninstall_report(format, &entries, &removed))),
         Err(error) => Outcome::failed("hooks uninstall", error),
@@ -471,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn first_install_wires_all_four_hooks_and_writes_no_append_file() {
+    fn first_install_wires_the_three_hooks_and_writes_no_append_file() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
 
         let outcome = sandbox.install(Format::Text);
@@ -502,19 +528,11 @@ mod tests {
                 }]
             }])
         );
-        assert_eq!(
-            settings["hooks"]["PostToolUse"],
-            serde_json::json!([
-                {"matcher": "Edit|Write", "hooks": [{
-                    "type": "command",
-                    "command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"
-                }]}
-            ])
-        );
+        assert!(settings["hooks"].get("PostToolUse").is_none());
         assert_eq!(
             body_text(&outcome),
             "added the PreToolUse hook\nadded the SubagentStart hook\nadded the SessionStart \
-             hook\nadded the PostToolUse hook\n"
+             hook\n"
         );
     }
 
@@ -553,8 +571,7 @@ mod tests {
         assert_eq!(
             body_text(&outcome),
             "the PreToolUse hook was already installed\nthe SubagentStart hook was already \
-             installed\nthe SessionStart hook was already installed\nthe PostToolUse hook was \
-             already installed\n"
+             installed\nthe SessionStart hook was already installed\n"
         );
     }
 
@@ -587,7 +604,7 @@ mod tests {
 
         let outcome = sandbox.install(Format::Text);
 
-        assert!(body_text(&outcome).ends_with("added the PostToolUse hook\n"));
+        assert!(body_text(&outcome).ends_with("added the SessionStart hook\n"));
     }
 
     #[test]
@@ -661,8 +678,7 @@ mod tests {
         let first = sandbox.install(Format::Json);
         assert_eq!(
             body_text(&first),
-            "PreToolUse=installed\nSubagentStart=installed\nSessionStart=installed\n\
-             PostToolUse=installed\n"
+            "PreToolUse=installed\nSubagentStart=installed\nSessionStart=installed\n"
         );
 
         let outcome = sandbox.install(Format::Json);
@@ -670,7 +686,7 @@ mod tests {
         assert_eq!(
             body_text(&outcome),
             "PreToolUse=already_installed\nSubagentStart=already_installed\nSessionStart=\
-             already_installed\nPostToolUse=already_installed\n"
+             already_installed\n"
         );
     }
 
@@ -758,36 +774,42 @@ mod tests {
         .unwrap();
     }
 
-    fn post_tool_use_commands(sandbox: &Sandbox) -> Vec<String> {
-        sandbox.settings_json()["hooks"]["PostToolUse"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .flat_map(|entry| entry["hooks"].as_array().unwrap().clone())
-            .map(|hook| hook["command"].as_str().unwrap().to_owned())
-            .collect()
+    #[test]
+    fn install_does_not_add_a_post_tool_use_entry() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+
+        let outcome = sandbox.install(Format::Text);
+
+        assert!(
+            sandbox.settings_json()["hooks"]
+                .get("PostToolUse")
+                .is_none()
+        );
+        assert!(!body_text(&outcome).contains("PostToolUse"));
     }
 
     #[test]
-    fn the_post_tool_use_entry_installs_the_guarded_form() {
-        let sandbox = Sandbox::new().with_lets_on_path(true);
+    fn install_removes_an_earlier_builds_post_tool_use_entry_guarded_or_not() {
+        for existing in ["lets hook classify", GUARDED] {
+            let sandbox = Sandbox::new().with_lets_on_path(true);
+            settings_with_post_tool_use(&sandbox, existing);
 
-        sandbox.install(Format::Text);
+            let first = sandbox.install(Format::Text);
+            let second = sandbox.install(Format::Text);
 
-        assert_eq!(post_tool_use_commands(&sandbox), [GUARDED]);
-    }
-
-    #[test]
-    fn installing_twice_over_the_unguarded_post_tool_use_entry_leaves_one_guarded_entry() {
-        let sandbox = Sandbox::new().with_lets_on_path(true);
-        settings_with_post_tool_use(&sandbox, "lets hook classify");
-
-        let first = sandbox.install(Format::Text);
-        let second = sandbox.install(Format::Text);
-
-        assert!(body_text(&first).contains("updated the PostToolUse hook"));
-        assert!(body_text(&second).contains("the PostToolUse hook was already installed"));
-        assert_eq!(post_tool_use_commands(&sandbox), [GUARDED]);
+            assert!(
+                body_text(&first).contains("removed the PostToolUse hook"),
+                "{existing}: {}",
+                body_text(&first)
+            );
+            assert!(!body_text(&second).contains("PostToolUse"), "{existing}");
+            assert!(
+                sandbox.settings_json()["hooks"]
+                    .get("PostToolUse")
+                    .is_none(),
+                "{existing}"
+            );
+        }
     }
 
     /// A `lets` outside `PATH` with `mode`, named by absolute path.
@@ -1152,10 +1174,27 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert_eq!(
             body_text(&first),
             "removed the PreToolUse hook\nremoved the SubagentStart hook\nremoved the SessionStart \
-             hook\nremoved the PostToolUse hook\n"
+             hook\n"
         );
         assert_eq!(body_text(&second), "nothing to remove\n");
         assert_eq!(sandbox.settings_json(), serde_json::json!({}));
+    }
+
+    #[test]
+    fn uninstall_also_removes_an_earlier_builds_retired_post_tool_use_entry() {
+        for existing in ["lets hook classify", GUARDED] {
+            let sandbox = Sandbox::new();
+            settings_with_post_tool_use(&sandbox, existing);
+
+            let outcome = sandbox.uninstall(Format::Text);
+
+            assert_eq!(
+                body_text(&outcome),
+                "removed the PostToolUse hook\n",
+                "{existing}"
+            );
+            assert_eq!(sandbox.settings_json(), serde_json::json!({}), "{existing}");
+        }
     }
 
     #[test]
@@ -1168,7 +1207,7 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
 
         assert_eq!(
             body_text(&first),
-            "PreToolUse=removed\nSubagentStart=removed\nSessionStart=removed\nPostToolUse=removed\n"
+            "PreToolUse=removed\nSubagentStart=removed\nSessionStart=removed\n"
         );
         assert_eq!(body_text(&second), "nothing_to_remove\n");
     }
@@ -1282,7 +1321,11 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
             "a bare cat is now silently rewritten, so re-teaching it wastes the paragraph's \
              budget on something the agent never has to know"
         );
-        assert!(CLAUDE_CODE_PARAGRAPH.contains("--outline"));
+        assert!(
+            !CLAUDE_CODE_PARAGRAPH.contains("--outline"),
+            "a 2026-09-26 trial found no session ever ran --outline, so the row is no longer \
+             worth its budget"
+        );
     }
 
     #[test]

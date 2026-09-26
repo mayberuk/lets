@@ -6,7 +6,8 @@ use crate::install::pathguard;
 use crate::install::settings::{self, HookEntry, InstallStatus};
 use crate::output::Format;
 use crate::verbs::hooks::{
-    GUARDED_CLASSIFY_COMMAND, LEGACY_PARAGRAPH, hook_line, is_classify, raw, uninstall_report,
+    GUARDED_CLASSIFY_COMMAND, LEGACY_PARAGRAPH, hook_line, is_classify, raw,
+    retired_post_tool_use_note, uninstall_report,
 };
 
 /// The same short file-work table `CLAUDE_CODE_PARAGRAPH` carries, minus the two rows naming a
@@ -18,7 +19,6 @@ const CODEX_SESSION_START_PARAGRAPH: &str = r"# File work: use `lets` through Ba
 | Instead of | Run |
 |---|---|
 | several `cat`/`sed -n`/`grep` calls | `lets show a.ts b.ts:10-40 c.ts#computeFee` |
-| a definitions-only skim | `lets show f.ts --outline` |
 | `sed -i 's/a/b/'` | `lets edit f.ts --old a --new b` |
 | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
@@ -97,9 +97,11 @@ fn subagent_start_entry(start_command: &str) -> HookEntry<'_> {
     }
 }
 
-/// Codex names the tool `apply_patch` in a hook's stdin and matcher, with `Edit` and `Write` only
-/// as matcher aliases (codex-rs/core/src/tools/hook_names.rs, 0.154).
-const CHECK_ENTRY: HookEntry<'static> = HookEntry {
+/// The trial behind `verbs::hooks::RETIRED_POST_TOOL_USE` covers this entry too, so a fresh
+/// install skips it here as well; kept only so `install` and `uninstall` can remove one an
+/// earlier build left behind. Codex names the tool `apply_patch` in a hook's stdin and matcher,
+/// with `Edit` and `Write` only as matcher aliases (codex-rs/core/src/tools/hook_names.rs, 0.154).
+const RETIRED_CHECK_ENTRY: HookEntry<'static> = HookEntry {
     event: "PostToolUse",
     matcher: Some("apply_patch"),
     command: GUARDED_CLASSIFY_COMMAND,
@@ -107,12 +109,11 @@ const CHECK_ENTRY: HookEntry<'static> = HookEntry {
     carry_over: settings::nothing_to_carry_over,
 };
 
-fn entries(start_command: &str) -> [HookEntry<'_>; 4] {
+fn entries(start_command: &str) -> [HookEntry<'_>; 3] {
     [
         CLASSIFY_ENTRY,
         session_start_entry(start_command),
         subagent_start_entry(start_command),
-        CHECK_ENTRY,
     ]
 }
 
@@ -150,20 +151,20 @@ fn approval_line(format: Format, entries: usize, unapproved: &[&str]) -> String 
 fn report(
     format: Format,
     entries: &[HookEntry],
-    statuses: &[InstallStatus; 4],
+    statuses: &[InstallStatus; 3],
     unapproved: &[&str],
+    retired_note: Option<&str>,
 ) -> String {
-    [
+    let mut lines = vec![
         hook_line(format, "PreToolUse", &statuses[0]),
         hook_line(format, "SessionStart", &statuses[1]),
         hook_line(format, "SubagentStart", &statuses[2]),
-        hook_line(format, "PostToolUse", &statuses[3]),
-        approval_line(format, entries.len(), unapproved),
-        LEGACY_PARAGRAPH.trim_end().to_owned(),
-        FAIL_OPEN_FACT.to_owned(),
-    ]
-    .join("\n")
-        + "\n"
+    ];
+    lines.extend(retired_note.map(str::to_owned));
+    lines.push(approval_line(format, entries.len(), unapproved));
+    lines.push(LEGACY_PARAGRAPH.trim_end().to_owned());
+    lines.push(FAIL_OPEN_FACT.to_owned());
+    lines.join("\n") + "\n"
 }
 
 const SHA256_K: [u32; 64] = [
@@ -397,20 +398,33 @@ pub fn install(format: Format, dir: &Path, path_var: &str, runtime: &Path) -> Ou
 
     let start_command = codex_start_command();
     let entries = entries(&start_command);
-    let merged = settings::merge_hook_entries(&dir.join("hooks.json"), &entries, runtime);
-    let statuses: [InstallStatus; 4] = match merged {
+    let hooks_path = dir.join("hooks.json");
+    let merged = settings::merge_hook_entries(&hooks_path, &entries, runtime);
+    let statuses: [InstallStatus; 3] = match merged {
         Ok(statuses) => statuses
             .try_into()
-            .unwrap_or_else(|_| unreachable!("four entries were passed")),
+            .unwrap_or_else(|_| unreachable!("three entries were passed")),
+        Err(error) => return Outcome::failed("hooks install", error),
+    };
+    let retired = settings::remove_hook_entries(&hooks_path, &[RETIRED_CHECK_ENTRY], runtime);
+    let removed = match retired {
+        Ok(removed) => removed[0],
         Err(error) => return Outcome::failed("hooks install", error),
     };
     let unapproved = unapproved(&dir.join("config.toml"), &entries);
-    Outcome::ok(raw(report(format, &entries, &statuses, &unapproved)))
+    Outcome::ok(raw(report(
+        format,
+        &entries,
+        &statuses,
+        &unapproved,
+        retired_post_tool_use_note(format, removed).as_deref(),
+    )))
 }
 
 pub fn uninstall(format: Format, dir: &Path, runtime: &Path) -> Outcome {
     let start_command = codex_start_command();
-    let entries = entries(&start_command);
+    let [pre, session, subagent] = entries(&start_command);
+    let entries = [pre, session, subagent, RETIRED_CHECK_ENTRY];
     match settings::remove_hook_entries(&dir.join("hooks.json"), &entries, runtime) {
         Ok(removed) => Outcome::ok(raw(uninstall_report(format, &entries, &removed))),
         Err(error) => Outcome::failed("hooks uninstall", error),
@@ -513,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn first_install_writes_all_four_entries_and_exits_ok() {
+    fn first_install_writes_the_three_entries_and_exits_ok() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
 
         let outcome = sandbox.install(Format::Text);
@@ -532,22 +546,42 @@ mod tests {
                 "SubagentStart": [
                     {"hooks": [{"type": "command", "command": start_command}]}
                 ],
-                "PostToolUse": [
-                    {"matcher": "apply_patch", "hooks": [{"type": "command", "command": GUARDED_CLASSIFY_COMMAND}]}
-                ],
             }})
         );
         let text = body_text(&outcome);
         assert!(text.starts_with("added the PreToolUse hook\n"));
         assert!(text.contains("added the SessionStart hook\n"));
         assert!(text.contains("added the SubagentStart hook\n"));
-        assert!(text.contains("added the PostToolUse hook\n"));
+        assert!(!text.contains("PostToolUse"));
         assert!(text.contains("hook: installed, not yet approved"));
         assert!(text.contains("Trust all and continue"));
         assert!(text.contains(LEGACY_PARAGRAPH.trim_end()));
         assert!(text.ends_with(&format!("{FAIL_OPEN_FACT}\n")));
         assert!(!text.contains("unverified"));
         assert!(!text.contains("AGENTS.md by hand"));
+    }
+
+    #[test]
+    fn install_removes_an_earlier_builds_post_tool_use_entry() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        std::fs::create_dir_all(sandbox.codex_dir()).unwrap();
+        std::fs::write(
+            sandbox.codex_dir().join("hooks.json"),
+            serde_json::json!({"hooks": {"PostToolUse": [
+                {"matcher": "apply_patch", "hooks": [{"type": "command", "command": GUARDED_CLASSIFY_COMMAND}]}
+            ]}})
+            .to_string(),
+        )
+        .unwrap();
+
+        let outcome = sandbox.install(Format::Text);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(sandbox.hooks_json()["hooks"].get("PostToolUse").is_none());
+        assert!(body_text(&outcome).contains("removed the PostToolUse hook"));
+
+        let second = sandbox.install(Format::Text);
+        assert!(!body_text(&second).contains("PostToolUse"));
     }
 
     #[test]
@@ -658,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_removes_all_four_keeps_a_teammates_entry_and_finds_nothing_the_second_time() {
+    fn uninstall_removes_the_three_keeps_a_teammates_entry_and_finds_nothing_the_second_time() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
         std::fs::create_dir_all(sandbox.codex_dir()).unwrap();
         let existing = "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Write\", \
@@ -674,13 +708,32 @@ mod tests {
         assert_eq!(
             body_text(&first),
             "removed the PreToolUse hook\nremoved the SessionStart hook\nremoved the \
-             SubagentStart hook\nremoved the PostToolUse hook\n"
+             SubagentStart hook\n"
         );
         assert_eq!(body_text(&second), "nothing to remove\n");
         assert_eq!(
             std::fs::read_to_string(sandbox.codex_dir().join("hooks.json")).unwrap(),
             existing
         );
+    }
+
+    #[test]
+    fn uninstall_also_removes_an_earlier_builds_retired_post_tool_use_entry() {
+        let sandbox = Sandbox::new();
+        std::fs::create_dir_all(sandbox.codex_dir()).unwrap();
+        std::fs::write(
+            sandbox.codex_dir().join("hooks.json"),
+            serde_json::json!({"hooks": {"PostToolUse": [
+                {"matcher": "apply_patch", "hooks": [{"type": "command", "command": GUARDED_CLASSIFY_COMMAND}]}
+            ]}})
+            .to_string(),
+        )
+        .unwrap();
+
+        let outcome = sandbox.uninstall(Format::Text);
+
+        assert_eq!(body_text(&outcome), "removed the PostToolUse hook\n");
+        assert_eq!(sandbox.hooks_json(), serde_json::json!({}));
     }
 
     #[test]
@@ -751,32 +804,32 @@ mod tests {
         let sandbox = Sandbox::new().with_lets_on_path(true);
         sandbox.install(Format::Text);
         let start_command = codex_start_command();
-        let [pre, session, subagent, post] = entries(&start_command);
+        let [pre, session, subagent] = entries(&start_command);
         trust(&sandbox, &[pre, subagent]);
 
         let text = body_text(&sandbox.install(Format::Text)).to_owned();
         let json = body_text(&sandbox.install(Format::Json)).to_owned();
 
         assert!(
-            text.contains("\nhook: installed, not yet approved: SessionStart, PostToolUse \u{b7} "),
+            text.contains("\nhook: installed, not yet approved: SessionStart \u{b7} "),
             "{text}"
         );
         assert!(!text.contains("installed and approved"), "{text}");
         assert!(
-            json.contains("\ntrust=not_approved:SessionStart,PostToolUse\n"),
+            json.contains("\ntrust=not_approved:SessionStart\n"),
             "{json}"
         );
         trust(&sandbox, &[session]);
         let one_trusted = body_text(&sandbox.install(Format::Text)).to_owned();
         assert!(
-            one_trusted
-                .contains("not yet approved: PreToolUse, SubagentStart, PostToolUse \u{b7} "),
+            one_trusted.contains("not yet approved: PreToolUse, SubagentStart \u{b7} "),
             "{one_trusted}"
         );
-        trust(&sandbox, &[post]);
+        let [_, _, subagent] = entries(&start_command);
+        trust(&sandbox, &[subagent]);
         assert!(
             body_text(&sandbox.install(Format::Text))
-                .contains("not yet approved: PreToolUse, SessionStart, SubagentStart \u{b7} ")
+                .contains("not yet approved: PreToolUse, SessionStart \u{b7} ")
         );
     }
 
@@ -793,14 +846,14 @@ mod tests {
     }
 
     #[test]
-    fn the_four_entries_hash_differently_from_each_other() {
+    fn the_three_entries_hash_differently_from_each_other() {
         let start_command = codex_start_command();
         let hashes: Vec<String> = entries(&start_command)
             .iter()
             .map(entry_trust_hash)
             .collect();
         let distinct: std::collections::BTreeSet<&String> = hashes.iter().collect();
-        assert_eq!(distinct.len(), 4);
+        assert_eq!(distinct.len(), 3);
         assert!(hashes.iter().all(|hash| hash.starts_with("sha256:")));
     }
 
@@ -808,14 +861,10 @@ mod tests {
     /// `sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")))` over the flattened
     /// identity built by hand.
     #[test]
-    fn both_classify_hashes_match_an_independent_python_computation() {
+    fn the_classify_hash_matches_an_independent_python_computation() {
         assert_eq!(
             entry_trust_hash(&CLASSIFY_ENTRY),
             "sha256:afda628195f1844bb957a0a448ff08ad4694ad493b49729b977e94114e22db99"
-        );
-        assert_eq!(
-            entry_trust_hash(&CHECK_ENTRY),
-            "sha256:c755e13c54729eecd7a971043024c76041824f6c1c42eb19145230149a564c6a"
         );
     }
 

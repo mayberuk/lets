@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

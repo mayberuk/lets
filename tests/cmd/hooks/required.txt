@@ -1,5 +1,6 @@
 fresh-install.toml
 idempotent-reinstall.toml
+retires-post-tool-use.toml
 preserves-unrelated-hooks.toml
 path-conflict.toml
 other-later.toml
@@ -16,3 +17,4 @@ uninstall-keeps-user-hook.toml
 uninstall-twice.toml
 uninstall-unparsable.toml
 codex-uninstall.toml
+codex-retires-post-tool-use.toml
