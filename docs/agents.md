@@ -96,7 +96,6 @@ system prompt any more.
 > | Instead of | Run |
 > |---|---|
 > | several `cat`/`sed -n`/`grep` calls, Read | `lets show a.ts b.ts:10-40 c.ts#computeFee` |
-> | a definitions-only skim | `lets show f.ts --outline` |
 > | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
 > | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 > | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
@@ -120,6 +119,10 @@ system prompt any more.
 > ```
 >
 > Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.
+
+A 2026-09-26 trial found no session ever ran `--outline`, and cost 2.93% more [-3.45%, +8.48%]
+than not carrying the row, so it is no longer taught here; `--outline` still exists as a `show`
+flag for an agent that reaches for it on its own.
 
 A `cat`, `sed -n` or `grep` the agent types anyway is rewritten silently and faithfully by the
 `PreToolUse` hook below, so this table only needs to teach what a rewrite cannot do: combining
@@ -185,12 +188,26 @@ tell a rewrite from a block or an allow.
 
 ## The PostToolUse check
 
-`lets hooks install claude-code` adds a `PostToolUse` hook on `Edit|Write`, and `lets hooks
-install codex` one on `apply_patch` (Codex names the tool `apply_patch` in a hook's stdin, and
-sends the patch text as `tool_input.command`). Both run `lets hook classify`, which checks the file
-the tool just wrote — `tool_input.file_path`, or the first `*** Update File:`/`*** Add File:` path
-of a patch — and prints the result as `additionalContext`, so the agent does not run the check by
-hand. A post-write hook has no before-state, so it reports the whole file, not only the edit.
+Not installed by default: a 2026-09-26 trial found it cost 0.86% more [-3.46%, +3.01%] and the
+model still ran its own build in 21 of 23 hook-on sessions, so it bought nothing. `lets hooks
+install claude-code` and `lets hooks install codex` remove a `PostToolUse` entry an earlier build
+left behind rather than leave it installed; `lets hook classify` itself is unchanged, so anyone who
+wires the entry by hand still gets the check below.
+
+To add it back by hand: Claude Code, a `PostToolUse` entry matched on `Edit|Write`; Codex, one
+matched on `apply_patch` (Codex names the tool `apply_patch` in a hook's stdin, and sends the patch
+text as `tool_input.command`). Both run `lets hook classify`, which checks the file the tool just
+wrote — `tool_input.file_path`, or the first `*** Update File:`/`*** Add File:` path of a patch —
+and prints the result as `additionalContext`, so the agent does not run the check by hand. A
+post-write hook has no before-state, so it reports the whole file, not only the edit.
+
+```jsonc
+// Claude Code ~/.claude/settings.json, or Codex ~/.codex/hooks.json with "matcher": "apply_patch"
+{"hooks": {"PostToolUse": [
+  {"matcher": "Edit|Write", "hooks": [{"type": "command",
+    "command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"}]}
+]}}
+```
 
 - Every recognized file gets the structural check `lets edit` runs: `check: structure ok`,
   `check: structure failed`, `check: json invalid`, and so on. A failure is reported as it is.
@@ -209,8 +226,9 @@ hand. A post-write hook has no before-state, so it reports the whole file, not o
   and an unrecognized extension fall back or stay silent; the hook never blocks and never errors.
 
 Codex trusts each hook entry separately, so the install report says "installed and approved" only
-when all four entries (`PreToolUse`, `SessionStart`, `SubagentStart`, `PostToolUse`) are trusted,
-and otherwise names the ones still waiting.
+when all three entries (`PreToolUse`, `SessionStart`, `SubagentStart`) are trusted, and otherwise
+names the ones still waiting. A `PostToolUse` entry added by hand is trusted and reported
+separately, the same way.
 
 ## The SubagentStart line
 
@@ -222,7 +240,6 @@ Discovery) arrives instead as SubagentStart `additionalContext`:
 > | Instead of | Run |
 > |---|---|
 > | several `cat`/`sed -n`/`grep` calls, Read | `lets show a.ts b.ts:10-40 c.ts#computeFee` |
-> | a definitions-only skim | `lets show f.ts --outline` |
 > | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
 > | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 > | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
@@ -260,7 +277,6 @@ one place `src/install/codex.rs`'s `CODEX_SESSION_START_PARAGRAPH` constant quot
 > | Instead of | Run |
 > |---|---|
 > | several `cat`/`sed -n`/`grep` calls | `lets show a.ts b.ts:10-40 c.ts#computeFee` |
-> | a definitions-only skim | `lets show f.ts --outline` |
 > | `sed -i 's/a/b/'` | `lets edit f.ts --old a --new b` |
 > | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 > | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |

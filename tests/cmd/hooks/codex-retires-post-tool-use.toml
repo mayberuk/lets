@@ -1,0 +1,7 @@
+# Upgrade hygiene: install removes a PostToolUse check an earlier build left behind, since the
+# check no longer installs by default.
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install codex >/dev/null; f=\"$HOME/.codex/hooks.json\"; grep -q PostToolUse \"$f\" && echo post-tool-use-still-present || echo post-tool-use-gone"]
+
+[fs]
+sandbox = true

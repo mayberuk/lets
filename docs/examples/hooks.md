@@ -5,7 +5,6 @@ $ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_E
 added the PreToolUse hook
 added the SessionStart hook
 added the SubagentStart hook
-added the PostToolUse hook
 hook: installed, not yet approved · open Codex and choose 'Trust all and continue' when prompted, press t in the hooks browser, or pass --dangerously-bypass-hook-trust for one run
 For reading, finding and editing files, use `lets` (run `lets guide` once) instead of `cat`,
 `grep` or `sed -n`. It reads several files or ranges in one call, returns bounded numbered
@@ -45,7 +44,6 @@ $ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_E
 added the PreToolUse hook
 added the SessionStart hook
 added the SubagentStart hook
-added the PostToolUse hook
 hook: installed, not yet approved · open Codex and choose 'Trust all and continue' when prompted, press t in the hooks browser, or pass --dangerously-bypass-hook-trust for one run
 For reading, finding and editing files, use `lets` (run `lets guide` once) instead of `cat`,
 `grep` or `sed -n`. It reads several files or ranges in one call, returns bounded numbered
@@ -55,7 +53,6 @@ an unapproved hook is skipped entirely · Codex runs the command unhooked, never
 the PreToolUse hook was already installed
 the SessionStart hook was already installed
 the SubagentStart hook was already installed
-the PostToolUse hook was already installed
 hook: installed, not yet approved · open Codex and choose 'Trust all and continue' when prompted, press t in the hooks browser, or pass --dangerously-bypass-hook-trust for one run
 For reading, finding and editing files, use `lets` (run `lets guide` once) instead of `cat`,
 `grep` or `sed -n`. It reads several files or ranges in one call, returns bounded numbered
@@ -85,11 +82,16 @@ ERROR_CODE=path_conflict
 ```
 
 ```console
+$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install codex >/dev/null; f="$HOME/.codex/hooks.json"; grep -q PostToolUse "$f" && echo post-tool-use-still-present || echo post-tool-use-gone'
+post-tool-use-gone
+
+```
+
+```console
 $ sh -c 'set -e; export HOME="$(pwd)/home"; f="$HOME/.codex/hooks.json"; before=$(sha256sum "$f" | cut -d'\'' '\'' -f1); export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install codex >/dev/null; "$CARGO_BIN_EXE_lets" hooks uninstall codex; "$CARGO_BIN_EXE_lets" hooks uninstall codex; after=$(sha256sum "$f" | cut -d'\'' '\'' -f1); if [ "$before" = "$after" ]; then echo '\''hooks.json byte-identical after install then uninstall'\''; else echo '\''hooks.json changed'\''; fi'
 removed the PreToolUse hook
 removed the SessionStart hook
 removed the SubagentStart hook
-removed the PostToolUse hook
 nothing to remove
 hooks.json byte-identical after install then uninstall
 
@@ -100,7 +102,6 @@ $ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_E
 added the PreToolUse hook
 added the SubagentStart hook
 added the SessionStart hook
-added the PostToolUse hook
 
 ```
 
@@ -109,11 +110,9 @@ $ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_E
 added the PreToolUse hook
 added the SubagentStart hook
 added the SessionStart hook
-added the PostToolUse hook
 the PreToolUse hook was already installed
 the SubagentStart hook was already installed
 the SessionStart hook was already installed
-the PostToolUse hook was already installed
 settings.json byte-identical across reinstall
 
 ```
@@ -132,7 +131,6 @@ $ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_E
 added the PreToolUse hook
 added the SubagentStart hook
 added the SessionStart hook
-added the PostToolUse hook
 
 ```
 
@@ -148,7 +146,17 @@ ERROR_CODE=path_conflict
 ```console
 $ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; f="$HOME/.claude/settings.json"; head -n 12 "$f" > before; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; if head -n 12 "$f" | cmp -s - before; then echo unrelated-entry-byte-identical; else echo unrelated-entry-changed; fi; grep -c -F '\''"command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"'\'' "$f"'
 unrelated-entry-byte-identical
-2
+1
+
+```
+
+```console
+$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; f="$HOME/.claude/settings.json"; grep -q PostToolUse "$f" && echo post-tool-use-still-present || echo post-tool-use-gone'
+added the PreToolUse hook
+added the SubagentStart hook
+added the SessionStart hook
+removed the PostToolUse hook · the check trial showed no benefit, so it is no longer installed by default
+post-tool-use-gone
 
 ```
 
@@ -166,7 +174,6 @@ $ sh -c 'set -e; export HOME="$(pwd)/home"; f="$HOME/.claude/settings.json"; bef
 removed the PreToolUse hook
 removed the SubagentStart hook
 removed the SessionStart hook
-removed the PostToolUse hook
 settings.json byte-identical after install then uninstall
 
 ```

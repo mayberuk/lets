@@ -1,7 +1,6 @@
 the PreToolUse hook was already installed
 the SessionStart hook was already installed
 the SubagentStart hook was already installed
-the PostToolUse hook was already installed
 hook: installed, not yet approved · open Codex and choose 'Trust all and continue' when prompted, press t in the hooks browser, or pass --dangerously-bypass-hook-trust for one run
 For reading, finding and editing files, use `lets` (run `lets guide` once) instead of `cat`,
 `grep` or `sed -n`. It reads several files or ranges in one call, returns bounded numbered

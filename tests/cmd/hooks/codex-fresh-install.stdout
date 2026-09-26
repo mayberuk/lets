@@ -1,7 +1,6 @@
 added the PreToolUse hook
 added the SessionStart hook
 added the SubagentStart hook
-added the PostToolUse hook
 hook: installed, not yet approved · open Codex and choose 'Trust all and continue' when prompted, press t in the hooks browser, or pass --dangerously-bypass-hook-trust for one run
 For reading, finding and editing files, use `lets` (run `lets guide` once) instead of `cat`,
 `grep` or `sed -n`. It reads several files or ranges in one call, returns bounded numbered
