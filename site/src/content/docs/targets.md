@@ -29,14 +29,14 @@ exists is `#` read as the symbol separator. Verified:
 
 ```console
 $ lets show 'C#.md'
-── C#.md  (1-3 of 3) · sha:[..]
+── C#.md  (1-3 of 3)
 1 	one
 2 	two
 3 	three
 ── showed 1 target · 3 lines
 
 $ lets show 'C#.md:2'
-── C#.md:2  (2-2 of 2) · sha:[..]
+── C#.md:2  (2-2 of 2)
 2 	b
 ── showed 1 target · 1 line
 ```
@@ -75,7 +75,7 @@ store.go#Open is ambiguous (2 candidates)
 ERROR_CODE=ambiguous
 
 $ lets show 'greet.kt#greet'
-── greet.kt#greet  (3-5 of 7 · via heuristic (plaintext)) · sha:[..]
+── greet.kt#greet  (3-5 of 7 · via heuristic (plaintext))
 3 	fun greet(name: String): String {
 4 	    return "hi $name"
 5 	}

@@ -94,7 +94,7 @@ $ lets transform config.json --set features.e2e=false --set review.threads=3
 3~    "features": { "e2e": false },
 4~    "review": { "threads": 3 }
 5   }
-── check: json ok · sha:bfe3e156b1ce→01c03fe96fd3 · ~21 tokens
+── check: json ok · sha:bfe3e156b1ce→01c03fe96fd3
 ```
 
 Frontmatter is a YAML edit between the fences of a markdown file:
