@@ -34,9 +34,15 @@ import WindowControls from '../shell/WindowControls.astro';
                     <li class="turn"><span class="turn-n">1</span><pre class="o"><code><span class="cmdl">$ lets find usageCap</span>
 <span class="rl">── src/config.ts</span>
 1:&#9;export const <mark>«usageCap»</mark> = 10
+2-&#9;export const retries = 3
 <span class="rl">── src/usage.ts</span>
 1:&#9;import &#123; <mark>«usageCap»</mark> &#125; from './config'
-<span class="rl">── 2 hits in 2 files · searched 3 files · ~17 tokens</span></code></pre></li>
+2-&#9;
+3-&#9;export function usage(id: string) &#123;
+4-&#9;  const now = Date.now()
+5-&#9;  const cap = 10
+6-&#9;  if (!id) return
+<span class="rl">── 2 hits in 2 files · searched 2 files · expanded 2 hits to ±5 lines</span></code></pre></li>
                     <li class="turn"><span class="turn-n">2</span><div style="min-width:0"><pre class="o"><code><span class="cmdl">$ lets edit --from - &lt;&lt;'LETS'</span></code></pre>
 <details class="batch"><summary>The batch: 2 edits, 12 lines</summary><pre class="o"><code>@@ src/config.ts
 &lt;&lt;&lt;&lt;&lt;&lt;&lt; old
@@ -50,14 +56,7 @@ import &#123; usageCap &#125; from './config'
 ======= new
 import &#123; usageLimit &#125; from './config'
 &gt;&gt;&gt;&gt;&gt;&gt;&gt;
-LETS</code></pre></details><pre class="o"><code><span class="rl">── src/config.ts · 1 replacement · line 1 · exact</span>
-<span class="chg">1~&#9;export const usageLimit = 10</span>
-2 &#9;export const retries = 3
-<span class="rl">── src/usage.ts · 1 replacement · line 1 · exact</span>
-<span class="chg">1~&#9;import &#123; usageLimit &#125; from './config'</span>
-2 &#9;
-3 &#9;export function usage(id: string) &#123;
-<span class="rl">── 2 files · 2 edits · all applied · checks: structure ok ×2 · ~60 tokens</span></code></pre></div></li>
+LETS</code></pre></details><pre class="o"><code><span class="rl">── 2 files · 2 edits · all applied · checks: structure ok ×2</span></code></pre></div></li>
                   </ol>
                 </div>
               </div>
