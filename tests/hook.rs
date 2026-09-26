@@ -1862,6 +1862,18 @@ fn a_codex_apply_patch_event_on_the_same_clean_file_gets_the_same_ok_result() {
     assert!(misnamed.out.is_empty(), "{}", misnamed.out);
 }
 
+/// The gate for every test whose expected value comes from a real `go build`, `go vet` or
+/// `go list`, mirroring how `tests/cmd`'s `check-real-golangci-lint` is skipped by name when its
+/// tool is absent (CI's macOS runner has no `go` on `PATH`).
+fn go_on_path() -> bool {
+    Command::new("go")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 /// nextest runs each test as its own process, so a `OnceLock` cannot share a warm build cache
 /// across them; a fixed directory under the OS temp root does. It is warmed with the fixtures'
 /// imports outside any timeout first: on a cold CI cache `go vet` of a test file took over 10 s,
@@ -1882,6 +1894,12 @@ fn go_build_cache() -> PathBuf {
 /// structural (tree-sitter) fallback.
 #[test]
 fn an_edit_on_a_clean_go_file_inside_a_module_runs_go_build_and_reports_ok() {
+    if !go_on_path() {
+        eprintln!(
+            "skipped (go absent): an_edit_on_a_clean_go_file_inside_a_module_runs_go_build_and_reports_ok"
+        );
+        return;
+    }
     let tree = hook_tree();
     let event = post_tool_use_event(
         tree.path(),
@@ -1944,6 +1962,12 @@ fn check_go_file_in(
 
 #[test]
 fn an_edit_that_breaks_go_compilation_reports_the_compilers_error() {
+    if !go_on_path() {
+        eprintln!(
+            "skipped (go absent): an_edit_that_breaks_go_compilation_reports_the_compilers_error"
+        );
+        return;
+    }
     let context = check_go_file(
         "main.go",
         &format!("package main\n\nfunc main() {{}}\n{GO_TYPE_ERROR}"),
@@ -1968,6 +1992,12 @@ fn a_go_file_that_does_not_parse_reports_the_structural_failure_without_a_build(
 /// `go build` compiles no `_test.go` file, so it would report ok on a broken one.
 #[test]
 fn a_go_test_file_that_does_not_type_check_reports_go_vets_error() {
+    if !go_on_path() {
+        eprintln!(
+            "skipped (go absent): a_go_test_file_that_does_not_type_check_reports_go_vets_error"
+        );
+        return;
+    }
     let context = check_go_file("main_test.go", &format!("package main\n{GO_TYPE_ERROR}"))
         .expect("a failing vet reports its output");
 
@@ -1977,6 +2007,10 @@ fn a_go_test_file_that_does_not_type_check_reports_go_vets_error() {
 
 #[test]
 fn a_clean_go_test_file_reports_go_vet_ok() {
+    if !go_on_path() {
+        eprintln!("skipped (go absent): a_clean_go_test_file_reports_go_vet_ok");
+        return;
+    }
     let context = check_go_file(
         "main_test.go",
         "package main\n\nimport \"testing\"\n\nfunc TestClean(t *testing.T) {}\n",
@@ -1989,6 +2023,12 @@ fn a_clean_go_test_file_reports_go_vet_ok() {
 /// nothing compiled; the build-tag case above is the fourth way.
 #[test]
 fn a_go_file_the_build_leaves_out_reports_the_structural_result() {
+    if !go_on_path() {
+        eprintln!(
+            "skipped (go absent): a_go_file_the_build_leaves_out_reports_the_structural_result"
+        );
+        return;
+    }
     let broken = format!("package main\n{GO_TYPE_ERROR}");
     let other_os = if cfg!(target_os = "windows") {
         "bad_linux.go"
@@ -2022,6 +2062,12 @@ fn a_go_file_the_build_leaves_out_reports_the_structural_result() {
 /// "too many errors": 12 lines a block, 36 in all.
 #[test]
 fn errors_across_packages_come_back_in_the_same_order_every_run() {
+    if !go_on_path() {
+        eprintln!(
+            "skipped (go absent): errors_across_packages_come_back_in_the_same_order_every_run"
+        );
+        return;
+    }
     let tree = hook_tree();
     for package in ["aa", "bb", "cc"] {
         let source: String = std::iter::once(format!("package {package}\n"))
@@ -2057,6 +2103,12 @@ fn errors_across_packages_come_back_in_the_same_order_every_run() {
 /// `//go:build ignore` keeps the file out of the default build, which then says nothing about it.
 #[test]
 fn a_go_file_behind_a_build_constraint_reports_the_structural_result() {
+    if !go_on_path() {
+        eprintln!(
+            "skipped (go absent): a_go_file_behind_a_build_constraint_reports_the_structural_result"
+        );
+        return;
+    }
     let context = check_go_file(
         "tagged.go",
         &format!("//go:build ignore\n\npackage main\n{GO_TYPE_ERROR}"),
