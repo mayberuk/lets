@@ -4,6 +4,6 @@ grep -rn deny .claude
 VERDICT block
 REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find -s 'deny' .claude
+run: lets find 'deny' .claude
 ===END===
 COMPARE search

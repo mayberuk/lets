@@ -1,1 +1,1 @@
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"lets show reads several files and ranges in one call.\nrun: lets show README.md\nthe command above replaces the original"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"lets show README.md --all --no-header --no-numbers"}}}

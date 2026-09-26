@@ -16,23 +16,20 @@ pub(crate) const LEGACY_PARAGRAPH: &str = "For reading, finding and editing file
 
 /// Delivered only as a `SessionStart` print: as `--append-system-prompt-file` text it cut tool-call
 /// batching to 0 of 192 model requests, against about 26% for plain Claude Code.
-pub(crate) const CLAUDE_CODE_PARAGRAPH: &str = r#"# File work: use `lets` through Bash
+pub(crate) const CLAUDE_CODE_PARAGRAPH: &str = r"# File work: use `lets` through Bash
 
 | Instead of | Run |
 |---|---|
-| `cat a.ts b.ts`, Read | `lets show a.ts b.ts` |
-| `sed -n '40,80p' f.ts` | `lets show f.ts:40-80` |
-| find one function | `lets show f.ts#computeFee` |
-| `grep -n -A 5 'x' f.ts` | `lets show "f.ts@'x'" -A 5` |
-| `grep -rn 'x' src`, `rg x src` | `lets find 'x' src` |
+| several `cat`/`sed -n`/`grep` calls, Read | `lets show a.ts b.ts:10-40 c.ts#computeFee` |
+| a definitions-only skim | `lets show f.ts --outline` |
 | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
 | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
 
-Several edits in one call; each `old` is exact text that occurs once:
+Several edits and the build in one call; each `old` is exact text that occurs once:
 
 ```
-lets edit --from - <<'LETS'
+lets edit --from - --check @auto <<'LETS'
 @@ a.ts
 <<<<<<< old
 cap = 10
@@ -47,14 +44,12 @@ floor = 2
 LETS
 ```
 
-Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files."#;
+Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.";
 
-/// Codex's entry stays bare: whether Codex runs a hook command through a shell is unverified.
-pub(crate) const CLASSIFY_COMMAND: &str = "lets hook classify";
-
-/// Claude Code reports a hook command that cannot run as an error on every Bash call, so like the
-/// `SessionStart` command this exits 0 and prints nothing while `lets` is missing.
-const GUARDED_CLASSIFY_COMMAND: &str =
+/// Both harnesses report a hook command that cannot run as an error on every call it is bound to,
+/// so like the `SessionStart` command this exits 0 and prints nothing while `lets` is missing,
+/// crashing or mid-update.
+pub(crate) const GUARDED_CLASSIFY_COMMAND: &str =
     "if command -v lets >/dev/null 2>&1; then lets hook classify; fi";
 
 /// The same guard for an install that named `lets` by absolute path, which keeps that path.
@@ -232,11 +227,12 @@ pub(crate) fn hook_line(format: Format, label: &str, status: &InstallStatus) -> 
     }
 }
 
-fn hook_lines(format: Format, statuses: &[InstallStatus]) -> [String; 3] {
+fn hook_lines(format: Format, statuses: &[InstallStatus]) -> [String; 4] {
     [
         hook_line(format, "PreToolUse", &statuses[0]),
         hook_line(format, "SubagentStart", &statuses[1]),
         hook_line(format, "SessionStart", &statuses[2]),
+        hook_line(format, "PostToolUse", &statuses[3]),
     ]
 }
 
@@ -256,8 +252,8 @@ fn stale_system_append_note(format: Format, dir: &Path) -> Option<String> {
 }
 
 fn report(format: Format, statuses: &[InstallStatus], stale_note: Option<&str>) -> String {
-    let [pre, sub, session] = hook_lines(format, statuses);
-    let mut lines = vec![pre, sub, session];
+    let [pre, sub, session, post] = hook_lines(format, statuses);
+    let mut lines = vec![pre, sub, session, post];
     lines.extend(stale_note.map(str::to_owned));
     lines.join("\n") + "\n"
 }
@@ -274,7 +270,7 @@ pub(crate) fn raw(text: String) -> Response {
 fn claude_code_entries<'a>(
     subagent_command: &'a str,
     session_command: &'a str,
-) -> [HookEntry<'a>; 3] {
+) -> [HookEntry<'a>; 4] {
     [
         HookEntry {
             event: "PreToolUse",
@@ -296,6 +292,13 @@ fn claude_code_entries<'a>(
             command: session_command,
             is_ours: is_guide,
             carry_over: settings::nothing_to_carry_over,
+        },
+        HookEntry {
+            event: "PostToolUse",
+            matcher: Some("Edit|Write"),
+            command: GUARDED_CLASSIFY_COMMAND,
+            is_ours: is_classify,
+            carry_over: keep_absolute_path,
         },
     ]
 }
@@ -468,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn first_install_wires_all_three_hooks_and_writes_no_append_file() {
+    fn first_install_wires_all_four_hooks_and_writes_no_append_file() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
 
         let outcome = sandbox.install(Format::Text);
@@ -500,9 +503,18 @@ mod tests {
             }])
         );
         assert_eq!(
+            settings["hooks"]["PostToolUse"],
+            serde_json::json!([
+                {"matcher": "Edit|Write", "hooks": [{
+                    "type": "command",
+                    "command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"
+                }]}
+            ])
+        );
+        assert_eq!(
             body_text(&outcome),
             "added the PreToolUse hook\nadded the SubagentStart hook\nadded the SessionStart \
-             hook\n"
+             hook\nadded the PostToolUse hook\n"
         );
     }
 
@@ -541,7 +553,8 @@ mod tests {
         assert_eq!(
             body_text(&outcome),
             "the PreToolUse hook was already installed\nthe SubagentStart hook was already \
-             installed\nthe SessionStart hook was already installed\n"
+             installed\nthe SessionStart hook was already installed\nthe PostToolUse hook was \
+             already installed\n"
         );
     }
 
@@ -574,7 +587,7 @@ mod tests {
 
         let outcome = sandbox.install(Format::Text);
 
-        assert!(body_text(&outcome).ends_with("added the SessionStart hook\n"));
+        assert!(body_text(&outcome).ends_with("added the PostToolUse hook\n"));
     }
 
     #[test]
@@ -648,7 +661,8 @@ mod tests {
         let first = sandbox.install(Format::Json);
         assert_eq!(
             body_text(&first),
-            "PreToolUse=installed\nSubagentStart=installed\nSessionStart=installed\n"
+            "PreToolUse=installed\nSubagentStart=installed\nSessionStart=installed\n\
+             PostToolUse=installed\n"
         );
 
         let outcome = sandbox.install(Format::Json);
@@ -656,7 +670,7 @@ mod tests {
         assert_eq!(
             body_text(&outcome),
             "PreToolUse=already_installed\nSubagentStart=already_installed\nSessionStart=\
-             already_installed\n"
+             already_installed\nPostToolUse=already_installed\n"
         );
     }
 
@@ -729,6 +743,51 @@ mod tests {
         assert!(body_text(&first).starts_with("updated the PreToolUse hook\n"));
         assert!(body_text(&second).starts_with("the PreToolUse hook was already installed\n"));
         assert_eq!(pre_tool_use_commands(&sandbox), [GUARDED]);
+    }
+
+    fn settings_with_post_tool_use(sandbox: &Sandbox, command: &str) {
+        std::fs::create_dir_all(sandbox.claude("")).unwrap();
+        let entry = serde_json::json!({
+            "matcher": "Edit|Write",
+            "hooks": [{"type": "command", "command": command}]
+        });
+        std::fs::write(
+            sandbox.claude("settings.json"),
+            serde_json::json!({"hooks": {"PostToolUse": [entry]}}).to_string(),
+        )
+        .unwrap();
+    }
+
+    fn post_tool_use_commands(sandbox: &Sandbox) -> Vec<String> {
+        sandbox.settings_json()["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|entry| entry["hooks"].as_array().unwrap().clone())
+            .map(|hook| hook["command"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn the_post_tool_use_entry_installs_the_guarded_form() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+
+        sandbox.install(Format::Text);
+
+        assert_eq!(post_tool_use_commands(&sandbox), [GUARDED]);
+    }
+
+    #[test]
+    fn installing_twice_over_the_unguarded_post_tool_use_entry_leaves_one_guarded_entry() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        settings_with_post_tool_use(&sandbox, "lets hook classify");
+
+        let first = sandbox.install(Format::Text);
+        let second = sandbox.install(Format::Text);
+
+        assert!(body_text(&first).contains("updated the PostToolUse hook"));
+        assert!(body_text(&second).contains("the PostToolUse hook was already installed"));
+        assert_eq!(post_tool_use_commands(&sandbox), [GUARDED]);
     }
 
     /// A `lets` outside `PATH` with `mode`, named by absolute path.
@@ -1093,7 +1152,7 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert_eq!(
             body_text(&first),
             "removed the PreToolUse hook\nremoved the SubagentStart hook\nremoved the SessionStart \
-             hook\n"
+             hook\nremoved the PostToolUse hook\n"
         );
         assert_eq!(body_text(&second), "nothing to remove\n");
         assert_eq!(sandbox.settings_json(), serde_json::json!({}));
@@ -1109,7 +1168,7 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
 
         assert_eq!(
             body_text(&first),
-            "PreToolUse=removed\nSubagentStart=removed\nSessionStart=removed\n"
+            "PreToolUse=removed\nSubagentStart=removed\nSessionStart=removed\nPostToolUse=removed\n"
         );
         assert_eq!(body_text(&second), "nothing_to_remove\n");
     }
@@ -1208,7 +1267,8 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
 
     #[test]
     fn the_session_start_paragraph_shows_the_batch_example_and_drops_the_cat_sentence() {
-        assert!(CLAUDE_CODE_PARAGRAPH.contains("lets edit --from - <<'LETS'"));
+        assert!(CLAUDE_CODE_PARAGRAPH.contains("lets edit --from -"));
+        assert!(CLAUDE_CODE_PARAGRAPH.contains("--check @auto <<'LETS'"));
         assert!(CLAUDE_CODE_PARAGRAPH.contains("<<<<<<< old"));
         assert!(CLAUDE_CODE_PARAGRAPH.contains("======= new"));
         assert!(CLAUDE_CODE_PARAGRAPH.contains(">>>>>>>"));
@@ -1217,6 +1277,12 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
             "this sentence led agents to write `cat` inside compound commands, which then got \
              denied"
         );
+        assert!(
+            !CLAUDE_CODE_PARAGRAPH.contains("`cat a.ts b.ts`, Read"),
+            "a bare cat is now silently rewritten, so re-teaching it wastes the paragraph's \
+             budget on something the agent never has to know"
+        );
+        assert!(CLAUDE_CODE_PARAGRAPH.contains("--outline"));
     }
 
     #[test]

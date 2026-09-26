@@ -1,0 +1,4 @@
+COMMAND
+sed -n '5,8p' src/a.ts | nl -ba -v4
+===END===
+VERDICT allow

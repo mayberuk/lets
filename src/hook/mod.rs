@@ -3,7 +3,8 @@
 
 mod bash;
 pub(crate) mod bre;
+pub(crate) mod check;
 mod event;
 mod permissions;
 
-pub use event::{Verdict, classify, render};
+pub use event::{Answer, Verdict, classify, render};

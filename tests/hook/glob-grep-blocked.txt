@@ -4,6 +4,6 @@ grep -n foo src/*.ts
 VERDICT block
 REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find -s 'foo' src/*.ts
+run: lets find 'foo' src/*.ts
 ===END===
 COMPARE search

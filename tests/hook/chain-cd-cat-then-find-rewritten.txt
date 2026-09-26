@@ -2,8 +2,7 @@ COMMAND
 cd pkg/x && cat metrics.go && lets find 'foo' .
 ===END===
 VERDICT rewrite
-REASON `cat metrics.go` ran as `lets show metrics.go --all`; the rest ran as written; lets show reads several files and ranges in one call.
 REPLACEMENT
-run: cd pkg/x && lets show metrics.go --all && lets find 'foo' .
+run: cd pkg/x && lets show metrics.go --all --no-header --no-numbers && lets find 'foo' .
 ===END===
 COMPARE chain

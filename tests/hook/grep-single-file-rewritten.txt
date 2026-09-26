@@ -2,8 +2,11 @@ COMMAND
 grep -n 'leader' pkg/x/metrics.go
 ===END===
 VERDICT rewrite
-REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find -s 'leader' pkg/x/metrics.go
+run: lets find 'leader' pkg/x/metrics.go
 ===END===
 COMPARE search
+ORACLE
+# lets find is smart case: a pattern with no capital matches any case, as grep -i does.
+grep -n -i 'leader' pkg/x/metrics.go
+===END===

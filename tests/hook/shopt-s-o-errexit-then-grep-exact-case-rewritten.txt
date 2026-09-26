@@ -1,0 +1,8 @@
+COMMAND
+shopt -s -o errexit; grep zzz src/up.ts; echo AFTER
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: shopt -s -o errexit; lets find 'zzz' src/up.ts --no-numbers -s --cap-exit-0; echo AFTER
+===END===
+COMPARE chain

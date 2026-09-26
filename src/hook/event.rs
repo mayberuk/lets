@@ -1,5 +1,8 @@
-use super::bash;
+use std::io::Write as _;
+use std::path::Path;
+
 use super::permissions::Sources;
+use super::{bash, check};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
@@ -8,31 +11,63 @@ pub enum Verdict {
     Block {
         reason: String,
     },
-    /// `command` replaces the whole Bash command; `reason` tells the agent what ran instead.
+    /// `command` replaces the whole Bash command, silently: `lets`'s own footer names anything
+    /// the replacement left out.
     Rewrite {
         command: String,
-        reason: String,
     },
+}
+
+/// The hook's answer to one event. `PreToolUse` gets a `Verdict` (`bash::classify_command`'s own
+/// exhaustive matches only ever see those three cases); `PostToolUse` cannot block or rewrite —
+/// the tool already ran — so its only possible answer is a note, kept out of `Verdict` itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    Decision(Verdict),
+    Context(String),
 }
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct RawEvent {
+    hook_event_name: String,
     tool_name: String,
     cwd: String,
     tool_input: RawToolInput,
-    /// Codex CLI sends it and Claude Code does not, so it marks a Codex event.
     turn_id: Option<serde::de::IgnoredAny>,
+}
+
+impl RawEvent {
+    /// Codex CLI sends `turn_id` and Claude Code does not.
+    fn is_codex(&self) -> bool {
+        self.turn_id.is_some()
+    }
 }
 
 /// Codex CLI 0.154 appends `. Command: <original>` to a deny reason; ending on this line keeps
 /// that suffix off the `run: ` line.
 const CODEX_TAIL: &str = "\nthe command above replaces the original";
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 struct RawToolInput {
-    command: String,
+    /// A Bash command, or Codex's `apply_patch` patch text: Codex 0.154 hands a hook the patch as
+    /// `command` (codex-rs/core/src/tools/handlers/apply_patch.rs, `post_tool_use_payload`).
+    command: Option<String>,
+    /// `Edit`/`Write`'s edited-file field, on both harnesses.
+    file_path: Option<String>,
+}
+
+/// The first `*** Update File: `/`*** Add File: ` line: a best-effort check on one file, not a
+/// claim every file a multi-hunk patch touched was checked.
+fn patched_file(patch: &str) -> Option<String> {
+    patch
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("*** Update File: ")
+                .or_else(|| line.strip_prefix("*** Add File: "))
+        })
+        .map(str::to_owned)
 }
 
 #[derive(serde::Serialize)]
@@ -41,9 +76,11 @@ struct HookOutput<'a> {
     hook_specific_output: HookSpecificOutput<'a>,
 }
 
-/// A rewrite carries no `permissionDecision`: "allow" would skip the prompt the user's settings
-/// give the rewritten command, while none leaves it to "the normal permission evaluation"
-/// (code.claude.com/docs/en/agent-sdk/hooks, "Modify tool input").
+/// A Claude Code rewrite carries no `permissionDecision`: "allow" would skip the prompt the user's
+/// settings give the rewritten command, while none leaves it to "the normal permission
+/// evaluation" (code.claude.com/docs/en/agent-sdk/hooks, "Modify tool input"). Codex honours
+/// `updatedInput` only beside "allow", and still runs its own approval and sandbox on the result
+/// (codex-rs/hooks/src/engine/output_parser.rs).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HookSpecificOutput<'a> {
@@ -58,57 +95,115 @@ struct HookSpecificOutput<'a> {
     additional_context: Option<&'a str>,
 }
 
-pub fn classify(stdin: &[u8]) -> Verdict {
-    classify_with(stdin, Sources::from_env)
+/// With `LETS_HOOK_LOG` naming a file, appends the answer's kind to it, so a trial can count
+/// rewrites that leave no trace in the transcript.
+pub fn classify(stdin: &[u8]) -> Answer {
+    let answer = classify_with(stdin, Sources::from_env);
+    if let Some(log) = std::env::var_os("LETS_HOOK_LOG").filter(|log| !log.is_empty()) {
+        log_verdict(Path::new(&log), &answer);
+    }
+    answer
 }
 
-/// `sources` is called only for a Claude Code event, whose settings a rewrite must honour.
-fn classify_with(stdin: &[u8], sources: impl FnOnce() -> Sources) -> Verdict {
+/// An I/O error is dropped: the log never changes what the hook answers.
+fn log_verdict(log: &Path, answer: &Answer) {
+    let kind = match answer {
+        Answer::Decision(Verdict::Allow) => "allow",
+        Answer::Decision(Verdict::Block { .. }) => "block",
+        Answer::Decision(Verdict::Rewrite { .. }) => "rewrite",
+        Answer::Context(_) => "context",
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log)
+    {
+        let _ = file.write_all(format!("{{\"verdict\":\"{kind}\"}}\n").as_bytes());
+    }
+}
+
+/// `sources` is called only for a Claude Code event, whose settings a rewrite must honour. One
+/// event is one command: Codex sends each call of a code-mode batch as its own event.
+fn classify_with(stdin: &[u8], sources: impl FnOnce() -> Sources) -> Answer {
     guarded(|| {
         let Ok(event) = serde_json::from_slice::<RawEvent>(stdin) else {
-            return Verdict::Allow;
+            return Answer::Decision(Verdict::Allow);
         };
-        if event.tool_name != "Bash" {
-            return Verdict::Allow;
-        }
-        let claude_code = event.turn_id.is_none();
-        let sources = claude_code.then(sources);
-        let verdict =
-            bash::classify_command(&event.tool_input.command, &event.cwd, sources.as_ref());
-        match verdict {
-            Verdict::Block { mut reason } if !claude_code => {
-                reason.push_str(CODEX_TAIL);
-                Verdict::Block { reason }
-            },
-            verdict => verdict,
+        match event.hook_event_name.as_str() {
+            "PreToolUse" => Answer::Decision(classify_pre_tool_use(&event, sources)),
+            "PostToolUse" => classify_post_tool_use(&event),
+            _ => Answer::Decision(Verdict::Allow),
         }
     })
 }
 
-/// A serialization failure renders empty, which Claude Code reads as no objection. `event` is the
+fn classify_pre_tool_use(event: &RawEvent, sources: impl FnOnce() -> Sources) -> Verdict {
+    if event.tool_name != "Bash" {
+        return Verdict::Allow;
+    }
+    let Some(command) = event.tool_input.command.as_deref() else {
+        return Verdict::Allow;
+    };
+    let claude_code = !event.is_codex();
+    let sources = claude_code.then(sources);
+    let verdict = bash::classify_command(command, &event.cwd, sources.as_ref());
+    match verdict {
+        Verdict::Block { mut reason } if !claude_code => {
+            reason.push_str(CODEX_TAIL);
+            Verdict::Block { reason }
+        },
+        verdict => verdict,
+    }
+}
+
+/// Serves Claude Code's `Edit`/`Write` and Codex's `apply_patch` alike: the dispatch on
+/// `tool_name` only decides how to find the edited path, which is all that differs between them.
+fn classify_post_tool_use(event: &RawEvent) -> Answer {
+    let path = match event.tool_name.as_str() {
+        "Edit" | "Write" => event.tool_input.file_path.clone(),
+        "apply_patch" => event.tool_input.command.as_deref().and_then(patched_file),
+        _ => None,
+    };
+    let Some(path) = path else {
+        return Answer::Decision(Verdict::Allow);
+    };
+    match check::evaluate(Path::new(&path), Path::new(&event.cwd)) {
+        Some(text) => Answer::Context(text),
+        None => Answer::Decision(Verdict::Allow),
+    }
+}
+
+/// A serialization failure renders empty, which the caller reads as no objection. `event` is the
 /// hook's stdin: `updatedInput` replaces the whole tool input, so a rewrite copies every other
 /// field from it.
-pub fn render(verdict: &Verdict, event: &[u8]) -> String {
-    let specific = match verdict {
-        Verdict::Allow => return String::new(),
-        Verdict::Block { reason } => HookSpecificOutput {
+pub fn render(answer: &Answer, event: &[u8]) -> String {
+    let specific = match answer {
+        Answer::Decision(Verdict::Allow) => return String::new(),
+        Answer::Decision(Verdict::Block { reason }) => HookSpecificOutput {
             hook_event_name: "PreToolUse",
             permission_decision: Some("deny"),
             permission_decision_reason: Some(reason),
             updated_input: None,
             additional_context: None,
         },
-        Verdict::Rewrite { command, reason } => {
-            let Some(input) = rewritten_input(event, command) else {
+        Answer::Decision(Verdict::Rewrite { command }) => {
+            let Some((input, codex)) = rewritten_input(event, command) else {
                 return String::new();
             };
             HookSpecificOutput {
                 hook_event_name: "PreToolUse",
-                permission_decision: None,
+                permission_decision: codex.then_some("allow"),
                 permission_decision_reason: None,
                 updated_input: Some(input),
-                additional_context: Some(reason),
+                additional_context: None,
             }
+        },
+        Answer::Context(text) => HookSpecificOutput {
+            hook_event_name: "PostToolUse",
+            permission_decision: None,
+            permission_decision_reason: None,
+            updated_input: None,
+            additional_context: Some(text),
         },
     };
     let output = HookOutput {
@@ -120,10 +215,12 @@ pub fn render(verdict: &Verdict, event: &[u8]) -> String {
     }
 }
 
+/// The tool input with its command replaced, and whether the event came from Codex.
 fn rewritten_input(
     event: &[u8],
     command: &str,
-) -> Option<serde_json::Map<String, serde_json::Value>> {
+) -> Option<(serde_json::Map<String, serde_json::Value>, bool)> {
+    let codex = serde_json::from_slice::<RawEvent>(event).ok()?.is_codex();
     let serde_json::Value::Object(mut event) = serde_json::from_slice(event).ok()? else {
         return None;
     };
@@ -131,20 +228,21 @@ fn rewritten_input(
         return None;
     };
     input.insert("command".to_owned(), command.into());
-    Some(input)
+    Some((input, codex))
 }
 
 /// The release profile aborts on panic instead: the child dies on a signal, not the exit 2 a
 /// `PreToolUse` hook blocks with, so a crash is still allow.
-fn guarded(classify: impl FnOnce() -> Verdict) -> Verdict {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(classify)).unwrap_or(Verdict::Allow)
+fn guarded(classify: impl FnOnce() -> Answer) -> Answer {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(classify))
+        .unwrap_or(Answer::Decision(Verdict::Allow))
 }
 
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
 
-    use super::{Sources, Verdict, classify_with, guarded, render};
+    use super::{Answer, Sources, Verdict, classify_with, guarded, log_verdict, render};
 
     /// A repository whose every settings tier lives inside it, so no test reads the real HOME.
     struct Repo(TempDir);
@@ -182,7 +280,7 @@ mod tests {
             .into_bytes()
         }
 
-        fn classify(&self, event: &[u8]) -> Verdict {
+        fn classify(&self, event: &[u8]) -> Answer {
             classify_with(event, || Sources {
                 home: Some(self.0.path().join(".home")),
                 config: None,
@@ -192,35 +290,100 @@ mod tests {
         }
     }
 
-    /// `&&` reads the search's exit status, so it stays a deny on Claude Code and carries the same
-    /// reason on both harnesses.
-    const SEARCH: &str = "rg cap README.md && ls";
+    fn decision(verdict: Verdict) -> Answer {
+        Answer::Decision(verdict)
+    }
+
+    /// `sed -i` has no rewrite, so it stays a deny on both harnesses, with the same reason.
+    const EDIT: &str = "sed -i 's/cap/limit/g' README.md && ls";
 
     #[test]
     fn a_claude_code_read_of_two_repo_files_rewrites_to_one_show_of_both() {
         let repo = Repo::new();
         let event = repo.event("Bash", "cat src/a.ts && cat src/b.ts");
-        let Verdict::Rewrite { command, reason } = repo.classify(&event) else {
-            panic!("a whole-file read of repo files on Claude Code is a rewrite");
-        };
-        assert_eq!(command, "lets show src/a.ts src/b.ts --all");
+
         assert_eq!(
-            reason,
-            "lets show reads several files and ranges in one call.\nran instead: lets show \
-             src/a.ts src/b.ts --all"
+            repo.classify(&event),
+            decision(Verdict::Rewrite {
+                command: "lets show src/a.ts src/b.ts --all --no-numbers".to_owned()
+            })
         );
     }
 
     #[test]
-    fn a_codex_read_is_the_deny_it_was_before_rewrites_existed() {
+    fn a_codex_read_is_the_same_rewrite_claude_code_gets() {
         let repo = Repo::new();
-        let reason = block_reason(repo.classify(&repo.codex_event("cat src/a.ts")));
+
+        for command in ["cat src/a.ts", "rg cap README.md && ls"] {
+            assert_eq!(
+                repo.classify(&repo.codex_event(command)),
+                repo.classify(&repo.event("Bash", command)),
+                "{command}"
+            );
+        }
+        assert_eq!(
+            repo.classify(&repo.codex_event("cat src/a.ts")),
+            decision(Verdict::Rewrite {
+                command: "lets show src/a.ts --all --no-header --no-numbers".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn a_codex_rewrite_renders_allow_beside_updated_input() {
+        let repo = Repo::new();
+        let event = repo.codex_event("nl -ba src/a.ts | sed -n '1,1p'");
+        let answer = repo.classify(&event);
+
+        let rendered = render(&answer, &event);
+
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid JSON");
+        assert_eq!(
+            parsed,
+            serde_json::json!({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": {"command": "lets show src/a.ts:1 --no-header"},
+            }})
+        );
+    }
+
+    #[test]
+    fn the_same_rewrite_on_claude_code_renders_no_permission_decision() {
+        let repo = Repo::new();
+        let event = repo.event("Bash", "nl -ba src/a.ts | sed -n '1,1p'");
+        let answer = repo.classify(&event);
+
+        let rendered = render(&answer, &event);
+
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid JSON");
+        assert_eq!(
+            parsed,
+            serde_json::json!({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "updatedInput": {"command": "lets show src/a.ts:1 --no-header"},
+            }})
+        );
+    }
+
+    #[test]
+    fn two_codex_events_back_to_back_classify_independently() {
+        let repo = Repo::new();
+
+        let first = repo.classify(&repo.codex_event("cat src/a.ts"));
+        let second = repo.classify(&repo.codex_event("sed -i 's/cap/limit/g' src/b.ts"));
+        let third = repo.classify(&repo.codex_event("ls src"));
 
         assert_eq!(
-            reason,
-            "lets show reads several files and ranges in one call.\nrun: lets show src/a.ts\nthe \
-             command above replaces the original"
+            first,
+            decision(Verdict::Rewrite {
+                command: "lets show src/a.ts --all --no-header --no-numbers".to_owned()
+            })
         );
+        assert!(
+            block_reason(second).contains("\nrun: lets edit src/b.ts --old 'cap' --new 'limit'")
+        );
+        assert_eq!(third, decision(Verdict::Allow));
     }
 
     #[test]
@@ -230,9 +393,9 @@ mod tests {
             r#"{{"session_id":"s","cwd":"{}","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{{"command":"cat src/a.ts","description":"Read a","timeout":5000}}}}"#,
             repo.cwd()
         );
-        let verdict = repo.classify(event.as_bytes());
+        let answer = repo.classify(event.as_bytes());
 
-        let rendered = render(&verdict, event.as_bytes());
+        let rendered = render(&answer, event.as_bytes());
 
         let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid JSON");
         assert_eq!(
@@ -240,23 +403,43 @@ mod tests {
             serde_json::json!({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "updatedInput": {
-                    "command": "lets show src/a.ts --all",
+                    "command": "lets show src/a.ts --all --no-header --no-numbers",
                     "description": "Read a",
                     "timeout": 5000,
                 },
-                "additionalContext": "lets show reads several files and ranges in one call.\n\
-                                      ran instead: lets show src/a.ts --all",
             }})
         );
         assert_eq!(rendered.lines().count(), 1);
     }
 
+    /// Classify and render answer "is this Codex" with the same test, so a `null` `turn_id` gets
+    /// a Claude Code rewrite from both.
+    #[test]
+    fn a_null_turn_id_renders_the_claude_code_rewrite_it_was_classified_as() {
+        let repo = Repo::new();
+        let event = format!(
+            r#"{{"session_id":"s","turn_id":null,"cwd":"{}","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{{"command":"cat src/a.ts"}}}}"#,
+            repo.cwd()
+        );
+        let answer = repo.classify(event.as_bytes());
+
+        let rendered = render(&answer, event.as_bytes());
+
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid JSON");
+        assert_eq!(
+            parsed,
+            serde_json::json!({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "updatedInput": {"command": "lets show src/a.ts --all --no-header --no-numbers"},
+            }})
+        );
+    }
+
     #[test]
     fn a_rewrite_whose_event_cannot_be_read_back_renders_nothing() {
-        let rewrite = Verdict::Rewrite {
+        let rewrite = decision(Verdict::Rewrite {
             command: "lets show a.ts --all".to_owned(),
-            reason: "ran instead: lets show a.ts --all".to_owned(),
-        };
+        });
 
         assert_eq!(render(&rewrite, b"not json"), "");
         assert_eq!(render(&rewrite, br#"{"tool_input":"cat a.ts"}"#), "");
@@ -264,45 +447,39 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_whose_search_status_an_operator_reads_stays_a_deny_on_claude_code() {
+    fn a_chain_whose_search_status_an_operator_reads_is_rewritten_to_exit_as_grep_would() {
         let repo = Repo::new();
-        let reason = block_reason(
-            repo.classify(&repo.event("Bash", "cat src/a.ts && rg cap src/b.ts && ls")),
-        );
 
-        assert!(
-            reason
-                .ends_with("\nrun: lets show src/a.ts --all && lets find -s 'cap' src/b.ts && ls"),
-            "{reason}"
+        assert_eq!(
+            repo.classify(&repo.event("Bash", "cat src/a.ts && rg cap src/b.ts && ls")),
+            decision(Verdict::Rewrite {
+                command: "lets show src/a.ts --all --no-header --no-numbers && lets find 'cap' \
+                          src/b.ts --no-numbers -s --cap-exit-0 && ls"
+                    .to_owned()
+            })
         );
     }
 
     #[test]
-    fn a_claude_code_search_is_rewritten_and_the_same_codex_search_denies() {
+    fn a_search_is_rewritten_on_both_harnesses() {
         let repo = Repo::new();
-        let Verdict::Rewrite { command, reason } =
-            repo.classify(&repo.event("Bash", "rg cap README.md"))
-        else {
-            panic!("an exact search on Claude Code is a rewrite");
-        };
-        assert_eq!(command, "lets find -s 'cap' README.md");
-        assert_eq!(
-            reason,
-            "lets find returns every hit numbered and grouped by file.\nran instead: lets find -s \
-             'cap' README.md"
-        );
+        let rewrite = decision(Verdict::Rewrite {
+            command: "lets find 'cap' README.md --no-numbers".to_owned(),
+        });
 
-        let reason = block_reason(repo.classify(&repo.codex_event("rg cap README.md")));
         assert_eq!(
-            reason,
-            "lets find returns every hit numbered and grouped by file.\nrun: lets find -s 'cap' \
-             README.md\nthe command above replaces the original"
+            repo.classify(&repo.event("Bash", "rg cap README.md")),
+            rewrite
+        );
+        assert_eq!(
+            repo.classify(&repo.codex_event("rg cap README.md")),
+            rewrite
         );
     }
 
-    fn block_reason(verdict: Verdict) -> String {
-        let Verdict::Block { reason } = verdict else {
-            panic!("expected a deny, got {verdict:?}");
+    fn block_reason(answer: Answer) -> String {
+        let Answer::Decision(Verdict::Block { reason }) = answer else {
+            panic!("expected a deny, got {answer:?}");
         };
         reason
     }
@@ -317,20 +494,25 @@ mod tests {
     #[test]
     fn a_codex_reason_with_codexs_command_suffix_keeps_the_run_line_runnable() {
         let repo = Repo::new();
-        let reason = block_reason(repo.classify(&repo.codex_event("cat README.md")));
-        let delivered = format!("{reason}. Command: cat README.md");
+        let original = "sed -i 's/cap/limit/g' README.md";
+        let reason = block_reason(repo.classify(&repo.codex_event(original)));
+        let delivered = format!("{reason}. Command: {original}");
 
-        assert_eq!(run_line(&delivered), "lets show README.md", "{delivered}");
+        assert_eq!(
+            run_line(&delivered),
+            "lets edit README.md --old 'cap' --new 'limit' --all",
+            "{delivered}"
+        );
     }
 
     #[test]
     fn a_claude_code_reason_still_ends_on_its_run_line() {
         let repo = Repo::new();
-        let reason = block_reason(repo.classify(&repo.event("Bash", SEARCH)));
+        let reason = block_reason(repo.classify(&repo.event("Bash", EDIT)));
 
         assert_eq!(
             reason.lines().last(),
-            Some("run: lets find -s 'cap' README.md && ls"),
+            Some("run: lets edit README.md --old 'cap' --new 'limit' --all && ls"),
             "{reason}"
         );
         assert!(!reason.contains("the command above"), "{reason}");
@@ -339,17 +521,20 @@ mod tests {
     #[test]
     fn the_claude_code_reason_under_codexs_suffix_would_break_the_run_line() {
         let repo = Repo::new();
-        let reason = block_reason(repo.classify(&repo.event("Bash", SEARCH)));
-        let delivered = format!("{reason}. Command: {SEARCH}");
+        let reason = block_reason(repo.classify(&repo.event("Bash", EDIT)));
+        let delivered = format!("{reason}. Command: {EDIT}");
 
-        assert_ne!(run_line(&delivered), "lets find -s 'cap' README.md && ls");
+        assert_ne!(
+            run_line(&delivered),
+            "lets edit README.md --old 'cap' --new 'limit' --all && ls"
+        );
     }
 
     #[test]
     fn a_codex_reason_is_the_claude_code_reason_plus_the_tail() {
         let repo = Repo::new();
-        let claude = block_reason(repo.classify(&repo.event("Bash", SEARCH)));
-        let codex = block_reason(repo.classify(&repo.codex_event(SEARCH)));
+        let claude = block_reason(repo.classify(&repo.event("Bash", EDIT)));
+        let codex = block_reason(repo.classify(&repo.codex_event(EDIT)));
 
         assert_eq!(codex, format!("{claude}{}", super::CODEX_TAIL));
     }
@@ -357,8 +542,8 @@ mod tests {
     #[test]
     fn bytes_that_are_not_json_are_allow() {
         let repo = Repo::new();
-        assert_eq!(repo.classify(b"not json at all"), Verdict::Allow);
-        assert_eq!(repo.classify(b""), Verdict::Allow);
+        assert_eq!(repo.classify(b"not json at all"), decision(Verdict::Allow));
+        assert_eq!(repo.classify(b""), decision(Verdict::Allow));
     }
 
     #[test]
@@ -366,36 +551,41 @@ mod tests {
         let repo = Repo::new();
         assert_eq!(
             repo.classify(&repo.event("Read", "cat src/a.ts")),
-            Verdict::Allow
+            decision(Verdict::Allow)
         );
         assert_eq!(
             repo.classify(&repo.event("bash", "cat src/a.ts")),
-            Verdict::Allow
+            decision(Verdict::Allow)
         );
     }
 
     #[test]
     fn an_event_missing_a_field_this_classifier_reads_is_allow() {
         let repo = Repo::new();
-        let no_command = br#"{"cwd":"/repo","tool_name":"Bash","tool_input":{}}"#;
-        let no_cwd = br#"{"tool_name":"Bash","tool_input":{"command":"cat src/a.ts"}}"#;
-        let wrong_type = br#"{"cwd":"/repo","tool_name":"Bash","tool_input":{"command":7}}"#;
+        let no_command =
+            br#"{"hook_event_name":"PreToolUse","cwd":"/repo","tool_name":"Bash","tool_input":{}}"#;
+        let no_cwd =
+            br#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat src/a.ts"}}"#;
+        let wrong_type = br#"{"hook_event_name":"PreToolUse","cwd":"/repo","tool_name":"Bash","tool_input":{"command":7}}"#;
 
-        assert_eq!(repo.classify(no_command), Verdict::Allow);
-        assert_eq!(repo.classify(no_cwd), Verdict::Allow);
-        assert_eq!(repo.classify(wrong_type), Verdict::Allow);
+        assert_eq!(repo.classify(no_command), decision(Verdict::Allow));
+        assert_eq!(repo.classify(no_cwd), decision(Verdict::Allow));
+        assert_eq!(repo.classify(wrong_type), decision(Verdict::Allow));
     }
 
     #[test]
     fn a_panic_inside_the_walk_is_allow() {
-        assert_eq!(guarded(|| panic!("the grammar blew up")), Verdict::Allow);
+        assert_eq!(
+            guarded(|| panic!("the grammar blew up")),
+            decision(Verdict::Allow)
+        );
     }
 
     #[test]
     fn the_guard_returns_a_verdict_that_did_not_panic_unchanged() {
-        let block = Verdict::Block {
+        let block = decision(Verdict::Block {
             reason: "run: lets show a.ts".to_owned(),
-        };
+        });
         assert_eq!(guarded(|| block.clone()), block);
     }
 
@@ -403,7 +593,10 @@ mod tests {
     fn allow_renders_nothing_at_all() {
         let repo = Repo::new();
         assert_eq!(
-            render(&Verdict::Allow, &repo.event("Bash", "cat src/a.ts")),
+            render(
+                &decision(Verdict::Allow),
+                &repo.event("Bash", "cat src/a.ts")
+            ),
             ""
         );
     }
@@ -411,9 +604,9 @@ mod tests {
     #[test]
     fn a_block_renders_one_deny_json_line() {
         let rendered = render(
-            &Verdict::Block {
+            &decision(Verdict::Block {
                 reason: "run: lets show a.ts".to_owned(),
-            },
+            }),
             b"",
         );
 
@@ -428,9 +621,9 @@ mod tests {
     #[test]
     fn a_reason_with_json_metacharacters_stays_one_parseable_line() {
         let rendered = render(
-            &Verdict::Block {
+            &decision(Verdict::Block {
                 reason: "run: lets find '\"a\\b\"' src/a.ts".to_owned(),
-            },
+            }),
             b"",
         );
 
@@ -440,5 +633,54 @@ mod tests {
             parsed["hookSpecificOutput"]["permissionDecisionReason"],
             "run: lets find '\"a\\b\"' src/a.ts"
         );
+    }
+
+    #[test]
+    fn a_context_renders_additional_context_with_no_decision_field() {
+        let rendered = render(&Answer::Context("check: rust ok".to_owned()), b"");
+
+        assert_eq!(
+            rendered,
+            "{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\
+             \"additionalContext\":\"check: rust ok\"}}\n"
+        );
+    }
+
+    #[test]
+    fn each_logged_verdict_appends_one_line_naming_its_kind() {
+        let dir = TempDir::new().expect("a temp directory");
+        let log = dir.path().join("hook.jsonl");
+
+        for answer in [
+            decision(Verdict::Rewrite {
+                command: "lets show a.ts --all".to_owned(),
+            }),
+            decision(Verdict::Allow),
+            decision(Verdict::Block {
+                reason: "run: lets show a.ts".to_owned(),
+            }),
+            Answer::Context("check: rust ok".to_owned()),
+        ] {
+            log_verdict(&log, &answer);
+        }
+
+        assert_eq!(
+            std::fs::read_to_string(&log).expect("the log was created"),
+            "{\"verdict\":\"rewrite\"}\n{\"verdict\":\"allow\"}\n{\"verdict\":\"block\"}\n\
+             {\"verdict\":\"context\"}\n"
+        );
+    }
+
+    #[test]
+    fn a_log_that_cannot_be_opened_is_dropped_without_a_panic() {
+        let dir = TempDir::new().expect("a temp directory");
+
+        log_verdict(dir.path(), &decision(Verdict::Allow));
+        log_verdict(
+            &dir.path().join("missing/hook.jsonl"),
+            &decision(Verdict::Allow),
+        );
+
+        assert!(!dir.path().join("missing").exists());
     }
 }

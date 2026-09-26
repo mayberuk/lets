@@ -2,8 +2,7 @@ COMMAND
 grep -n a src/grep.txt | sort | head -4; cat src/a.ts 2>/dev/null
 ===END===
 VERDICT rewrite
-REASON `cat src/a.ts 2>/dev/null` ran as `lets show src/a.ts --all`; the rest ran as written; lets show reads several files and ranges in one call.
 REPLACEMENT
-run: grep -n a src/grep.txt | sort | head -4; lets show src/a.ts --all
+run: grep -n a src/grep.txt | sort | head -4; lets show src/a.ts --all --no-header --no-numbers
 ===END===
 COMPARE chain

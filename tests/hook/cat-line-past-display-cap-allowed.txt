@@ -1,0 +1,4 @@
+COMMAND
+cat wide.txt
+===END===
+VERDICT allow

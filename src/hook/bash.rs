@@ -11,10 +11,10 @@ use tree_sitter::{Node, Parser};
 use super::permissions::{Access, Rules, Sources};
 use super::{Verdict, bre};
 use crate::grammars::{self, Language};
-use crate::verbs::find::pattern_has_uppercase;
 
 /// Each variant keeps the words it names as paths, which Claude Code's own rules are checked
-/// against before any `lets` command is offered for them.
+/// against before any `lets` command is offered for them. `numbered` is set when the original
+/// printed line numbers, so its rewrite keeps them.
 #[derive(Debug)]
 enum Finding {
     /// `extent` is `None` when a rewrite may not stand in for the read; `source` is `None` when the
@@ -23,6 +23,7 @@ enum Finding {
         target: String,
         extent: Option<Extent>,
         source: Option<Word>,
+        numbered: bool,
     },
     Find {
         flags: Vec<String>,
@@ -30,6 +31,9 @@ enum Finding {
         paths: Vec<String>,
         operands: Vec<Word>,
         translated: bool,
+        numbered: bool,
+        /// The original set its own case (`-i`, or rg's `-s`/`-S`), which the rewrite keeps.
+        case_chosen: bool,
     },
     /// Always rendered with `--all`: its only source is `sed -i 's/…/…/g'`.
     Edit {
@@ -82,8 +86,8 @@ const XARGS_FLAGS: &[&str] = &[
     "--delimiter",
 ];
 
-/// `claude_code` is set for Claude Code, whose `updatedInput` a rewrite is written for and whose
-/// settings hold the rules a rewrite or a suggested command must not get around.
+/// `claude_code` is set for Claude Code, whose settings hold the rules a rewrite or a suggested
+/// command must not get around; Codex judges a rewritten command with its own approval and sandbox.
 pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>) -> Verdict {
     let cwd = normalize(Path::new(cwd));
     // A relative cwd would make every path look in-tree.
@@ -134,12 +138,16 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
             },
             None => classify_displayed(*node, command, dirs, None, &mut findings),
         };
+        if unreproducible(&findings[before..], dirs) {
+            findings.truncate(before);
+        }
         segments.push(Segment {
             span: node.start_byte()..redirected.unwrap_or(*node).end_byte(),
             findings: before..findings.len(),
             replaced,
         });
     }
+    let (findings, segments) = without_repeated_reads(findings, segments, dirs);
     let (notes, prefix) = notes(cd, &findings);
     if findings.is_empty() {
         return Verdict::Allow;
@@ -153,42 +161,92 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
     let whole = segments
         .iter()
         .all(|segment| segment.replaced && !segment.findings.is_empty());
-    if claude_code.is_some()
-        && whole
+    if whole
         && operators
             .as_ref()
             .is_some_and(|operators| !operators.contains(&"||"))
-        && let Some(replacement) = rewrite(&findings, &prefix, dirs)
+        && let Some(command) = rewrite(&findings, &prefix, dirs)
     {
-        let mut summary: Vec<&str> = notes.iter().map(String::as_str).collect();
-        summary.push(SHOW_CLAUSE);
-        return Verdict::Rewrite {
-            reason: format!("{}.\nran instead: {replacement}", summary.join("; ")),
-            command: replacement,
-        };
+        return Verdict::Rewrite { command };
     }
-    // Codex keeps today's lines unless they would drop a statement.
     let drops = segments.iter().any(|segment| segment.findings.is_empty());
-    let judged = operators.as_deref().filter(|_| claude_code.is_some());
-    let unread = unread_statuses(&segments, judged, &findings, root, command);
-    let replacements = (claude_code.is_some() || segments.len() > 1 && drops)
-        .then(|| replacements(&segments, &findings, dirs, &unread))
-        .flatten();
-    if judged.is_some()
-        && let Some(verdict) = replacements
+    let unread = unread_statuses(&segments, operators.as_deref(), &findings, root, command);
+    let replacements = replacements(&segments, &findings, dirs, &unread);
+    if operators.is_some()
+        && let Some(command) = replacements
             .as_deref()
-            .and_then(|replacements| splice_rewrite(command, replacements, segments.len(), &notes))
+            .and_then(|replacements| splice_rewrite(command, replacements))
     {
-        return verdict;
+        return Verdict::Rewrite { command };
     }
-    // A `run:` line is one line.
+    // A Codex deny lists each replacement alone unless that would drop a statement. A `run:` line
+    // is one line.
     let spliced = replacements
-        .filter(|_| segments.len() > 1 && !command.contains('\n'))
+        .filter(|_| {
+            (claude_code.is_some() || drops) && segments.len() > 1 && !command.contains('\n')
+        })
         .and_then(|replacements| splice(command, &replacements));
     match reason(&findings, &notes, &prefix, spliced.as_deref()) {
         Some(reason) => Verdict::Block { reason },
         None => Verdict::Allow,
     }
+}
+
+/// Leaves every statement that reads a file some read in the command also names as typed: one
+/// `lets show` prints a file once, however many times it is named.
+fn without_repeated_reads(
+    findings: Vec<Finding>,
+    segments: Vec<Segment>,
+    dirs: Dirs,
+) -> (Vec<Finding>, Vec<Segment>) {
+    let files: Vec<Option<PathBuf>> = findings
+        .iter()
+        .map(|finding| match finding {
+            Finding::Show {
+                extent: Some(_),
+                source: Some(source),
+                ..
+            } => std::fs::canonicalize(dirs.base.join(&source.text)).ok(),
+            _ => None,
+        })
+        .collect();
+    let repeated = |at: usize| {
+        files[at].as_ref().is_some_and(|file| {
+            files
+                .iter()
+                .filter(|other| other.as_ref() == Some(file))
+                .count()
+                > 1
+        })
+    };
+    if !(0..findings.len()).any(repeated) {
+        return (findings, segments);
+    }
+    let mut findings: Vec<Option<Finding>> = findings.into_iter().map(Some).collect();
+    let mut kept = Vec::with_capacity(findings.len());
+    let segments = segments
+        .into_iter()
+        .map(|segment| {
+            let start = kept.len();
+            if segment.findings.clone().any(repeated) {
+                return Segment {
+                    findings: start..start,
+                    replaced: false,
+                    ..segment
+                };
+            }
+            kept.extend(
+                findings[segment.findings.clone()]
+                    .iter_mut()
+                    .filter_map(Option::take),
+            );
+            Segment {
+                findings: start..kept.len(),
+                ..segment
+            }
+        })
+        .collect();
+    (kept, segments)
 }
 
 /// What the reason says before its clauses, and the `cd` every unspliced `run:` line starts with.
@@ -213,11 +271,10 @@ fn notes(cd: Option<String>, findings: &[Finding]) -> (Vec<String>, String) {
 
 const TRANSLATED_NOTE: &str = "grep pattern translated to lets regex";
 
-/// Per statement, true when no operator after it and no `set -e` or `ERR` trap reads its exit
-/// status. `lets find` exits 1 over its hit cap and when every hit is in a file it skips, where
-/// grep exits 0, so a search is rewritten only where that difference changes nothing that runs.
-/// `operators` is `None` when nothing may be rewritten: for Codex, or across a join a splice
-/// cannot keep.
+/// Per statement, true when no operator after it, no `$?` and no `set -e` or `ERR` trap reads its
+/// exit status. A search whose status is read is rewritten with `--cap-exit-0`, since `lets find`
+/// exits 1 over its hit cap where grep exits 0, and with `-s`, since smart case can turn grep's
+/// zero hits into some. `operators` is `None` across a join a splice cannot keep.
 fn unread_statuses(
     segments: &[Segment],
     operators: Option<&[&str]>,
@@ -240,15 +297,19 @@ fn unread_statuses(
         .collect()
 }
 
-/// `set` and `trap` anywhere, even inside a body the walk never classifies: `{ set -e; }` still
-/// binds the statements after it.
+/// `set`, `shopt`, `trap`, and `?` or `PIPESTATUS` in any expansion syntax, anywhere, even inside
+/// a body the walk never classifies: `{ set -e; }` still binds the statements after it.
 fn acts_on_status(node: Node, src: &str) -> bool {
-    if node.kind() == "command"
-        && matches!(
+    let reads = match node.kind() {
+        "command" => matches!(
             node.child_by_field_name("name").and_then(|n| text(n, src)),
-            Some("set" | "trap")
-        )
-    {
+            Some("set" | "shopt" | "trap")
+        ),
+        "special_variable_name" => text(node, src) == Some("?"),
+        "variable_name" => text(node, src) == Some("PIPESTATUS"),
+        _ => false,
+    };
+    if reads {
         return true;
     }
     let mut cursor = node.walk();
@@ -264,13 +325,11 @@ struct Segment {
 }
 
 /// The `lets` command standing in for one statement; `exact` when it is that statement's rewrite,
-/// printing every line or hit the statement would. `clause` and `translated` describe an exact one.
+/// printing every line or hit the statement would.
 struct Replacement {
     span: Range<usize>,
     command: String,
     exact: bool,
-    clause: &'static str,
-    translated: bool,
 }
 
 /// One per statement with findings, or `None` when one needs more than a one-line command: a
@@ -295,37 +354,52 @@ fn replacements(
         }
         let (lines, _) = run_lines(found);
         let [line] = <[String; 1]>::try_from(lines).ok()?;
-        let (command, exact, clause, translated) = if let [
+        let (command, exact) = if let [
             Finding::Find {
                 operands,
-                translated,
+                flags,
+                numbered,
+                case_chosen,
                 ..
             },
         ] = found
         {
-            let exact = segment.replaced
-                && unread.get(at).copied().unwrap_or(false)
-                && searches_in_tree(operands, dirs);
-            (line, exact, FIND_CLAUSE, *translated)
+            if segment.replaced && searches_in_tree(operands, dirs) {
+                let listed = flags
+                    .iter()
+                    .any(|flag| matches!(flag.as_str(), "--files" | "--count"));
+                let status_read = !unread.get(at).copied().unwrap_or(false);
+                let mut command = line;
+                if !numbered && !listed {
+                    command.push_str(" --no-numbers");
+                }
+                if status_read {
+                    if !case_chosen && !flags.iter().any(|flag| flag == "-s") {
+                        command.push_str(" -s");
+                    }
+                    command.push_str(" --cap-exit-0");
+                }
+                (command, true)
+            } else {
+                (line, false)
+            }
         } else {
             match segment.replaced.then(|| rewrite(found, "", dirs)).flatten() {
-                Some(command) => (command, true, SHOW_CLAUSE, false),
-                None => (line, false, SHOW_CLAUSE, false),
+                Some(command) => (command, true),
+                None => (line, false),
             }
         };
         replacements.push(Replacement {
             span: segment.span.clone(),
             command,
             exact,
-            clause,
-            translated,
         });
     }
     Some(replacements)
 }
 
 /// Every path a search names, or the directory it searches when it names none, is inside the tree
-/// and not a dotfile, key or credential, judged as `shows_every_line` judges a read's.
+/// and not a dotfile, key or credential, judged as `fit` judges a read's.
 fn searches_in_tree(operands: &[Word], dirs: Dirs) -> bool {
     let Ok(real_root) = std::fs::canonicalize(dirs.root) else {
         return false;
@@ -344,65 +418,13 @@ fn searches_in_tree(operands: &[Word], dirs: Dirs) -> bool {
         .all(|operand| rewritable(operand, dirs) && inside(&dirs.base.join(&operand.text)))
 }
 
-/// A rewrite only when every statement with findings is exact; the operators joining them must
-/// already have been checked. A command that is one search alone reads as a one-read rewrite does.
-fn splice_rewrite(
-    command: &str,
-    replacements: &[Replacement],
-    statements: usize,
-    notes: &[String],
-) -> Option<Verdict> {
+/// The spliced command only when every statement with findings is exact; the operators joining
+/// them must already have been checked.
+fn splice_rewrite(command: &str, replacements: &[Replacement]) -> Option<String> {
     if !replacements.iter().all(|replacement| replacement.exact) {
         return None;
     }
-    let spliced = splice(command, replacements)?;
-    let mut clauses = Vec::new();
-    for replacement in replacements {
-        add_clause(&mut clauses, replacement.clause);
-    }
-    let mut summary = if replacements.len() == 1 && statements == 1 {
-        notes.to_vec()
-    } else {
-        let mut summary = replacements
-            .iter()
-            .map(|replacement| {
-                let read = command.get(replacement.span.clone())?;
-                Some(format!("`{read}` ran as `{}`", replacement.command))
-            })
-            .collect::<Option<Vec<String>>>()?;
-        if kept_more_than_operators(command, replacements) {
-            summary.push("the rest ran as written".to_owned());
-        }
-        if replacements
-            .iter()
-            .any(|replacement| replacement.translated)
-        {
-            summary.push(TRANSLATED_NOTE.to_owned());
-        }
-        summary
-    };
-    summary.extend(clauses.into_iter().map(str::to_owned));
-    Some(Verdict::Rewrite {
-        reason: format!("{}.\nran instead: {spliced}", summary.join("; ")),
-        command: spliced,
-    })
-}
-
-fn kept_more_than_operators(src: &str, replacements: &[Replacement]) -> bool {
-    let holds_a_statement = |gap: Option<&str>| {
-        gap.is_none_or(|gap| {
-            gap.chars()
-                .any(|c| !c.is_whitespace() && !matches!(c, ';' | '&' | '|'))
-        })
-    };
-    let mut at = 0;
-    for replacement in replacements {
-        if holds_a_statement(src.get(at..replacement.span.start)) {
-            return true;
-        }
-        at = replacement.span.end;
-    }
-    holds_a_statement(src.get(at..))
+    splice(command, replacements)
 }
 
 /// Every byte outside the replaced spans stays as written, operators and a leading `cd` included.
@@ -525,74 +547,128 @@ fn operators<'s>(segments: &[Segment], src: &'s str) -> Option<Vec<&'s str>> {
     matches!(tail.trim(), "" | ";").then_some(operators)
 }
 
-/// One `lets show` for every read, or `None` when any finding needs a deny instead.
+/// One `lets show` for every read, or `None` when any finding needs a deny instead. A read of one
+/// file drops the header, and a read that printed no numbers drops the gutter, so the output is
+/// what the original printed plus a footer only when something was left out.
 fn rewrite(findings: &[Finding], prefix: &str, dirs: Dirs) -> Option<String> {
     let mut targets: Vec<&str> = Vec::new();
     let mut reads: Vec<(PathBuf, Extent)> = Vec::new();
     let mut all = false;
+    let mut gutter = None;
     for finding in findings {
         let Finding::Show {
             target,
             extent: Some(extent),
             source: Some(source),
+            numbered,
         } = finding
         else {
             return None;
         };
+        // One call takes one gutter setting, so reads that differ are spliced one call each.
+        if *gutter.get_or_insert(*numbered) != *numbered {
+            return None;
+        }
         all |= *extent == Extent::Whole;
         if !targets.contains(&target.as_str()) {
             targets.push(target);
             reads.push((dirs.base.join(&source.text), *extent));
         }
     }
-    if targets.is_empty() || !shows_every_line(&reads, dirs.root) {
+    if targets.is_empty() || fit(&reads, dirs.root) != Fit::Exact {
         return None;
     }
-    let flag = if all { " --all" } else { "" };
-    Some(format!("{prefix}lets show {}{flag}", targets.join(" ")))
+    let mut command = format!("{prefix}lets show {}", targets.join(" "));
+    if all {
+        command.push_str(" --all");
+    }
+    if targets.len() == 1 {
+        command.push_str(" --no-header");
+    }
+    if gutter == Some(false) {
+        command.push_str(" --no-numbers");
+    }
+    Some(command)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fit {
+    Exact,
+    /// Runs as typed: the original prints something one `lets show` cannot.
+    Unreproducible,
+    /// Stays a deny: a dotfile, key or credential, or a file outside the tree, once symlinks
+    /// resolve.
+    Refused,
 }
 
 /// Reads each file as `lets show` will, so a rewrite stands only when its output holds every line
-/// the read prints: under the byte cap, no line cut, no range starting past the end, and each file
-/// really inside the tree and not a dotfile, key or credential once symlinks resolve.
-fn shows_every_line(reads: &[(PathBuf, Extent)], root: &Path) -> bool {
+/// the read prints: a readable text file, under the byte cap, no line cut, no range starting past
+/// the end.
+fn fit(reads: &[(PathBuf, Extent)], root: &Path) -> Fit {
     let Ok(real_root) = std::fs::canonicalize(root) else {
-        return false;
+        return Fit::Refused;
     };
-    let mut shown = 0;
+    let mut real = Vec::with_capacity(reads.len());
+    let mut missing = false;
     for (path, extent) in reads {
-        let Ok(real) = std::fs::canonicalize(path) else {
-            return false;
+        let Ok(resolved) = std::fs::canonicalize(path) else {
+            missing = true;
+            continue;
         };
-        match real.strip_prefix(&real_root) {
+        match resolved.strip_prefix(&real_root) {
             Ok(inside) if !is_sensitive(inside) => {},
-            _ => return false,
+            _ => return Fit::Refused,
         }
+        real.push((resolved, *extent));
+    }
+    if missing {
+        return Fit::Unreproducible;
+    }
+    let mut shown = 0;
+    for (path, extent) in real {
         // Every line costs its bytes plus one and drops at most a `\r`, so a whole file costs at
         // least half its size: past that, the read is skipped.
-        let may_fit = std::fs::metadata(&real).is_ok_and(|metadata| {
+        let may_fit = std::fs::metadata(&path).is_ok_and(|metadata| {
             usize::try_from(metadata.len()).is_ok_and(|bytes| bytes / 2 <= SHOW_MAX_BYTES)
         });
-        if *extent == Extent::Whole && !may_fit {
-            return false;
+        if extent == Extent::Whole && !may_fit {
+            return Fit::Unreproducible;
         }
-        let Ok(file) = crate::fs::read(&real, SHOW_MAX_FILE_BYTES) else {
-            return false;
+        let Ok(file) = crate::fs::read(&path, SHOW_MAX_FILE_BYTES) else {
+            return Fit::Unreproducible;
         };
         let total = file.content.lines().count();
-        let (first, last) = match *extent {
+        let (first, last) = match extent {
             Extent::Whole => (1, total),
             Extent::Lines { first, last } if first <= total => (first, last.min(total)),
-            Extent::Lines { .. } => return false,
+            Extent::Lines { .. } => return Fit::Unreproducible,
         };
         for line in file.content.lines().skip(first - 1).take(last + 1 - first) {
             shown += line.len() + 1;
             if line.len() > crate::window::LINE_DISPLAY_CAP || shown > SHOW_MAX_BYTES {
-                return false;
+                return Fit::Unreproducible;
             }
         }
     }
-    true
+    Fit::Exact
+}
+
+/// True when every read a statement adds could be rewritten but one `lets show` would print
+/// less than it: the statement is then left unclassified, like one this walk does not recognise.
+fn unreproducible(found: &[Finding], dirs: Dirs) -> bool {
+    let mut reads = Vec::with_capacity(found.len());
+    for finding in found {
+        let Finding::Show {
+            extent: Some(extent),
+            source: Some(source),
+            ..
+        } = finding
+        else {
+            return false;
+        };
+        reads.push((dirs.base.join(&source.text), *extent));
+    }
+    !reads.is_empty() && fit(&reads, dirs.root) == Fit::Unreproducible
 }
 
 /// True when a path a finding names is one Claude Code's own deny or ask rules cover, or when those
@@ -725,7 +801,9 @@ fn classify_displayed(
         "pipeline" => {
             let mut cursor = node.walk();
             let stages: Vec<Node> = node.children(&mut cursor).filter(Node::is_named).collect();
-            if let Some(finding) = cat_head_pipeline(&stages, src, dirs) {
+            if let Some(finding) = cat_head_pipeline(&stages, src, dirs)
+                .or_else(|| numbered_range_pipeline(&stages, src, dirs))
+            {
                 findings.push(finding);
                 return true;
             }
@@ -979,7 +1057,19 @@ fn classify_simple(
             let Some(operands) = operands(&words, COUNT_FLAGS) else {
                 return;
             };
-            show(&operands, &suffix, extent, dirs, findings);
+            show(&operands, &suffix, extent, false, dirs, findings);
+        },
+        "nl" => {
+            if !nl_numbers_every_line(&arguments, None) {
+                return;
+            }
+            let Some(operands) = operands(&words, &["-b"]) else {
+                return;
+            };
+            // nl numbers across every file it is given as one stream.
+            if let [operand] = operands.as_slice() {
+                show(&[operand], "", Some(Extent::Whole), true, dirs, findings);
+            }
         },
         "sed" => classify_sed(&words, &arguments, dirs, findings),
         "grep" | "rg" => classify_find(head, &words, &arguments, dirs, producer, findings),
@@ -997,6 +1087,7 @@ fn classify_simple(
                 target: format!("$({producer})"),
                 extent: None,
                 source: None,
+                numbered: false,
             });
         },
         _ => {},
@@ -1015,6 +1106,8 @@ fn classify_find(
         mut flags,
         syntax,
         recursive,
+        numbered,
+        case_chosen,
     }) = find_flags(arguments, head)
     else {
         return;
@@ -1062,11 +1155,17 @@ fn classify_find(
     let Some(pattern) = translated else {
         return;
     };
-    // grep/rg without `-i` are case-sensitive; `lets find` defaults to smart case, so a
-    // lowercase translated pattern needs `-s` to keep the replacement's matches identical.
-    let fixed_string = flags.first().is_some_and(|flag| flag == "-F");
-    if !flags.iter().any(|flag| flag == "-i") && !pattern_has_uppercase(&pattern, fixed_string) {
-        flags.insert(usize::from(fixed_string), "-s".to_owned());
+    // grep -r walks hidden and ignored files that `lets find`'s default walk skips.
+    if recursive
+        && !candidates
+            .iter()
+            .any(|candidate| is_sensitive(Path::new(&candidate.text)))
+    {
+        flags.extend(
+            ["--hidden", "--no-ignore", "--exclude '.git/**'"]
+                .into_iter()
+                .map(str::to_owned),
+        );
     }
     findings.push(Finding::Find {
         flags,
@@ -1074,20 +1173,24 @@ fn classify_find(
         pattern,
         paths,
         operands: candidates.iter().map(|word| (*word).clone()).collect(),
+        numbered,
+        case_chosen,
     });
 }
 
 fn classify_cat(words: &[Word], arguments: &[&str], dirs: Dirs, findings: &mut Vec<Finding>) {
-    if !cat_flags_are_display_neutral(arguments) {
+    let Some(numbered) = cat_numbering(arguments) else {
         return;
-    }
+    };
     let Some(operands) = operands(words, &[]) else {
         return;
     };
-    show(&operands, "", Some(Extent::Whole), dirs, findings);
+    show(&operands, "", Some(Extent::Whole), numbered, dirs, findings);
 }
 
-fn cat_flags_are_display_neutral(arguments: &[&str]) -> bool {
+/// Whether `cat` numbers its lines, or `None` for a flag that changes what it prints otherwise.
+fn cat_numbering(arguments: &[&str]) -> Option<bool> {
+    let mut numbered = false;
     for &argument in arguments {
         if !argument.starts_with('-') || argument == "-" || argument == "--" {
             continue;
@@ -1095,15 +1198,51 @@ fn cat_flags_are_display_neutral(arguments: &[&str]) -> bool {
         if let Some(long) = argument.strip_prefix("--") {
             let name = long.split('=').next().unwrap_or(long);
             if !matches!(name, "number" | "number-nonblank") {
-                return false;
+                return None;
             }
+            numbered = true;
             continue;
         }
         if argument[1..].contains(|c| !matches!(c, 'n' | 'b' | 'u')) {
-            return false;
+            return None;
         }
+        numbered |= argument[1..].contains(['n', 'b']);
     }
-    true
+    Some(numbered)
+}
+
+/// `nl -ba` numbers every line as `cat -n` does; any other `nl` flag changes the numbering or its
+/// format. `start` is the number nl's first line must get, `-v` or its default of 1, or `None`
+/// where no offset is taken.
+fn nl_numbers_every_line(arguments: &[&str], start: Option<usize>) -> bool {
+    let mut every_line = false;
+    let mut from = 1;
+    let mut arguments = arguments.iter();
+    while let Some(&argument) = arguments.next() {
+        let offset = match argument {
+            "-ba" | "--body-numbering=a" => {
+                every_line = true;
+                continue;
+            },
+            "-b" if arguments.next() == Some(&"a") => {
+                every_line = true;
+                continue;
+            },
+            "-v" => arguments.next().copied(),
+            _ => argument.strip_prefix("-v"),
+        };
+        let Some(offset) = offset else {
+            if argument.starts_with('-') {
+                return false;
+            }
+            continue;
+        };
+        let (Some(_), Some(offset)) = (start, number(offset)) else {
+            return false;
+        };
+        from = offset;
+    }
+    every_line && start.is_none_or(|start| start == from)
 }
 
 /// `cat f | head -N` as `f:1-N`; any other shape falls through to the last-stage rule.
@@ -1126,9 +1265,7 @@ fn cat_head_pipeline(stages: &[Node], src: &str, dirs: Dirs) -> Option<Finding> 
         .children_by_field_name("argument", &mut cursor)
         .map(|argument| literal(argument, src))
         .collect::<Option<Vec<Word>>>()?;
-    if !cat_flags_are_display_neutral(&texts(&cat_words)) {
-        return None;
-    }
+    let numbered = cat_numbering(&texts(&cat_words))?;
     let operands = operands(&cat_words, &[])?;
     let [path] = operands.as_slice() else {
         return None;
@@ -1157,6 +1294,74 @@ fn cat_head_pipeline(stages: &[Node], src: &str, dirs: Dirs) -> Option<Finding> 
             last: lines,
         }),
         source: Some((*path).clone()),
+        numbered,
+    })
+}
+
+/// `nl -ba f | sed -n 'A,Bp'` and `sed -n 'A,Bp' f | nl -ba -vA` as `f:A-B`, numbered. nl numbers
+/// its input from 1 without `-v`, so a range past line 1 is rewritten only when `-v` names A.
+fn numbered_range_pipeline(stages: &[Node], src: &str, dirs: Dirs) -> Option<Finding> {
+    let [first, second] = stages else {
+        return None;
+    };
+    let words = |stage: &Node, name: &str| -> Option<Vec<Word>> {
+        if stage.kind() != "command"
+            || stage.child_by_field_name("name").and_then(|n| text(n, src)) != Some(name)
+        {
+            return None;
+        }
+        let mut cursor = stage.walk();
+        stage
+            .children_by_field_name("argument", &mut cursor)
+            .map(|argument| literal(argument, src))
+            .collect()
+    };
+    let (nl_words, sed_words, file_first) = match (words(first, "nl"), words(second, "sed")) {
+        (Some(nl), Some(sed)) => (nl, sed, true),
+        _ => (words(second, "nl")?, words(first, "sed")?, false),
+    };
+    let sed_arguments = texts(&sed_words);
+    let (script, path) = match (sed_arguments.as_slice(), file_first) {
+        (["-n", script], true) => (*script, None),
+        (["-n", script, _], false) => (*script, sed_words.last()),
+        _ => return None,
+    };
+    let (first_line, last_line) =
+        print_range(script).or_else(|| print_line(script).map(|line| (line, line)))?;
+    if sed_words.iter().chain(&nl_words).any(|word| word.glob) {
+        return None;
+    }
+    let nl_operands = operands(&nl_words, &["-b", "-v"])?;
+    let path = match (path, nl_operands.as_slice()) {
+        (Some(path), []) => {
+            if !nl_numbers_every_line(&texts(&nl_words), Some(first_line)) {
+                return None;
+            }
+            path
+        },
+        (None, [path]) => {
+            if !nl_numbers_every_line(&texts(&nl_words), None) {
+                return None;
+            }
+            *path
+        },
+        _ => return None,
+    };
+    in_tree(dirs, &path.text)?;
+    let suffix = if first_line == last_line {
+        format!(":{first_line}")
+    } else {
+        format!(":{first_line}-{last_line}")
+    };
+    let target = path_argument(path, &suffix, Some(dirs.base))?;
+    Some(Finding::Show {
+        target,
+        extent: rewritable(path, dirs).then_some(Extent::Lines {
+            first: first_line,
+            last: last_line,
+        }),
+        source: Some(path.clone()),
+        numbered: true,
     })
 }
 
@@ -1310,6 +1515,7 @@ fn classify_sed_n(words: &[Word], arguments: &[&str], dirs: Dirs, findings: &mut
             target,
             extent: extent.filter(|_| rewritable(path, dirs)),
             source: Some((*path).clone()),
+            numbered: false,
         });
     }
 }
@@ -1348,6 +1554,7 @@ fn show(
     operands: &[&Word],
     suffix: &str,
     extent: Option<Extent>,
+    numbered: bool,
     dirs: Dirs,
     findings: &mut Vec<Finding>,
 ) {
@@ -1372,11 +1579,12 @@ fn show(
                 target,
                 extent: extent.filter(|_| rewritable(operand, dirs)),
                 source: Some((*operand).clone()),
+                numbered,
             }),
     );
 }
 
-/// A named file inside the tree that is not a dotfile, key or credential. `shows_every_line`
+/// A named file inside the tree that is not a dotfile, key or credential. `fit`
 /// judges the path again after any kept `cd` and once symlinks resolve.
 fn rewritable(operand: &Word, dirs: Dirs) -> bool {
     !operand.glob
@@ -1613,16 +1821,19 @@ struct Search {
     flags: Vec<String>,
     syntax: Syntax,
     recursive: bool,
+    numbered: bool,
+    case_chosen: bool,
 }
 
 /// `None` for any flag `lets find` lacks: dropping `-v` or `-o` would search for something else.
 fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
     let mut dialect = None;
     let mut recursive = false;
-    let mut ignore_case = false;
+    let mut case = None;
     let mut word = false;
     let mut files = false;
     let mut count = false;
+    let mut numbered = false;
     let mut contexts: Vec<String> = Vec::new();
     let mut arguments = arguments.iter();
 
@@ -1642,7 +1853,9 @@ fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
                 "fixed-strings" => choose(&mut dialect, 'F')?,
                 "extended-regexp" => choose(&mut dialect, 'E')?,
                 "basic-regexp" if head == "grep" => choose(&mut dialect, 'G')?,
-                "ignore-case" => ignore_case = true,
+                "ignore-case" => case = Some('i'),
+                "case-sensitive" if head != "grep" => case = Some('s'),
+                "smart-case" if head != "grep" => case = Some('S'),
                 "word-regexp" => word = true,
                 "files-with-matches" => files = true,
                 "count" => count = true,
@@ -1651,7 +1864,8 @@ fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
                     None => (*arguments.next()?).to_owned(),
                 }),
                 "recursive" if head == "grep" => recursive = true,
-                "line-number" | "with-filename" | "no-messages" | "color" | "colour" => {},
+                "line-number" => numbered = true,
+                "with-filename" | "no-messages" | "color" | "colour" => {},
                 _ => return None,
             }
             continue;
@@ -1660,11 +1874,16 @@ fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
         while let Some(character) = characters.next() {
             match character {
                 'F' => choose(&mut dialect, 'F')?,
-                'i' => ignore_case = true,
+                'i' => case = Some('i'),
                 'w' => word = true,
                 'l' => files = true,
                 'c' => count = true,
-                'n' | 'H' | 's' => {},
+                'n' => numbered = true,
+                // grep's `-s` is `--no-messages`; rg's `-s` and `-S` set case, the last one
+                // winning.
+                'H' => {},
+                's' if head == "grep" => {},
+                's' | 'S' if head != "grep" => case = Some(character),
                 // `rg -r` is `--replace` and `rg -E` is `--encoding`.
                 'E' | 'G' if head == "grep" => choose(&mut dialect, character)?,
                 'r' | 'R' if head == "grep" => recursive = true,
@@ -1688,25 +1907,17 @@ fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
         Some(first) => Some(number(first)?),
     };
 
-    let mut flags = Vec::new();
-    if dialect == Some('F') {
-        flags.push("-F".to_owned());
-    }
-    if ignore_case {
-        flags.push("-i".to_owned());
-    }
-    if word {
-        flags.push("-w".to_owned());
-    }
-    if let Some(context) = context {
-        flags.push(format!("-C {context}"));
-    }
-    if files {
-        flags.push("--files".to_owned());
-    }
-    if count {
-        flags.push("--count".to_owned());
-    }
+    let flags: Vec<String> = [
+        (dialect == Some('F')).then(|| "-F".to_owned()),
+        case_flag(case, files || count).map(str::to_owned),
+        word.then(|| "-w".to_owned()),
+        context.map(|context| format!("-C {context}")),
+        files.then(|| "--files".to_owned()),
+        count.then(|| "--count".to_owned()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     let syntax = match dialect {
         _ if head != "grep" => Syntax::Native,
         None | Some('G') => Syntax::Basic,
@@ -1717,7 +1928,20 @@ fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
         flags,
         syntax,
         recursive,
+        numbered,
+        case_chosen: case.is_some(),
     })
+}
+
+/// The original's own case choice, else grep's exact case for a count or file list, whose number
+/// the agent cannot check against hits. rg's `-S` is `lets find`'s default, so it needs no flag.
+fn case_flag(case: Option<char>, listed: bool) -> Option<&'static str> {
+    match case {
+        Some('i') => Some("-i"),
+        Some('s') => Some("-s"),
+        Some(_) => None,
+        None => listed.then_some("-s"),
+    }
 }
 
 /// grep exits 2 on two different dialect flags ("conflicting matchers specified", GNU grep 3.7).
@@ -2060,7 +2284,7 @@ mod tests {
         }
     }
 
-    /// Codex's view: every finding blocks, so these tests pin the replacement text itself.
+    /// Codex's view: no Claude Code settings are read, and a deny splices only to keep a statement.
     fn verdict(command: &str) -> Verdict {
         let tree = tree();
         classify_command(command, cwd(&tree), None)
@@ -2099,34 +2323,134 @@ mod tests {
 
     #[test]
     fn a_whole_file_read_rewrites_to_a_show_with_no_window() {
-        assert_eq!(rewritten("cat src/a.ts"), "lets show src/a.ts --all");
-        assert_eq!(rewritten("cat -n src/a.ts"), "lets show src/a.ts --all");
+        assert_eq!(
+            rewritten("cat src/a.ts"),
+            "lets show src/a.ts --all --no-header --no-numbers"
+        );
         assert_eq!(
             rewritten("cat src/a.ts && cat src/b.ts"),
-            "lets show src/a.ts src/b.ts --all"
+            "lets show src/a.ts src/b.ts --all --no-numbers"
         );
         assert_eq!(
             rewritten("cat src/a.ts; cat src/b.ts\ncat src/c.ts"),
-            "lets show src/a.ts src/b.ts src/c.ts --all"
+            "lets show src/a.ts src/b.ts src/c.ts --all --no-numbers"
         );
     }
 
     #[test]
+    fn a_read_that_numbered_its_lines_keeps_the_gutter_and_one_that_did_not_drops_it() {
+        for command in [
+            "cat -n src/a.ts",
+            "cat -b src/a.ts",
+            "cat --number src/a.ts",
+            "nl -ba src/a.ts",
+            "nl -b a src/a.ts",
+        ] {
+            assert_eq!(
+                rewritten(command),
+                "lets show src/a.ts --all --no-header",
+                "{command}"
+            );
+        }
+        for command in ["cat src/a.ts", "cat -u src/a.ts"] {
+            assert_eq!(
+                rewritten(command),
+                "lets show src/a.ts --all --no-header --no-numbers",
+                "{command}"
+            );
+        }
+        assert_eq!(
+            rewritten("cat -n src/n.txt | head -3"),
+            "lets show src/n.txt:1-3 --no-header"
+        );
+    }
+
+    #[test]
+    fn a_numbered_and_an_unnumbered_read_in_one_chain_each_keep_their_own_gutter() {
+        assert_eq!(
+            rewritten("cat -n src/a.ts && cat src/b.ts"),
+            "lets show src/a.ts --all --no-header && lets show src/b.ts --all --no-header \
+             --no-numbers"
+        );
+        assert_eq!(
+            rewritten("cat src/a.ts && cat src/b.ts"),
+            "lets show src/a.ts src/b.ts --all --no-numbers"
+        );
+    }
+
+    #[test]
+    fn an_nl_range_pipeline_rewrites_to_a_numbered_range() {
+        for command in [
+            "nl -ba src/n.txt | sed -n '3,5p'",
+            "sed -n '3,5p' src/n.txt | nl -ba -v3",
+            "sed -n '3,5p' src/n.txt | nl -ba -v 3",
+        ] {
+            assert_eq!(
+                rewritten(command),
+                "lets show src/n.txt:3-5 --no-header",
+                "{command}"
+            );
+        }
+        assert_eq!(
+            rewritten("nl -ba src/n.txt | sed -n '4p'"),
+            "lets show src/n.txt:4 --no-header"
+        );
+        assert_eq!(
+            rewritten("sed -n '1,2p' src/n.txt | nl -ba"),
+            "lets show src/n.txt:1-2 --no-header"
+        );
+        assert_eq!(
+            rewritten("nl -ba src/a.ts; nl -ba src/b.ts"),
+            "lets show src/a.ts src/b.ts --all"
+        );
+    }
+
+    #[test]
+    fn an_nl_whose_numbering_lets_show_would_not_print_is_allowed() {
+        for command in [
+            "nl src/a.ts",
+            "nl -bt src/a.ts",
+            "nl -ba -w3 src/a.ts",
+            "nl -ba -v5 src/a.ts",
+            "nl -ba src/a.ts src/b.ts",
+            "sed -n '3,5p' src/n.txt | nl -ba -v4",
+            "sed -n '3,5p' src/n.txt | nl -ba",
+            "sed -n '3,5p' src/n.txt | nl",
+            "nl -ba src/n.txt | sed -n '/x/p'",
+            "nl -ba src/n.txt | sed '3,5p'",
+            "nl -ba src/n.txt | head -3",
+            "cat src/n.txt | nl -ba",
+        ] {
+            assert_eq!(claude_code(command), Verdict::Allow, "{command}");
+            assert_allowed(command);
+        }
+    }
+
+    #[test]
     fn an_exact_line_range_rewrites_to_that_range_alone() {
-        assert_eq!(rewritten("head -n 5 src/a.ts"), "lets show src/a.ts:1-5");
-        assert_eq!(rewritten("head -5 src/a.ts"), "lets show src/a.ts:1-5");
+        assert_eq!(
+            rewritten("head -n 5 src/a.ts"),
+            "lets show src/a.ts:1-5 --no-header --no-numbers"
+        );
+        assert_eq!(
+            rewritten("head -5 src/a.ts"),
+            "lets show src/a.ts:1-5 --no-header --no-numbers"
+        );
         assert_eq!(
             rewritten("sed -n '3,8p' src/n.txt"),
-            "lets show src/n.txt:3-8"
+            "lets show src/n.txt:3-8 --no-header --no-numbers"
         );
-        assert_eq!(rewritten("sed -n '5p' src/n.txt"), "lets show src/n.txt:5");
+        assert_eq!(
+            rewritten("sed -n '5p' src/n.txt"),
+            "lets show src/n.txt:5 --no-header --no-numbers"
+        );
         assert_eq!(
             rewritten("cat src/n.txt | head -3"),
-            "lets show src/n.txt:1-3"
+            "lets show src/n.txt:1-3 --no-header --no-numbers"
         );
         assert_eq!(
             rewritten("head -n 2 src/a.ts && cat src/b.ts"),
-            "lets show src/a.ts:1-2 src/b.ts --all"
+            "lets show src/a.ts:1-2 src/b.ts --all --no-numbers"
         );
     }
 
@@ -2134,20 +2458,15 @@ mod tests {
     fn a_kept_leading_cd_and_a_dropped_stderr_redirect_still_rewrite() {
         assert_eq!(
             rewritten("cd src && cat a.ts"),
-            "cd src && lets show a.ts --all"
+            "cd src && lets show a.ts --all --no-header --no-numbers"
         );
         assert_eq!(
             rewritten("cat src/a.ts 2>/dev/null"),
-            "lets show src/a.ts --all"
+            "lets show src/a.ts --all --no-header --no-numbers"
         );
-        assert_eq!(rewritten("cat src/a.ts 2>&1"), "lets show src/a.ts --all");
-        let Verdict::Rewrite { reason, .. } = claude_code("cd src && cat a.ts") else {
-            panic!("a read after a kept cd is a rewrite");
-        };
         assert_eq!(
-            reason,
-            "`cd src` kept; lets show reads several files and ranges in one call.\nran instead: \
-             cd src && lets show a.ts --all"
+            rewritten("cat src/a.ts 2>&1"),
+            "lets show src/a.ts --all --no-header --no-numbers"
         );
     }
 
@@ -2155,42 +2474,29 @@ mod tests {
     fn each_exact_read_in_a_chain_is_rewritten_where_it_stands() {
         assert_eq!(
             rewritten("git diff && cat src/a.ts"),
-            "git diff && lets show src/a.ts --all"
+            "git diff && lets show src/a.ts --all --no-header --no-numbers"
         );
         assert_eq!(
             rewritten("lets show src/b.ts && cat src/a.ts"),
-            "lets show src/b.ts && lets show src/a.ts --all"
+            "lets show src/b.ts && lets show src/a.ts --all --no-header --no-numbers"
         );
         assert_eq!(
             rewritten("cat src/a.ts || cat src/b.ts"),
-            "lets show src/a.ts --all || lets show src/b.ts --all"
+            "lets show src/a.ts --all --no-header --no-numbers || lets show src/b.ts --all \
+             --no-header --no-numbers"
         );
         assert_eq!(
             rewritten("cd src && cat a.ts && git status"),
-            "cd src && lets show a.ts --all && git status"
+            "cd src && lets show a.ts --all --no-header --no-numbers && git status"
         );
         assert_eq!(
             rewritten("cat src/a.ts\ngit log -1;"),
-            "lets show src/a.ts --all\ngit log -1;"
+            "lets show src/a.ts --all --no-header --no-numbers\ngit log -1;"
         );
         assert_eq!(
             rewritten("cat src/a.ts 2>/dev/null; head -n 3 src/n.txt && ls"),
-            "lets show src/a.ts --all; lets show src/n.txt:1-3 && ls"
-        );
-    }
-
-    #[test]
-    fn a_spliced_rewrite_names_each_read_it_replaced() {
-        let Verdict::Rewrite { reason, .. } = claude_code("cat src/a.ts; head -n 3 src/n.txt; ls")
-        else {
-            panic!("two exact reads beside a kept command are a rewrite");
-        };
-        assert_eq!(
-            reason,
-            "`cat src/a.ts` ran as `lets show src/a.ts --all`; `head -n 3 src/n.txt` ran as `lets \
-             show src/n.txt:1-3`; the rest ran as written; lets show reads several files and \
-             ranges in one call.\nran instead: lets show src/a.ts --all; lets show src/n.txt:1-3; \
-             ls"
+            "lets show src/a.ts --all --no-header --no-numbers; lets show src/n.txt:1-3 \
+             --no-header --no-numbers && ls"
         );
     }
 
@@ -2211,36 +2517,59 @@ mod tests {
         };
         assert_eq!(
             command,
-            "lets show one.txt --all && lets show two.txt --all"
+            "lets show one.txt --all --no-header --no-numbers && lets show two.txt --all \
+             --no-header --no-numbers"
         );
+    }
+
+    /// A read `lets show` cannot reproduce runs as typed, and the rest of its chain is still
+    /// rewritten around it.
+    #[test]
+    fn a_read_lets_show_cannot_reproduce_is_left_as_typed_inside_a_rewritten_chain() {
+        let tree = tree();
+        write(&tree, "big.txt", &"z\n".repeat(SHOW_MAX_BYTES));
+        write(&tree, "wide.txt", &format!("{}\n", "w".repeat(1_001)));
+
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cat src/a.ts && cat big.txt; ls")),
+            "lets show src/a.ts --all --no-header --no-numbers && cat big.txt; ls"
+        );
+        for command in [
+            "cat wide.txt; ls",
+            "sed -n '9,99p' src/a.ts; ls",
+            "cat big.txt",
+        ] {
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+            assert_eq!(
+                classify_command(command, cwd(&tree), None),
+                Verdict::Allow,
+                "{command}"
+            );
+        }
     }
 
     #[test]
     fn a_chain_holding_a_read_that_fails_a_check_is_a_deny_that_keeps_every_part() {
         let tree = tree();
-        write(&tree, "big.txt", &"z\n".repeat(SHOW_MAX_BYTES));
-        write(&tree, "wide.txt", &format!("{}\n", "w".repeat(1_001)));
         write(&tree, ".env", "K=v\n");
         for (command, run) in [
             (
-                "cat src/a.ts && cat big.txt; ls",
-                "lets show src/a.ts --all && lets show big.txt; ls",
-            ),
-            ("cat wide.txt; ls", "lets show wide.txt; ls"),
-            (
                 "cat .env && cat src/a.ts && ls",
-                "lets show .env && lets show src/a.ts --all && ls",
-            ),
-            ("sed -n '9,99p' src/a.ts; ls", "lets show src/a.ts:9-99; ls"),
-            (
-                "cat src/a.ts; grep -n x src/b.ts && ls",
-                "lets show src/a.ts --all; lets find -s 'x' src/b.ts && ls",
+                "lets show .env && lets show src/a.ts --all --no-header --no-numbers && ls",
             ),
             (
                 "cat src/a.ts & git status",
-                "lets show src/a.ts --all & git status",
+                "lets show src/a.ts --all --no-header --no-numbers & git status",
             ),
-            ("cat src/a.ts; ls &", "lets show src/a.ts --all; ls &"),
+            (
+                "cat src/a.ts; ls &",
+                "lets show src/a.ts --all --no-header --no-numbers; ls &",
+            ),
+            (
+                "cat src/a.ts && sed -i 's/x/y/g' src/b.ts && ls",
+                "lets show src/a.ts --all --no-header --no-numbers && lets edit src/b.ts --old \
+                 'x' --new 'y' --all && ls",
+            ),
         ] {
             let verdict = classify_command(command, cwd(&tree), Some(&sources(&tree)));
             let Verdict::Block { reason } = verdict else {
@@ -2260,10 +2589,10 @@ mod tests {
 
     #[test]
     fn a_multi_line_chain_that_is_denied_keeps_one_run_line_per_lets_command() {
-        let reason = blocked("rg cap src/a.ts\ngit status");
+        let reason = blocked("sed -i 's/x/y/g' src/a.ts\ngit status");
 
         assert!(
-            reason.ends_with("\nrun: lets find -s 'cap' src/a.ts"),
+            reason.ends_with("\nrun: lets edit src/a.ts --old 'x' --new 'y' --all"),
             "{reason}"
         );
     }
@@ -2271,12 +2600,14 @@ mod tests {
     #[test]
     fn a_codex_deny_splices_only_when_its_lines_would_drop_a_statement() {
         assert!(
-            blocked("cat src/a.ts; git status")
-                .ends_with("\nrun: lets show src/a.ts --all; git status")
+            blocked("sed -i 's/x/y/g' src/a.ts; git status")
+                .ends_with("\nrun: lets edit src/a.ts --old 'x' --new 'y' --all; git status")
         );
-        let reason = blocked("cat src/a.ts && rg cap src/b.ts");
+        let reason = blocked("cat .env && sed -i 's/x/y/g' src/b.ts");
         assert!(
-            reason.ends_with("\nrun: lets show src/a.ts\nrun: lets find -s 'cap' src/b.ts"),
+            reason.ends_with(
+                "\nrun: lets show .env\nrun: lets edit src/b.ts --old 'x' --new 'y' --all"
+            ),
             "{reason}"
         );
     }
@@ -2289,88 +2620,248 @@ mod tests {
 
     #[test]
     fn an_exact_search_whose_status_nothing_reads_is_rewritten_where_it_stands() {
-        assert_eq!(rewritten("grep -rn cap src"), "lets find -s 'cap' src");
-        assert_eq!(rewritten("rg cap src/a.ts"), "lets find -s 'cap' src/a.ts");
-        assert_eq!(rewritten("rg -l cap"), "lets find -s --files 'cap'");
         assert_eq!(
-            rewritten("grep -n x src/b.ts 2>/dev/null"),
-            "lets find -s 'x' src/b.ts"
+            rewritten("grep -rn cap src"),
+            "lets find --hidden --no-ignore --exclude '.git/**' 'cap' src"
         );
         assert_eq!(
-            rewritten("cat src/a.ts && rg cap src/b.ts"),
-            "lets show src/a.ts --all && lets find -s 'cap' src/b.ts"
+            rewritten("rg cap src/a.ts"),
+            "lets find 'cap' src/a.ts --no-numbers"
+        );
+        assert_eq!(rewritten("rg -l cap"), "lets find -s --files 'cap'");
+        assert_eq!(rewritten("rg -c cap src"), "lets find -s --count 'cap' src");
+        assert_eq!(
+            rewritten("grep -n x src/b.ts 2>/dev/null"),
+            "lets find 'x' src/b.ts"
+        );
+        assert_eq!(
+            rewritten("cat src/a.ts; rg cap src/b.ts"),
+            "lets show src/a.ts --all --no-header --no-numbers; lets find 'cap' src/b.ts \
+             --no-numbers"
         );
         assert_eq!(
             rewritten("git status; grep -n x src/b.ts\nls"),
-            "git status; lets find -s 'x' src/b.ts\nls"
+            "git status; lets find 'x' src/b.ts\nls"
         );
         assert_eq!(
             rewritten("cd src && cat a.ts && grep -n x b.ts"),
-            "cd src && lets show a.ts --all && lets find -s 'x' b.ts"
+            "cd src && lets show a.ts --all --no-header --no-numbers && lets find 'x' b.ts"
         );
     }
 
     #[test]
-    fn a_rewritten_search_says_what_ran_and_names_only_a_rest_that_exists() {
-        let Verdict::Rewrite { reason, .. } = claude_code(r"grep 'a\|x' src/grep.txt") else {
-            panic!("a lone exact search is a rewrite");
-        };
+    fn a_search_keeps_the_gutter_only_when_the_original_numbered_its_hits() {
+        for command in [
+            "grep -n x src/b.ts",
+            "grep --line-number x src/b.ts",
+            "rg -n x src/b.ts",
+            "rg --line-number x src/b.ts",
+            "grep -Hn x src/b.ts",
+        ] {
+            assert_eq!(rewritten(command), "lets find 'x' src/b.ts", "{command}");
+        }
+        for command in ["grep x src/b.ts", "rg x src/b.ts", "grep -H x src/b.ts"] {
+            assert_eq!(
+                rewritten(command),
+                "lets find 'x' src/b.ts --no-numbers",
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rewritten_search_keeps_its_case_to_lets_finds_smart_case() {
         assert_eq!(
-            reason,
-            "grep pattern translated to lets regex; lets find returns every hit numbered and \
-             grouped by file.\nran instead: lets find -s 'a|x' src/grep.txt"
+            rewritten(r"grep 'a\|x' src/grep.txt"),
+            "lets find 'a|x' src/grep.txt --no-numbers"
         );
-        let Verdict::Rewrite { reason, .. } = claude_code("rg x src/a.ts; rg x src/b.ts") else {
-            panic!("two exact searches are a rewrite");
-        };
         assert_eq!(
-            reason,
-            "`rg x src/a.ts` ran as `lets find -s 'x' src/a.ts`; `rg x src/b.ts` ran as `lets find \
-             -s 'x' src/b.ts`; lets find returns every hit numbered and grouped by file.\nran \
-             instead: lets find -s 'x' src/a.ts; lets find -s 'x' src/b.ts"
+            rewritten("grep -F 'foo + ' src/grep.txt"),
+            "lets find -F 'foo + ' src/grep.txt --no-numbers"
+        );
+        assert_eq!(
+            rewritten("grep fooBar src/grep.txt"),
+            "lets find 'fooBar' src/grep.txt --no-numbers"
+        );
+        assert_eq!(
+            rewritten("grep -i cap src/grep.txt"),
+            "lets find -i 'cap' src/grep.txt --no-numbers"
+        );
+        assert!(!rewritten("rg x src/a.ts; rg x src/b.ts").contains(" -s"));
+    }
+
+    /// A count or a file list is a number the agent cannot check against the hits, so it keeps
+    /// grep's exact case; `-i` asked for the opposite and keeps it.
+    #[test]
+    fn a_count_or_a_file_list_keeps_greps_exact_case() {
+        for (command, replacement) in [
+            ("grep -c x src/b.ts", "lets find -s --count 'x' src/b.ts"),
+            (
+                "grep --count x src/b.ts",
+                "lets find -s --count 'x' src/b.ts",
+            ),
+            ("grep -l x src/b.ts", "lets find -s --files 'x' src/b.ts"),
+            (
+                "rg --files-with-matches x src",
+                "lets find -s --files 'x' src",
+            ),
+            ("grep -c -i x src/b.ts", "lets find -i --count 'x' src/b.ts"),
+        ] {
+            assert_eq!(rewritten(command), replacement, "{command:?}");
+        }
+        assert_allowed("grep -q x src/b.ts");
+        assert_allowed("grep -L x src/b.ts");
+    }
+
+    /// rg's `-i`, `-s` and `-S` each set the case and the last one wins; grep's `-s` is
+    /// `--no-messages` and grep has no `-S`.
+    #[test]
+    fn rgs_last_case_flag_decides_and_greps_s_is_not_a_case_flag() {
+        for (command, replacement) in [
+            (
+                "rg -i -s x src/b.ts",
+                "lets find -s 'x' src/b.ts --no-numbers",
+            ),
+            (
+                "rg -s -i x src/b.ts",
+                "lets find -i 'x' src/b.ts --no-numbers",
+            ),
+            (
+                "rg -is x src/b.ts",
+                "lets find -s 'x' src/b.ts --no-numbers",
+            ),
+            (
+                "rg --case-sensitive x src/b.ts",
+                "lets find -s 'x' src/b.ts --no-numbers",
+            ),
+            ("rg -s -S x src/b.ts", "lets find 'x' src/b.ts --no-numbers"),
+            (
+                "rg --smart-case -c x src/b.ts",
+                "lets find --count 'x' src/b.ts",
+            ),
+            (
+                "rg -i -s x src/b.ts && ls",
+                "lets find -s 'x' src/b.ts --no-numbers --cap-exit-0 && ls",
+            ),
+            (
+                "rg -S x src/b.ts && ls",
+                "lets find 'x' src/b.ts --no-numbers --cap-exit-0 && ls",
+            ),
+            ("grep -s x src/b.ts", "lets find 'x' src/b.ts --no-numbers"),
+            (
+                "grep -i -s x src/b.ts && ls",
+                "lets find -i 'x' src/b.ts --no-numbers --cap-exit-0 && ls",
+            ),
+        ] {
+            assert_eq!(rewritten(command), replacement, "{command:?}");
+        }
+        assert_allowed("grep -S x src/b.ts");
+        assert_allowed("grep --smart-case x src/b.ts");
+    }
+
+    #[test]
+    fn a_recursive_grep_walks_hidden_and_ignored_files_as_grep_does() {
+        assert_eq!(
+            rewritten("grep -r x src"),
+            "lets find --hidden --no-ignore --exclude '.git/**' 'x' src --no-numbers"
+        );
+        assert_eq!(
+            rewritten("grep -R -i x src ."),
+            "lets find -i --hidden --no-ignore --exclude '.git/**' 'x' src . --no-numbers"
+        );
+        assert_eq!(rewritten("rg x src"), "lets find 'x' src --no-numbers");
+        assert_eq!(
+            rewritten("grep x src/a.ts"),
+            "lets find 'x' src/a.ts --no-numbers"
         );
     }
 
-    /// `lets find` exits 1 over its cap where grep exits 0, so an operator or `set -e` reading
-    /// the search's status could run a different branch.
+    /// `lets find` exits 1 over its cap where grep exits 0, and smart case can find what grep's
+    /// exact case does not, so a search whose status an operator, `$?`, `set -e` or an `ERR` trap
+    /// reads carries `--cap-exit-0` and `-s`, and one whose status nothing reads carries neither.
     #[test]
-    fn a_search_whose_exit_status_decides_what_runs_stays_a_deny() {
-        for (command, run) in [
+    fn a_search_whose_exit_status_decides_what_runs_exits_as_grep_would() {
+        for (command, replacement) in [
             (
                 "grep -n x src/a.ts && ls",
-                "lets find -s 'x' src/a.ts && ls",
+                "lets find 'x' src/a.ts -s --cap-exit-0 && ls",
             ),
-            ("rg x src/a.ts || ls", "lets find -s 'x' src/a.ts || ls"),
+            (
+                "rg x src/a.ts || ls",
+                "lets find 'x' src/a.ts --no-numbers -s --cap-exit-0 || ls",
+            ),
             (
                 "cat src/a.ts && rg cap src/b.ts || ls",
-                "lets show src/a.ts --all && lets find -s 'cap' src/b.ts || ls",
+                "lets show src/a.ts --all --no-header --no-numbers && lets find 'cap' src/b.ts \
+                 --no-numbers -s --cap-exit-0 || ls",
             ),
             (
                 "set -e; grep -n x src/a.ts",
-                "set -e; lets find -s 'x' src/a.ts",
+                "set -e; lets find 'x' src/a.ts -s --cap-exit-0",
             ),
             (
                 "trap 'echo failed' ERR; grep -n x src/a.ts",
-                "trap 'echo failed' ERR; lets find -s 'x' src/a.ts",
+                "trap 'echo failed' ERR; lets find 'x' src/a.ts -s --cap-exit-0",
             ),
             (
                 "{ set -e; }; grep -n x src/a.ts",
-                "{ set -e; }; lets find -s 'x' src/a.ts",
+                "{ set -e; }; lets find 'x' src/a.ts -s --cap-exit-0",
+            ),
+            (
+                "grep x src/a.ts; echo $?",
+                "lets find 'x' src/a.ts --no-numbers -s --cap-exit-0; echo $?",
+            ),
+            (
+                "grep -i x src/a.ts && ls",
+                "lets find -i 'x' src/a.ts --no-numbers --cap-exit-0 && ls",
+            ),
+            (
+                "grep -c x src/a.ts && ls",
+                "lets find -s --count 'x' src/a.ts --cap-exit-0 && ls",
+            ),
+            (
+                "grep x src/a.ts; echo ${?}",
+                "lets find 'x' src/a.ts --no-numbers -s --cap-exit-0; echo ${?}",
+            ),
+            (
+                "grep x src/a.ts; echo \"${?}\"",
+                "lets find 'x' src/a.ts --no-numbers -s --cap-exit-0; echo \"${?}\"",
+            ),
+            (
+                "grep x src/a.ts; echo ${PIPESTATUS[0]}",
+                "lets find 'x' src/a.ts --no-numbers -s --cap-exit-0; echo ${PIPESTATUS[0]}",
+            ),
+            (
+                "grep x src/a.ts; echo ${PIPESTATUS[@]}",
+                "lets find 'x' src/a.ts --no-numbers -s --cap-exit-0; echo ${PIPESTATUS[@]}",
+            ),
+            (
+                "grep x src/a.ts; echo $PIPESTATUS",
+                "lets find 'x' src/a.ts --no-numbers -s --cap-exit-0; echo $PIPESTATUS",
+            ),
+            (
+                "shopt -so errexit; grep x src/a.ts",
+                "shopt -so errexit; lets find 'x' src/a.ts --no-numbers -s --cap-exit-0",
+            ),
+            (
+                "shopt -s -o errexit; grep x src/a.ts",
+                "shopt -s -o errexit; lets find 'x' src/a.ts --no-numbers -s --cap-exit-0",
             ),
         ] {
-            let verdict = claude_code(command);
-            let Verdict::Block { reason } = verdict else {
-                panic!("{command:?} must stay a deny: {verdict:?}");
-            };
-            assert!(
-                reason.ends_with(&format!("\nrun: {run}")),
-                "{command:?}: {reason}"
+            assert_eq!(rewritten(command), replacement, "{command:?}");
+            assert_eq!(
+                verdict(command),
+                Verdict::Rewrite {
+                    command: replacement.to_owned()
+                },
+                "{command:?} from Codex"
             );
         }
         assert_eq!(
             rewritten("grep -n x src/a.ts; ls"),
-            "lets find -s 'x' src/a.ts; ls"
+            "lets find 'x' src/a.ts; ls"
         );
+        assert_still_blocked("sed -i 's/x/y/g' src/a.ts && ls");
     }
 
     #[test]
@@ -2398,19 +2889,23 @@ mod tests {
         }
         assert_eq!(
             command_of(rewrite_in(&tree, "grep -rn x src")),
-            "lets find -s 'x' src"
+            "lets find --hidden --no-ignore --exclude '.git/**' 'x' src"
+        );
+        assert!(
+            reason_of(rewrite_in(&tree, "grep -rn x config/.secrets"))
+                .ends_with("\nrun: lets find 'x' config/.secrets")
         );
     }
 
     #[test]
-    fn a_codex_search_stays_a_deny() {
-        assert!(blocked("grep -rn cap src").ends_with("\nrun: lets find -s 'cap' src"));
-        assert!(blocked("rg cap src/a.ts").ends_with("\nrun: lets find -s 'cap' src/a.ts"));
+    fn a_codex_search_is_the_rewrite_claude_code_gets() {
+        for command in ["grep -rn cap src", "rg cap src/a.ts"] {
+            assert_eq!(verdict(command), claude_code(command), "{command}");
+        }
     }
 
     #[test]
-    fn a_read_one_lets_show_cannot_reproduce_stays_a_deny() {
-        assert_still_blocked("cat src/a.ts && rg cap src/b.ts && ls");
+    fn a_read_one_lets_show_cannot_stand_in_for_stays_a_deny() {
         assert_still_blocked("head src/a.ts");
         assert_still_blocked("tail src/a.ts");
         assert_still_blocked("sed -n '/^func Target(/,/^}/p' src/sym.go");
@@ -2494,7 +2989,7 @@ mod tests {
         }
         assert_eq!(
             command_of(rewrite_in(&tree, "head -n 1 src/a.ts")),
-            "lets show src/a.ts:1-1"
+            "lets show src/a.ts:1-1 --no-header --no-numbers"
         );
     }
 
@@ -2516,7 +3011,7 @@ mod tests {
         ));
         assert_eq!(
             command_of(rewrite_in(&tree, "rg HELLO src/a.ts")),
-            "lets find 'HELLO' src/a.ts"
+            "lets find 'HELLO' src/a.ts --no-numbers"
         );
     }
 
@@ -2528,7 +3023,7 @@ mod tests {
         assert_eq!(rewrite_in(&tree, "cat private/notes.txt"), Verdict::Allow);
         assert_eq!(
             command_of(rewrite_in(&tree, "cat src/a.ts")),
-            "lets show src/a.ts --all"
+            "lets show src/a.ts --all --no-header --no-numbers"
         );
     }
 
@@ -2545,7 +3040,7 @@ mod tests {
         );
         assert_eq!(
             command_of(rewrite_in(&edit, "cat private/notes.txt")),
-            "lets show private/notes.txt --all"
+            "lets show private/notes.txt --all --no-header --no-numbers"
         );
 
         let read = with_rules(PROJECT, &deny(&["Read(./private/**)"]));
@@ -2589,7 +3084,7 @@ mod tests {
             let tree = with_rules(PROJECT, settings);
             assert_eq!(
                 command_of(rewrite_in(&tree, "cat src/a.ts")),
-                "lets show src/a.ts --all",
+                "lets show src/a.ts --all --no-header --no-numbers",
                 "{settings}"
             );
         }
@@ -2615,7 +3110,7 @@ mod tests {
         let user = with_rules(".home/.claude/settings.json", &deny(&["Read(/private/**)"]));
         assert_eq!(
             command_of(rewrite_in(&user, "cat private/notes.txt")),
-            "lets show private/notes.txt --all"
+            "lets show private/notes.txt --all --no-header --no-numbers"
         );
         write(&user, ".home/.claude/private/notes.txt", "x\n");
         assert!(matches!(
@@ -2684,7 +3179,7 @@ mod tests {
             );
             assert_eq!(
                 command_of(rewrite_in(&tree, "cat src/a.ts")),
-                "lets show src/a.ts --all",
+                "lets show src/a.ts --all --no-header --no-numbers",
                 "{at}"
             );
         }
@@ -2789,7 +3284,7 @@ mod tests {
         write(&tree, PROJECT, &deny(&["Read(./other/**)"]));
         assert_eq!(
             command_of(rewrite_in(&tree, "cat link/notes.txt")),
-            "lets show link/notes.txt --all"
+            "lets show link/notes.txt --all --no-header --no-numbers"
         );
     }
 
@@ -2811,13 +3306,17 @@ mod tests {
             (
                 &["Read(docs/**)"][..],
                 "cat src/a.ts",
-                "lets show src/a.ts --all",
+                "lets show src/a.ts --all --no-header --no-numbers",
             ),
-            (&["Edit"][..], "cat src/a.ts", "lets show src/a.ts --all"),
+            (
+                &["Edit"][..],
+                "cat src/a.ts",
+                "lets show src/a.ts --all --no-header --no-numbers",
+            ),
             (
                 &["Read(!src/a.ts)"][..],
                 "cat src/a.ts",
-                "lets show src/a.ts --all",
+                "lets show src/a.ts --all --no-header --no-numbers",
             ),
         ] {
             let tree = with_rules(PROJECT, &deny(rules));
@@ -2854,15 +3353,16 @@ mod tests {
     }
 
     #[test]
-    fn codex_keeps_its_deny_whatever_claude_codes_settings_say() {
+    fn codex_rewrites_whatever_claude_codes_settings_say() {
         let tree = with_rules(PROJECT, &deny(&["Read(./private/**)"]));
 
-        let reason = reason_of(classify_command("cat private/notes.txt", cwd(&tree), None));
-
-        assert!(
-            reason.ends_with("run: lets show private/notes.txt"),
-            "{reason}"
+        assert_eq!(
+            classify_command("cat private/notes.txt", cwd(&tree), None),
+            Verdict::Rewrite {
+                command: "lets show private/notes.txt --all --no-header --no-numbers".to_owned()
+            }
         );
+        assert_eq!(rewrite_in(&tree, "cat private/notes.txt"), Verdict::Allow);
     }
 
     /// `lines` lines of `width` bytes each, newline included.
@@ -2887,20 +3387,14 @@ mod tests {
 
         assert_eq!(
             command_of(rewrite_in(&tree, "cat at-cap.txt")),
-            "lets show at-cap.txt --all"
+            "lets show at-cap.txt --all --no-header --no-numbers"
         );
-        assert!(
-            reason_of(rewrite_in(&tree, "cat over-cap.txt"))
-                .ends_with("run: lets show over-cap.txt")
-        );
-        assert!(reason_of(rewrite_in(&tree, "cat many.txt")).ends_with("run: lets show many.txt"));
-        assert!(
-            reason_of(rewrite_in(&tree, "head -n 20000 many.txt"))
-                .ends_with("run: lets show many.txt:1-20000")
-        );
+        for command in ["cat over-cap.txt", "cat many.txt", "head -n 20000 many.txt"] {
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+        }
         assert_eq!(
             command_of(rewrite_in(&tree, "head -n 5 many.txt")),
-            "lets show many.txt:1-5"
+            "lets show many.txt:1-5 --no-header --no-numbers"
         );
     }
 
@@ -2918,14 +3412,11 @@ mod tests {
             rewrite_in(&tree, "cat b.txt"),
             Verdict::Rewrite { .. }
         ));
-        assert!(matches!(
-            rewrite_in(&tree, "cat a.txt b.txt"),
-            Verdict::Block { .. }
-        ));
+        assert_eq!(rewrite_in(&tree, "cat a.txt b.txt"), Verdict::Allow);
     }
 
     #[test]
-    fn a_line_lets_show_would_cut_keeps_the_deny() {
+    fn a_line_lets_show_would_cut_is_allowed() {
         let tree = tree();
         write(&tree, "at-cap.ts", &format!("{}\n", "x".repeat(1000)));
         write(&tree, "long.ts", &format!("{}\n", "x".repeat(1001)));
@@ -2934,53 +3425,43 @@ mod tests {
             rewrite_in(&tree, "cat at-cap.ts"),
             Verdict::Rewrite { .. }
         ));
-        assert!(matches!(
-            rewrite_in(&tree, "cat long.ts"),
-            Verdict::Block { .. }
-        ));
-        assert!(matches!(
-            rewrite_in(&tree, "head -n 1 long.ts"),
-            Verdict::Block { .. }
-        ));
+        assert_eq!(rewrite_in(&tree, "cat long.ts"), Verdict::Allow);
+        assert_eq!(rewrite_in(&tree, "head -n 1 long.ts"), Verdict::Allow);
     }
 
     #[test]
-    fn a_range_that_starts_past_the_end_keeps_the_deny_and_one_that_ends_past_it_rewrites() {
+    fn a_range_that_starts_past_the_end_is_allowed_and_one_that_ends_past_it_rewrites() {
         let tree = tree();
         write(&tree, "empty.txt", "");
 
-        assert!(matches!(
-            rewrite_in(&tree, "head -n 5 empty.txt"),
-            Verdict::Block { .. }
-        ));
-        assert!(matches!(
-            rewrite_in(&tree, "sed -n '11p' src/n.txt"),
-            Verdict::Block { .. }
-        ));
-        assert!(matches!(
-            rewrite_in(&tree, "sed -n '11,12p' src/n.txt"),
-            Verdict::Block { .. }
-        ));
+        for command in [
+            "head -n 5 empty.txt",
+            "sed -n '11p' src/n.txt",
+            "sed -n '11,12p' src/n.txt",
+            "nl -ba src/n.txt | sed -n '11,12p'",
+        ] {
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+        }
         assert_eq!(
             command_of(rewrite_in(&tree, "cat empty.txt")),
-            "lets show empty.txt --all"
+            "lets show empty.txt --all --no-header --no-numbers"
         );
         assert_eq!(
             command_of(rewrite_in(&tree, "sed -n '10p' src/n.txt")),
-            "lets show src/n.txt:10"
+            "lets show src/n.txt:10 --no-header --no-numbers"
         );
         assert_eq!(
             command_of(rewrite_in(&tree, "sed -n '9,20p' src/n.txt")),
-            "lets show src/n.txt:9-20"
+            "lets show src/n.txt:9-20 --no-header --no-numbers"
         );
         assert_eq!(
             command_of(rewrite_in(&tree, "head -n 50 src/n.txt")),
-            "lets show src/n.txt:1-50"
+            "lets show src/n.txt:1-50 --no-header --no-numbers"
         );
     }
 
     #[test]
-    fn a_file_lets_show_reads_differently_keeps_the_deny() {
+    fn a_file_lets_show_reads_differently_is_allowed() {
         let tree = tree();
         write(&tree, "nul.txt", "a\0b\n");
         std::fs::write(tree.path().join("latin.txt"), b"caf\xe9\n").expect("a latin-1 file");
@@ -2991,10 +3472,7 @@ mod tests {
             "cat src/missing.ts",
             "cat src",
         ] {
-            assert!(
-                matches!(rewrite_in(&tree, command), Verdict::Block { .. }),
-                "{command}"
-            );
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
         }
     }
 
@@ -3014,13 +3492,15 @@ mod tests {
     fn a_repeated_head_count_takes_the_last_as_head_does() {
         assert_eq!(
             rewritten("head -n 3 -n 5 src/n.txt"),
-            "lets show src/n.txt:1-5"
+            "lets show src/n.txt:1-5 --no-header --no-numbers"
         );
         assert_eq!(
             rewritten("head --lines=3 --lines=5 src/n.txt"),
-            "lets show src/n.txt:1-5"
+            "lets show src/n.txt:1-5 --no-header --no-numbers"
         );
-        assert!(blocked("head -n 5 -n 3 src/n.txt").contains("run: lets show src/n.txt:1-3"));
+        assert_eq!(verdict("head -n 5 -n 3 src/n.txt"), Verdict::Rewrite {
+            command: "lets show src/n.txt:1-3 --no-header --no-numbers".to_owned()
+        });
     }
 
     #[test]
@@ -3049,7 +3529,7 @@ mod tests {
         }
         assert_eq!(
             command_of(rewrite_in(&tree, "cd src && cat a.ts")),
-            "cd src && lets show a.ts --all"
+            "cd src && lets show a.ts --all --no-header --no-numbers"
         );
     }
 
@@ -3084,7 +3564,7 @@ mod tests {
         ));
         assert_eq!(
             command_of(rewrite_in(&tree, "cat src/alias.ts")),
-            "lets show src/alias.ts --all"
+            "lets show src/alias.ts --all --no-header --no-numbers"
         );
     }
 
@@ -3099,34 +3579,64 @@ mod tests {
 
     #[test]
     fn two_displayed_reads_in_one_chain_share_one_show_line() {
-        let reason = blocked("cat src/a.ts && cat src/b.ts");
-
+        assert_eq!(verdict("cat src/a.ts && cat src/b.ts"), Verdict::Rewrite {
+            command: "lets show src/a.ts src/b.ts --all --no-numbers".to_owned()
+        });
+        let reason = blocked("cat src/a.ts && cat .env");
         assert!(
-            reason.contains("run: lets show src/a.ts src/b.ts"),
+            reason.ends_with("\nrun: lets show src/a.ts .env"),
             "{reason}"
         );
-        assert_eq!(reason.matches("run: lets show").count(), 1, "{reason}");
     }
 
     #[test]
     fn a_semicolon_chain_is_the_same_one_line() {
-        assert!(blocked("cat src/a.ts; cat src/b.ts").contains("run: lets show src/a.ts src/b.ts"));
+        assert_eq!(
+            rewritten("cat src/a.ts; cat src/b.ts"),
+            "lets show src/a.ts src/b.ts --all --no-numbers"
+        );
     }
 
+    /// `cat f f` prints the file twice, and one `lets show` would print it once.
     #[test]
-    fn the_same_path_read_twice_is_named_once() {
-        let reason = blocked("cat src/a.ts && cat src/a.ts");
-
-        assert!(reason.contains("run: lets show src/a.ts"), "{reason}");
-        assert_eq!(reason.matches("src/a.ts").count(), 1, "{reason}");
+    fn a_file_read_twice_is_left_as_typed() {
+        for command in [
+            "cat src/a.ts && cat src/a.ts",
+            "cat src/a.ts; cat src/a.ts",
+            "cat src/a.ts src/a.ts",
+            "cat -n src/a.ts ./src/a.ts",
+            "head -n 3 src/n.txt; sed -n '2,5p' src/n.txt",
+        ] {
+            assert_allowed(command);
+        }
+        assert_eq!(
+            rewritten("cat src/a.ts && cat src/b.ts"),
+            "lets show src/a.ts src/b.ts --all --no-numbers"
+        );
+        assert_eq!(
+            rewritten("cat src/a.ts src/a.ts && cat src/b.ts"),
+            "cat src/a.ts src/a.ts && lets show src/b.ts --all --no-header --no-numbers"
+        );
+        let reason = blocked("cat src/a.ts src/a.ts && sed -i 's/x/y/g' src/b.ts");
+        assert!(
+            reason.ends_with(
+                "\nrun: cat src/a.ts src/a.ts && lets edit src/b.ts --old 'x' --new 'y' --all"
+            ),
+            "{reason}"
+        );
+        let reason = blocked("cat .env && cat .env");
+        assert!(reason.ends_with("\nrun: lets show .env"), "{reason}");
     }
 
     #[test]
     fn a_lets_call_does_not_shield_a_later_read() {
-        let reason = blocked("lets show a.ts && cat b.ts");
-
+        assert_eq!(
+            rewritten("lets show a.ts && cat src/b.ts"),
+            "lets show a.ts && lets show src/b.ts --all --no-header --no-numbers"
+        );
+        let reason = blocked("lets show a.ts && cat .env");
         assert!(
-            reason.ends_with("\nrun: lets show a.ts && lets show b.ts"),
+            reason.ends_with("\nrun: lets show a.ts && lets show .env"),
             "{reason}"
         );
     }
@@ -3155,9 +3665,17 @@ mod tests {
     }
 
     #[test]
-    fn cat_piped_into_head_blocks_with_the_head_range() {
-        assert!(blocked("cat src/a.ts | head -5").contains("run: lets show src/a.ts:1-5"));
-        assert!(blocked("cat src/a.ts | head -n 5").contains("run: lets show src/a.ts:1-5"));
+    fn cat_piped_into_head_rewrites_to_the_head_range() {
+        for command in ["cat src/a.ts | head -5", "cat src/a.ts | head -n 5"] {
+            assert_eq!(
+                verdict(command),
+                Verdict::Rewrite {
+                    command: "lets show src/a.ts:1-5 --no-header --no-numbers".to_owned()
+                },
+                "{command}"
+            );
+        }
+        assert!(blocked("cat .env | head -5").contains("run: lets show .env:1-5"));
     }
 
     #[test]
@@ -3182,8 +3700,14 @@ mod tests {
     fn a_heredoc_exempts_a_body_that_would_otherwise_block() {
         assert_allowed("head -n 5 src/a.ts <<'EOF'\nx\nEOF");
         assert_allowed("sed -n '1,3p' src/a.ts <<'EOF'\nx\nEOF");
-        assert!(blocked("head -n 5 src/a.ts").contains("run: lets show src/a.ts:1-5"));
-        assert!(blocked("sed -n '1,3p' src/a.ts").contains("run: lets show src/a.ts:1-3"));
+        assert_eq!(
+            rewritten("head -n 5 src/a.ts"),
+            "lets show src/a.ts:1-5 --no-header --no-numbers"
+        );
+        assert_eq!(
+            rewritten("sed -n '1,3p' src/a.ts"),
+            "lets show src/a.ts:1-3 --no-header --no-numbers"
+        );
     }
 
     #[test]
@@ -3250,14 +3774,13 @@ mod tests {
 
     #[test]
     fn a_redirect_of_another_descriptor_leaves_a_displayed_read() {
-        for command in ["cat src/a.ts 2> errors.log", "cat src/a.ts 2>/dev/null"] {
-            let reason = blocked(command);
-            assert!(
-                reason.contains("run: lets show src/a.ts"),
-                "{command:?}: {reason}"
-            );
-            assert!(!reason.contains("lets write"), "{command:?}: {reason}");
-        }
+        let reason = blocked("cat src/a.ts 2> errors.log");
+        assert!(reason.ends_with("\nrun: lets show src/a.ts"), "{reason}");
+        assert!(!reason.contains("lets write"), "{reason}");
+        assert_eq!(
+            rewritten("cat src/a.ts 2>/dev/null"),
+            "lets show src/a.ts --all --no-header --no-numbers"
+        );
         assert_allowed("cat src/a.ts > out.txt");
         assert_allowed("cat src/a.ts 1> out.txt");
     }
@@ -3288,13 +3811,26 @@ mod tests {
     }
 
     #[test]
-    fn cat_display_neutral_flags_still_block() {
-        assert!(blocked("cat -n src/a.ts").contains("run: lets show src/a.ts"));
-        assert!(blocked("cat -b src/a.ts").contains("run: lets show src/a.ts"));
-        assert!(blocked("cat -u src/a.ts").contains("run: lets show src/a.ts"));
-        assert!(blocked("cat --number src/a.ts").contains("run: lets show src/a.ts"));
-        assert!(blocked("cat --number-nonblank src/a.ts").contains("run: lets show src/a.ts"));
-        assert!(blocked("cat -nb src/a.ts").contains("run: lets show src/a.ts"));
+    fn cat_display_neutral_flags_still_rewrite() {
+        for command in [
+            "cat -n src/a.ts",
+            "cat -b src/a.ts",
+            "cat --number src/a.ts",
+            "cat --number-nonblank src/a.ts",
+            "cat -nb src/a.ts",
+            "cat -un src/a.ts",
+        ] {
+            assert_eq!(
+                verdict(command),
+                Verdict::Rewrite {
+                    command: "lets show src/a.ts --all --no-header".to_owned()
+                },
+                "{command}"
+            );
+        }
+        assert_eq!(verdict("cat -u src/a.ts"), Verdict::Rewrite {
+            command: "lets show src/a.ts --all --no-header --no-numbers".to_owned()
+        });
     }
 
     #[test]
@@ -3313,25 +3849,33 @@ mod tests {
 
     #[test]
     fn a_bounded_read_carries_its_range() {
-        assert!(blocked("head -n 20 src/a.ts").contains("run: lets show src/a.ts:1-20"));
         assert_eq!(
-            blocked("head -n 20 src/a.ts"),
-            blocked("head -20 src/a.ts"),
+            rewritten("head -n 20 src/n.txt"),
+            "lets show src/n.txt:1-20 --no-header --no-numbers"
+        );
+        assert_eq!(
+            verdict("head -n 20 src/n.txt"),
+            verdict("head -20 src/n.txt"),
             "both forms name the same one range"
         );
-        assert!(blocked("sed -n '5,9p' src/a.ts").contains("run: lets show src/a.ts:5-9"));
-        assert!(blocked("cat src/a.ts").contains("run: lets show src/a.ts"));
+        assert_eq!(
+            rewritten("sed -n '5,9p' src/n.txt"),
+            "lets show src/n.txt:5-9 --no-header --no-numbers"
+        );
+        assert!(blocked("head -n 20 .env").contains("run: lets show .env:1-20"));
     }
 
     #[test]
     fn a_ranged_target_merges_into_the_one_show_line() {
-        let reason = blocked("cat src/b.ts && head -n 20 src/a.ts");
-
+        assert_eq!(
+            rewritten("cat src/b.ts && head -n 20 src/a.ts"),
+            "lets show src/b.ts src/a.ts:1-20 --all --no-numbers"
+        );
+        let reason = blocked("cat .env && head -n 20 src/a.ts");
         assert!(
-            reason.contains("run: lets show src/b.ts src/a.ts:1-20"),
+            reason.ends_with("\nrun: lets show .env src/a.ts:1-20"),
             "{reason}"
         );
-        assert_eq!(reason.matches("run: lets show").count(), 1, "{reason}");
     }
 
     #[test]
@@ -3394,13 +3938,19 @@ mod tests {
     }
 
     #[test]
-    fn sed_quiet_blocks_with_lets_show() {
-        assert!(blocked("sed -n '1,10p' src/a.ts").contains("run: lets show src/a.ts"));
+    fn sed_quiet_rewrites_to_lets_show() {
+        assert_eq!(verdict("sed -n '1,10p' src/a.ts"), Verdict::Rewrite {
+            command: "lets show src/a.ts:1-10 --no-header --no-numbers".to_owned()
+        });
     }
 
     #[test]
-    fn a_single_line_sed_blocks_with_the_one_line_target() {
-        assert!(blocked("sed -n '5p' src/n.txt").contains("run: lets show src/n.txt:5"));
+    fn a_single_line_sed_rewrites_to_the_one_line_target() {
+        assert_eq!(
+            rewritten("sed -n '5p' src/n.txt"),
+            "lets show src/n.txt:5 --no-header --no-numbers"
+        );
+        assert!(blocked("sed -n '5p' .env").contains("run: lets show .env:5"));
     }
 
     #[test]
@@ -3448,8 +3998,13 @@ mod tests {
         ] {
             assert_allowed(command);
         }
-        assert!(blocked("sed -nE '5p' src/n.txt").contains("run: lets show src/n.txt:5"));
-        assert!(blocked("sed --quiet -r '5p' src/n.txt").contains("run: lets show src/n.txt:5"));
+        for command in ["sed -nE '5p' src/n.txt", "sed --quiet -r '5p' src/n.txt"] {
+            assert_eq!(
+                rewritten(command),
+                "lets show src/n.txt:5 --no-header --no-numbers",
+                "{command}"
+            );
+        }
     }
 
     #[test]
@@ -3467,35 +4022,55 @@ mod tests {
     }
 
     #[test]
-    fn a_displayed_search_blocks_with_lets_find() {
-        assert!(blocked("grep -n 'cap' src/a.ts").contains("run: lets find -s 'cap' src/a.ts"));
-        assert!(blocked("rg 'cap' src/").contains("run: lets find -s 'cap' src/"));
+    fn a_displayed_search_rewrites_to_lets_find() {
+        assert_eq!(verdict("grep -n 'cap' src/a.ts"), Verdict::Rewrite {
+            command: "lets find 'cap' src/a.ts".to_owned()
+        });
+        assert_eq!(
+            rewritten("rg 'cap' src/"),
+            "lets find 'cap' src/ --no-numbers"
+        );
+        assert!(blocked("grep -rn 'cap' .claude").ends_with("\nrun: lets find 'cap' .claude"));
     }
 
     #[test]
     fn a_search_carries_its_match_changing_flags() {
-        assert!(blocked("grep -F 'a.b' src/a.ts").contains("run: lets find -F -s 'a.b' src/a.ts"));
-        assert!(
-            blocked("grep -i -w 'cap' src/a.ts").contains("run: lets find -i -w 'cap' src/a.ts")
-        );
-        assert!(
-            blocked("grep -C 3 'cap' src/a.ts").contains("run: lets find -s -C 3 'cap' src/a.ts")
-        );
-        assert!(
-            blocked("grep -A 2 -B 2 'cap' src/a.ts")
-                .contains("run: lets find -s -C 2 'cap' src/a.ts")
-        );
-        assert!(
-            blocked("grep -l 'cap' src/a.ts").contains("run: lets find -s --files 'cap' src/a.ts")
-        );
-        assert!(
-            blocked("grep -c 'cap' src/a.ts").contains("run: lets find -s --count 'cap' src/a.ts")
-        );
-        assert!(blocked("rg -iF 'a.b' src/").contains("run: lets find -F -i 'a.b' src/"));
-        assert!(
-            blocked("grep --ignore-case --context=1 'cap' src/a.ts")
-                .contains("run: lets find -i -C 1 'cap' src/a.ts")
-        );
+        for (command, replacement) in [
+            (
+                "grep -F 'a.b' src/a.ts",
+                "lets find -F 'a.b' src/a.ts --no-numbers",
+            ),
+            (
+                "grep -i -w 'cap' src/a.ts",
+                "lets find -i -w 'cap' src/a.ts --no-numbers",
+            ),
+            (
+                "grep -C 3 'cap' src/a.ts",
+                "lets find -C 3 'cap' src/a.ts --no-numbers",
+            ),
+            (
+                "grep -A 2 -B 2 'cap' src/a.ts",
+                "lets find -C 2 'cap' src/a.ts --no-numbers",
+            ),
+            (
+                "grep -l 'cap' src/a.ts",
+                "lets find -s --files 'cap' src/a.ts",
+            ),
+            (
+                "grep -c 'cap' src/a.ts",
+                "lets find -s --count 'cap' src/a.ts",
+            ),
+            (
+                "rg -iF 'a.b' src/",
+                "lets find -F -i 'a.b' src/ --no-numbers",
+            ),
+            (
+                "grep --ignore-case --context=1 'cap' src/a.ts",
+                "lets find -i -C 1 'cap' src/a.ts --no-numbers",
+            ),
+        ] {
+            assert_eq!(rewritten(command), replacement, "{command}");
+        }
     }
 
     #[test]
@@ -3510,22 +4085,22 @@ mod tests {
     }
 
     #[test]
-    fn a_pathless_search_blocks_only_where_it_searches_the_tree() {
-        assert!(blocked("rg 'cap'").contains("run: lets find -s 'cap'"));
+    fn a_pathless_search_is_replaced_only_where_it_searches_the_tree() {
+        assert_eq!(rewritten("rg 'cap'"), "lets find 'cap' --no-numbers");
         assert_allowed("grep 'cap'");
         assert_allowed("cat src/a.ts | rg 'cap'");
     }
 
     #[test]
-    fn two_searches_keep_two_find_lines() {
-        let reason = blocked("grep 'a' src/a.ts && grep 'b' src/b.ts");
-
-        assert!(
-            reason.contains("run: lets find -s 'a' src/a.ts"),
-            "{reason}"
+    fn two_searches_keep_two_find_calls() {
+        assert_eq!(
+            rewritten("grep 'a' src/a.ts && grep 'b' src/b.ts"),
+            "lets find 'a' src/a.ts --no-numbers -s --cap-exit-0 && lets find 'b' src/b.ts \
+             --no-numbers"
         );
+        let reason = blocked("grep -r 'a' .claude && grep 'b' src/b.ts");
         assert!(
-            reason.contains("run: lets find -s 'b' src/b.ts"),
+            reason.ends_with("\nrun: lets find 'a' .claude\nrun: lets find 'b' src/b.ts"),
             "{reason}"
         );
     }
@@ -3541,20 +4116,27 @@ mod tests {
     }
 
     #[test]
-    fn a_path_inside_the_working_tree_blocks() {
+    fn a_path_inside_the_working_tree_is_replaced() {
         let tree = tree();
         let absolute = format!("{}/src/a.ts", cwd(&tree));
+        // The temp tree's own `.tmp…` name reads as a dotfile component, so this is a deny.
         let Verdict::Block { reason } =
             classify_command(&format!("cat {absolute}"), cwd(&tree), None)
         else {
             panic!("an absolute in-tree read was allowed");
         };
         assert!(
-            reason.contains(&format!("run: lets show {absolute}")),
+            reason.ends_with(&format!("\nrun: lets show {absolute}")),
             "{reason}"
         );
-        assert!(blocked("cat ./src/a.ts").contains("run: lets show ./src/a.ts"));
-        assert!(blocked("cat src/../src/a.ts").contains("run: lets show src/../src/a.ts"));
+        assert_eq!(
+            rewritten("cat ./src/a.ts"),
+            "lets show ./src/a.ts --all --no-header --no-numbers"
+        );
+        assert_eq!(
+            rewritten("cat src/../src/a.ts"),
+            "lets show src/../src/a.ts --all --no-header --no-numbers"
+        );
         assert!(blocked("cat src/a.ts < in.txt").contains("run: lets show src/a.ts"));
     }
 
@@ -3563,7 +4145,7 @@ mod tests {
         assert!(blocked("cat src/a.ts /etc/hosts").contains("run: lets show src/a.ts /etc/hosts"));
         assert!(
             blocked("grep 'cap' src/a.ts /etc/hosts")
-                .contains("run: lets find -s 'cap' src/a.ts /etc/hosts")
+                .contains("run: lets find 'cap' src/a.ts /etc/hosts")
         );
     }
 
@@ -3583,11 +4165,14 @@ mod tests {
     fn a_line_the_grammar_joins_onto_the_command_before_it_is_allowed() {
         assert_allowed("ls | sort | head -4\necho x 2>/dev/null");
         assert_allowed("ls | sort | head -4\ncat src/a.ts 2>/dev/null");
-        assert!(
-            blocked("ls | sort | head -4; cat src/a.ts 2>/dev/null")
-                .ends_with("\nrun: ls | sort | head -4; lets show src/a.ts --all")
+        assert_eq!(
+            rewritten("ls | sort | head -4; cat src/a.ts 2>/dev/null"),
+            "ls | sort | head -4; lets show src/a.ts --all --no-header --no-numbers"
         );
-        assert!(blocked("cat \\\n  src/a.ts").contains("run: lets show src/a.ts"));
+        assert_eq!(
+            rewritten("cat \\\n  src/a.ts"),
+            "lets show src/a.ts --all --no-header --no-numbers"
+        );
     }
 
     /// An accepted gap: the walk never descends into these bodies.
@@ -3611,9 +4196,14 @@ mod tests {
     }
 
     #[test]
-    fn a_quoted_literal_path_blocks() {
-        assert!(blocked("cat \"src/a.ts\"").contains("run: lets show src/a.ts"));
-        assert!(blocked("cat 'src/a.ts'").contains("run: lets show src/a.ts"));
+    fn a_quoted_literal_path_is_replaced_unquoted() {
+        for command in ["cat \"src/a.ts\"", "cat 'src/a.ts'"] {
+            assert_eq!(
+                rewritten(command),
+                "lets show src/a.ts --all --no-header --no-numbers",
+                "{command}"
+            );
+        }
     }
 
     #[test]
@@ -3633,28 +4223,36 @@ mod tests {
     }
 
     #[test]
-    fn every_block_carries_a_runnable_lets_command() {
-        let blocking = [
+    fn every_block_and_every_rewrite_carries_a_runnable_lets_command() {
+        let replaced = [
             "cat src/a.ts",
+            "cat .env",
             "cat src/a.ts && cat src/b.ts",
             "cat src/a.ts /etc/hosts",
             "head -n 20 src/a.ts",
+            "head -n 20 .env",
             "tail src/a.ts",
             "sed -n '1,10p' src/a.ts",
             "sed -i 's/a/b/g' src/a.ts",
             "grep -n 'cap' src/a.ts",
+            "grep -rn 'cap' .claude && ls",
             "grep -F 'a.b' -i src/a.ts",
             "rg 'cap'",
+            "nl -ba src/n.txt | sed -n '2,3p'",
             "find . | xargs cat",
             "cat > scripts/x.sh <<'EOF'\nhi\nEOF",
             "cat <<'EOF' > out.txt\nhi\nEOF",
         ];
-        for command in blocking {
-            let reason = blocked(command);
-            let run = reason
-                .lines()
-                .find(|line| line.starts_with("run: "))
-                .unwrap_or_else(|| panic!("{command:?} blocked without a run line: {reason}"));
+        for command in replaced {
+            let run = match verdict(command) {
+                Verdict::Block { reason } => reason
+                    .lines()
+                    .find_map(|line| line.strip_prefix("run: "))
+                    .unwrap_or_else(|| panic!("{command:?} blocked without a run line: {reason}"))
+                    .to_owned(),
+                Verdict::Rewrite { command } => command,
+                Verdict::Allow => panic!("{command:?} was allowed"),
+            };
             let verb = ["lets show ", "lets find ", "lets edit ", "lets write "]
                 .iter()
                 .find(|verb| run.contains(*verb))
@@ -3741,20 +4339,25 @@ mod tests {
 
     #[test]
     fn a_leading_cd_is_kept_on_the_run_line_and_named_first() {
-        let reason = blocked("cd src && cat a.ts");
+        let reason = blocked("cd src && sed -i 's/x/y/g' a.ts");
 
         assert!(reason.starts_with("`cd src` kept; "), "{reason}");
         assert!(
-            reason.contains("\nrun: cd src && lets show a.ts"),
+            reason.ends_with("\nrun: cd src && lets edit a.ts --old 'x' --new 'y' --all"),
             "{reason}"
+        );
+        assert_eq!(
+            rewritten("cd src && cat a.ts"),
+            "cd src && lets show a.ts --all --no-header --no-numbers"
         );
     }
 
     #[test]
-    fn a_leading_cd_joined_by_a_semicolon_or_newline_is_the_same_block() {
+    fn a_leading_cd_joined_by_a_semicolon_or_newline_is_the_same_rewrite() {
         for command in ["cd src; cat a.ts", "cd src\ncat a.ts"] {
-            assert!(
-                blocked(command).contains("run: cd src && lets show a.ts"),
+            assert_eq!(
+                rewritten(command),
+                "cd src && lets show a.ts --all --no-header --no-numbers",
                 "{command:?}"
             );
         }
@@ -3762,30 +4365,35 @@ mod tests {
 
     #[test]
     fn a_leading_cd_prefixes_every_run_line() {
-        let reason = blocked("cd src && cat a.ts && grep -n foo b.ts");
+        let reason = blocked("cd src && cat a.ts && sed -i 's/x/y/g' b.ts");
 
         assert!(reason.contains("run: cd src && lets show a.ts"), "{reason}");
         assert!(
-            reason.contains("run: cd src && lets find -s 'foo' b.ts"),
+            reason.contains("run: cd src && lets edit b.ts --old 'x' --new 'y' --all"),
             "{reason}"
         );
     }
 
     #[test]
     fn a_cd_operand_the_shell_would_split_is_quoted_in_the_prefix() {
-        let reason = blocked("cd 'my dir' && cat a.ts");
+        let reason = blocked("cd 'my dir' && sed -i 's/x/y/g' a.ts");
 
         assert!(reason.starts_with("`cd 'my dir'` kept; "), "{reason}");
         assert!(
-            reason.contains("run: cd 'my dir' && lets show a.ts"),
+            reason.contains("run: cd 'my dir' && lets edit a.ts"),
             "{reason}"
+        );
+        assert_eq!(
+            rewritten("cd 'my dir' && cat a.ts"),
+            "cd 'my dir' && lets show a.ts --all --no-header --no-numbers"
         );
     }
 
     #[test]
     fn a_parent_path_after_a_cd_is_in_tree_when_it_stays_under_cwd() {
-        assert!(
-            blocked("cd src && cat ../notes.md").contains("run: cd src && lets show ../notes.md")
+        assert_eq!(
+            rewritten("cd src && cat ../notes.md"),
+            "cd src && lets show ../notes.md --all --no-header --no-numbers"
         );
     }
 
@@ -3835,13 +4443,21 @@ mod tests {
     fn a_plain_unquoted_glob_passes_into_the_replacement_unquoted() {
         assert!(blocked("cat src/*.ts").contains("run: lets show src/*.ts"));
         assert!(blocked("cat src/?.ts").contains("run: lets show src/?.ts"));
-        assert!(blocked("grep -n foo src/*.ts").contains("run: lets find -s 'foo' src/*.ts"));
+        assert!(blocked("grep -n foo src/*.ts").contains("run: lets find 'foo' src/*.ts"));
         assert!(blocked("cat \"src\"/*.ts").contains("run: lets show src/*.ts"));
     }
 
     #[test]
     fn a_quoted_star_stays_quoted() {
-        assert!(blocked("cat 'src/*.ts'").contains("run: lets show 'src/*.ts'"));
+        let tree = tree();
+        write(&tree, "src/*.ts", "x\n");
+
+        assert_eq!(
+            classify_command("cat 'src/*.ts'", cwd(&tree), None),
+            Verdict::Rewrite {
+                command: "lets show 'src/*.ts' --all --no-header --no-numbers".to_owned()
+            }
+        );
     }
 
     #[test]
@@ -3862,11 +4478,24 @@ mod tests {
     }
 
     #[test]
-    fn a_path_holding_a_target_metacharacter_blocks_only_when_it_names_a_file() {
-        assert!(blocked("cat C#.md").contains("run: lets show 'C#.md'"));
-        assert!(blocked("cat v:2").contains("run: lets show v:2"));
-        assert!(blocked("cat src/a.ts C#.md").contains("run: lets show src/a.ts 'C#.md'"));
-        assert!(blocked("cat a@b.txt").contains("run: lets show a@b.txt"));
+    fn a_path_holding_a_target_metacharacter_is_replaced_only_when_it_names_a_file() {
+        for (command, replacement) in [
+            (
+                "cat C#.md",
+                "lets show 'C#.md' --all --no-header --no-numbers",
+            ),
+            ("cat v:2", "lets show v:2 --all --no-header --no-numbers"),
+            (
+                "cat src/a.ts C#.md",
+                "lets show src/a.ts 'C#.md' --all --no-numbers",
+            ),
+            (
+                "cat a@b.txt",
+                "lets show a@b.txt --all --no-header --no-numbers",
+            ),
+        ] {
+            assert_eq!(rewritten(command), replacement, "{command}");
+        }
         assert!(
             blocked("sed -i 's/a/b/g' C#.md")
                 .contains("run: lets edit 'C#.md' --old 'a' --new 'b'")
@@ -3884,11 +4513,11 @@ mod tests {
 
     #[test]
     fn a_find_path_is_not_read_as_a_target() {
-        assert!(blocked("grep -n foo C#.md").contains("run: lets find -s 'foo' 'C#.md'"));
+        assert_eq!(rewritten("grep -n foo C#.md"), "lets find 'foo' 'C#.md'");
     }
 
     #[test]
-    fn a_grep_without_recursion_blocks_only_on_existing_files() {
+    fn a_grep_without_recursion_is_replaced_only_on_existing_files() {
         for command in [
             "grep foo src",
             "grep -n foo src/a.ts src",
@@ -3900,12 +4529,20 @@ mod tests {
         ] {
             assert_allowed(command);
         }
-        assert!(blocked("grep -r foo src").contains("run: lets find -s 'foo' src"));
-        assert!(blocked("grep -R foo src").contains("run: lets find -s 'foo' src"));
-        assert!(blocked("grep --recursive foo src").contains("run: lets find -s 'foo' src"));
-        assert!(blocked("grep foo src/*.ts").contains("run: lets find -s 'foo' src/*.ts"));
-        assert!(blocked("grep foo src/?.ts").contains("run: lets find -s 'foo' src/?.ts"));
-        assert!(blocked("rg foo src").contains("run: lets find -s 'foo' src"));
+        for command in [
+            "grep -r foo src",
+            "grep -R foo src",
+            "grep --recursive foo src",
+        ] {
+            assert_eq!(
+                rewritten(command),
+                "lets find --hidden --no-ignore --exclude '.git/**' 'foo' src --no-numbers",
+                "{command}"
+            );
+        }
+        assert!(blocked("grep foo src/*.ts").contains("run: lets find 'foo' src/*.ts"));
+        assert!(blocked("grep foo src/?.ts").contains("run: lets find 'foo' src/?.ts"));
+        assert_eq!(rewritten("rg foo src"), "lets find 'foo' src --no-numbers");
     }
 
     #[test]
@@ -3921,18 +4558,39 @@ mod tests {
 
     #[test]
     fn an_escaped_argument_is_read_as_the_command_receives_it() {
-        assert!(
-            blocked(r"grep alpha\|beta src/grep.txt")
-                .contains("run: lets find -s 'alpha[|]beta' src/grep.txt")
+        for (command, replacement) in [
+            (
+                r"grep alpha\|beta src/grep.txt",
+                "lets find 'alpha[|]beta' src/grep.txt --no-numbers",
+            ),
+            (
+                r#"grep "alpha\\|beta" src/grep.txt"#,
+                "lets find 'alpha|beta' src/grep.txt --no-numbers",
+            ),
+            (
+                r"cat my\ dir/a.ts",
+                "lets show 'my dir/a.ts' --all --no-header --no-numbers",
+            ),
+            (
+                r"cd my\ dir && cat a.ts",
+                "cd 'my dir' && lets show a.ts --all --no-header --no-numbers",
+            ),
+            (
+                r"cat src/\a.ts",
+                "lets show src/a.ts --all --no-header --no-numbers",
+            ),
+        ] {
+            assert_eq!(rewritten(command), replacement, "{command}");
+        }
+        assert_allowed(r#"cat "src/\a.ts""#);
+        let tree = tree();
+        write(&tree, r"src/\a.ts", "x\n");
+        assert_eq!(
+            classify_command(r#"cat "src/\a.ts""#, cwd(&tree), None),
+            Verdict::Rewrite {
+                command: r"lets show 'src/\a.ts' --all --no-header --no-numbers".to_owned()
+            }
         );
-        assert!(
-            blocked(r#"grep "alpha\\|beta" src/grep.txt"#)
-                .contains("run: lets find -s 'alpha|beta' src/grep.txt")
-        );
-        assert!(blocked(r"cat my\ dir/a.ts").contains("run: lets show 'my dir/a.ts'"));
-        assert!(blocked(r"cd my\ dir && cat a.ts").contains("run: cd 'my dir' && lets show a.ts"));
-        assert!(blocked(r"cat src/\a.ts").contains("run: lets show src/a.ts"));
-        assert!(blocked(r#"cat "src/\a.ts""#).contains(r"run: lets show 'src/\a.ts'"));
     }
 
     #[test]
@@ -3951,57 +4609,60 @@ mod tests {
         ] {
             assert_allowed(command);
         }
-        assert!(
-            blocked("grep -E 'foo|bar' src/a.ts").contains("run: lets find -s 'foo|bar' src/a.ts")
+        assert_eq!(
+            rewritten("grep -E 'foo|bar' src/a.ts"),
+            "lets find 'foo|bar' src/a.ts --no-numbers"
         );
     }
 
     #[test]
-    fn a_rewritten_plain_grep_pattern_is_named_after_the_cd_note() {
-        let reason = blocked(r"cd src && grep 'a\|b' grep.txt");
+    fn a_translated_plain_grep_pattern_is_named_after_the_cd_note() {
+        let reason = blocked(r"cd src && grep 'a\|b' *.txt");
 
         assert!(
             reason.starts_with("`cd src` kept; grep pattern translated to lets regex; "),
             "{reason}"
         );
         assert!(
-            reason.contains("run: cd src && lets find -s 'a|b' grep.txt"),
+            reason.contains("run: cd src && lets find 'a|b' *.txt"),
             "{reason}"
         );
     }
 
     #[test]
     fn a_plain_grep_pattern_the_translation_leaves_unchanged_carries_no_note() {
-        let reason = blocked("grep 'cap' src/a.ts");
+        let reason = blocked("grep 'cap' src/*.ts");
 
         assert!(!reason.contains("translated"), "{reason}");
     }
 
     #[test]
     fn grep_g_is_a_basic_regex_like_plain_grep() {
-        assert!(blocked(r"grep -G 'a\|b' src/a.ts").contains(r"run: lets find -s 'a|b' src/a.ts"));
-        assert!(
-            blocked(r"grep --basic-regexp 'a\|b' src/a.ts")
-                .contains(r"run: lets find -s 'a|b' src/a.ts")
-        );
+        for command in [
+            r"grep -G 'a\|b' src/a.ts",
+            r"grep --basic-regexp 'a\|b' src/a.ts",
+        ] {
+            assert_eq!(
+                rewritten(command),
+                "lets find 'a|b' src/a.ts --no-numbers",
+                "{command}"
+            );
+        }
     }
 
     #[test]
     fn extended_fixed_and_rg_patterns_pass_unchanged() {
-        for (command, run) in [
-            ("grep -E 'a|b' src/a.ts", "run: lets find -s 'a|b' src/a.ts"),
+        for (command, replacement) in [
+            ("grep -E 'a|b' src/*.ts", "run: lets find 'a|b' src/*.ts"),
             (
-                "grep --extended-regexp 'f(x)' src/a.ts",
-                "run: lets find -s 'f(x)' src/a.ts",
+                "grep --extended-regexp 'f(x)' src/*.ts",
+                "run: lets find 'f(x)' src/*.ts",
             ),
-            (
-                "grep -F 'a|b' src/a.ts",
-                "run: lets find -F -s 'a|b' src/a.ts",
-            ),
-            (r"rg 'a\|b' src/", r"run: lets find -s 'a\|b' src/"),
+            ("grep -F 'a|b' src/*.ts", "run: lets find -F 'a|b' src/*.ts"),
+            (r"rg 'a\|b' src/*.ts", r"run: lets find 'a\|b' src/*.ts"),
         ] {
             let reason = blocked(command);
-            assert!(reason.contains(run), "{command:?}: {reason}");
+            assert!(reason.contains(replacement), "{command:?}: {reason}");
             assert!(!reason.contains("translated"), "{command:?}: {reason}");
         }
     }
@@ -4015,7 +4676,10 @@ mod tests {
 
     #[test]
     fn a_plain_grep_star_with_nothing_to_repeat_searches_for_a_star() {
-        assert!(blocked(r"grep -rn '*a' src/").contains(r"run: lets find -s '\*a' src/"));
+        assert_eq!(
+            rewritten(r"grep -rn '*a' src/"),
+            r"lets find --hidden --no-ignore --exclude '.git/**' '\*a' src/"
+        );
     }
 
     #[test]
@@ -4023,6 +4687,9 @@ mod tests {
         assert_allowed("grep -E -F 'a' src/a.ts");
         assert_allowed("grep -G -E 'a' src/a.ts");
         assert_allowed("grep -FG 'a' src/a.ts");
-        assert!(blocked("grep -E -E 'a' src/a.ts").contains("run: lets find -s 'a' src/a.ts"));
+        assert_eq!(
+            rewritten("grep -E -E 'a' src/a.ts"),
+            "lets find 'a' src/a.ts --no-numbers"
+        );
     }
 }

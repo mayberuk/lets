@@ -2,8 +2,7 @@ COMMAND
 cat src/a\ b.txt
 ===END===
 VERDICT rewrite
-REASON lets show reads several files and ranges in one call.
 REPLACEMENT
-run: lets show 'src/a b.txt' --all
+run: lets show 'src/a b.txt' --all --no-header --no-numbers
 ===END===
 COMPARE read

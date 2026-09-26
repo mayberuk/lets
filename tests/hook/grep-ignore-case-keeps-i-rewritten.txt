@@ -2,8 +2,7 @@ COMMAND
 grep -i foo src/c.ts
 ===END===
 VERDICT rewrite
-REASON lets find returns every hit numbered and grouped by file.
 REPLACEMENT
-run: lets find -i 'foo' src/c.ts
+run: lets find -i 'foo' src/c.ts --no-numbers
 ===END===
 COMPARE search

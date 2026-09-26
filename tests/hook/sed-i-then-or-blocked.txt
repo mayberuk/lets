@@ -1,0 +1,9 @@
+COMMAND
+sed -i 's/leader/boss/g' pkg/x/metrics.go || ls pkg
+===END===
+VERDICT block
+REASON lets edit replaces the exact text and shows the changed lines.
+REPLACEMENT
+run: lets edit pkg/x/metrics.go --old 'leader' --new 'boss' --all || ls pkg
+===END===
+COMPARE write
