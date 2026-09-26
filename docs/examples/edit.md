@@ -910,6 +910,23 @@ $ lets edit 'greet.kt#limit' --old 30 --new 40 --json
 ```
 
 ```console
+$ sh -c 'set -e; mkdir -p ro-runtime; chmod 0500 ro-runtime; trap '\''chmod 0700 ro-runtime'\'' EXIT; export XDG_RUNTIME_DIR="$(pwd)/ro-runtime"; "$CARGO_BIN_EXE_lets" edit usage.ts --old '\''return'\'' --new '\''return undefined'\'''
+? 2
+usage.ts is ambiguous (3 candidates)
+  usage.ts:4	  if (!id) return
+  usage.ts:7	  if (now > cap) return
+  usage.ts:9	  return total
+ERROR_CODE=ambiguous
+
+```
+
+```console
+$ sh -c 'set -e; mkdir -p ro-runtime; chmod 0500 ro-runtime; trap '\''chmod 0700 ro-runtime'\'' EXIT; export XDG_RUNTIME_DIR="$(pwd)/ro-runtime"; "$CARGO_BIN_EXE_lets" edit usage.ts --old '\''const cap = 10'\'' --new '\''const cap = 20'\'''
+── usage.ts · 1 replacement · line 6 · check: structure ok · sha:c5525cc20b61→419c5d6249b3
+
+```
+
+```console
 $ lets edit usage.ts --old 'usageCap' --new 'usageLimit' --all
 ── usage.ts · 2 replacements · lines 1, 8 · check: structure ok · sha:c5525cc20b61→0e1115009972
 

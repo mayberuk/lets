@@ -21,30 +21,58 @@ pub fn runtime_dir() -> PathBuf {
         .map_or_else(std::env::temp_dir, PathBuf::from)
 }
 
+// Codex's sandbox mounts XDG_RUNTIME_DIR read-only; processes inside it all fall back alike and
+// still exclude each other, but not a process outside it. A symlink or wrong-owner refusal never
+// falls back.
+fn prepare_locks_dir_with_fallback(runtime: &Path, fallback: &Path) -> Result<PathBuf, Error> {
+    match prepare_locks_dir_at(runtime) {
+        Ok(dir) => Ok(dir),
+        Err(PrepareError::Unavailable(primary_err)) if fallback != runtime => {
+            prepare_locks_dir_at(fallback).map_err(|_| primary_err)
+        },
+        Err(PrepareError::Unavailable(err) | PrepareError::Refused(err)) => Err(err),
+    }
+}
+
+enum PrepareError {
+    Unavailable(Error),
+    Refused(Error),
+}
+
+fn unavailable_prep(path: &Path, detail: &str) -> PrepareError {
+    PrepareError::Unavailable(unavailable(path, detail))
+}
+
 /// Refuses a directory this user does not own, or another account decides where locks land.
-fn prepare_locks_dir(runtime: &Path) -> Result<PathBuf, Error> {
+fn prepare_locks_dir_at(runtime: &Path) -> Result<PathBuf, PrepareError> {
     let dir = runtime.join("lets").join("locks");
 
-    std::fs::create_dir_all(&dir).map_err(|source| unavailable(&dir, &source.to_string()))?;
-    let metadata =
-        std::fs::symlink_metadata(&dir).map_err(|source| unavailable(&dir, &source.to_string()))?;
+    std::fs::create_dir_all(&dir).map_err(|source| unavailable_prep(&dir, &source.to_string()))?;
+    let metadata = std::fs::symlink_metadata(&dir)
+        .map_err(|source| unavailable_prep(&dir, &source.to_string()))?;
     if metadata.file_type().is_symlink() {
-        return Err(unavailable(&dir, "lock directory is a symlink"));
+        return Err(PrepareError::Refused(unavailable(
+            &dir,
+            "lock directory is a symlink",
+        )));
     }
     // A fresh file carries our uid; reading it directly would need a `libc` dependency.
     let probe = tempfile::NamedTempFile::new_in(&dir)
-        .map_err(|source| unavailable(&dir, &source.to_string()))?;
+        .map_err(|source| unavailable_prep(&dir, &source.to_string()))?;
     let own_uid = probe
         .as_file()
         .metadata()
-        .map_err(|source| unavailable(&dir, &source.to_string()))?
+        .map_err(|source| unavailable_prep(&dir, &source.to_string()))?
         .uid();
     drop(probe);
     if metadata.uid() != own_uid {
-        return Err(unavailable(&dir, "lock directory is owned by another user"));
+        return Err(PrepareError::Refused(unavailable(
+            &dir,
+            "lock directory is owned by another user",
+        )));
     }
     std::fs::set_permissions(&dir, Permissions::from_mode(LOCKS_DIR_MODE))
-        .map_err(|source| unavailable(&dir, &source.to_string()))?;
+        .map_err(|source| unavailable_prep(&dir, &source.to_string()))?;
     Ok(dir)
 }
 
@@ -64,12 +92,20 @@ fn canonical_target(target: &Path) -> io::Result<PathBuf> {
 }
 
 pub fn lock_path(target: &Path, runtime: &Path) -> Result<PathBuf, Error> {
+    lock_path_with_fallback(target, runtime, &std::env::temp_dir())
+}
+
+fn lock_path_with_fallback(
+    target: &Path,
+    runtime: &Path,
+    fallback: &Path,
+) -> Result<PathBuf, Error> {
     let canonical = canonical_target(target).map_err(|source| Error::Io {
         path: target.to_path_buf(),
         source,
     })?;
     let digest = blake3::hash(canonical.as_os_str().as_bytes());
-    Ok(prepare_locks_dir(runtime)?.join(digest.to_hex().to_string()))
+    Ok(prepare_locks_dir_with_fallback(runtime, fallback)?.join(digest.to_hex().to_string()))
 }
 
 #[derive(Debug)]
@@ -80,7 +116,15 @@ pub struct Lock {
 
 impl Lock {
     pub fn acquire(target: &Path, runtime: &Path) -> Result<Lock, Error> {
-        let path = lock_path(target, runtime)?;
+        Self::acquire_with_fallback(target, runtime, &std::env::temp_dir())
+    }
+
+    fn acquire_with_fallback(
+        target: &Path,
+        runtime: &Path,
+        fallback: &Path,
+    ) -> Result<Lock, Error> {
+        let path = lock_path_with_fallback(target, runtime, fallback)?;
         let file = File::options()
             .create(true)
             .truncate(false)
@@ -238,15 +282,34 @@ mod tests {
     }
 
     #[test]
-    fn a_read_only_runtime_dir_is_lock_unavailable_naming_the_lock_directory() {
+    fn a_read_only_runtime_dir_falls_back_to_a_writable_dir_and_acquire_succeeds_there() {
         let runtime = tempfile::tempdir().unwrap();
         std::fs::set_permissions(runtime.path(), Permissions::from_mode(0o500)).unwrap();
+        let fallback = tempfile::tempdir().unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        let target = fixture.path().join("a.txt");
+        std::fs::write(&target, b"hi").unwrap();
+
+        let lock = Lock::acquire_with_fallback(&target, runtime.path(), fallback.path()).unwrap();
+
+        assert!(lock.path().starts_with(fallback.path()));
+        std::fs::set_permissions(runtime.path(), Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn a_read_only_runtime_and_a_read_only_fallback_fail_naming_the_primary_lock_directory_without_waiting()
+     {
+        let runtime = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(runtime.path(), Permissions::from_mode(0o500)).unwrap();
+        let fallback = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(fallback.path(), Permissions::from_mode(0o500)).unwrap();
         let fixture = tempfile::tempdir().unwrap();
         let target = fixture.path().join("a.txt");
         std::fs::write(&target, b"hi").unwrap();
 
         let start = Instant::now();
-        let err = Lock::acquire(&target, runtime.path()).unwrap_err();
+        let err =
+            Lock::acquire_with_fallback(&target, runtime.path(), fallback.path()).unwrap_err();
         let elapsed = start.elapsed();
 
         assert_eq!(
@@ -255,8 +318,44 @@ mod tests {
         );
         assert!(
             elapsed < Duration::from_millis(500),
-            "a lock directory that cannot be created fails without waiting: {elapsed:?}"
+            "a runtime and fallback that both cannot be prepared fail without waiting: {elapsed:?}"
         );
+        std::fs::set_permissions(runtime.path(), Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(fallback.path(), Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn an_existing_read_only_locks_dir_under_the_runtime_falls_back() {
+        let runtime = tempfile::tempdir().unwrap();
+        let locks = runtime.path().join("lets").join("locks");
+        std::fs::create_dir_all(&locks).unwrap();
+        std::fs::set_permissions(&locks, Permissions::from_mode(0o500)).unwrap();
+        let fallback = tempfile::tempdir().unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        let target = fixture.path().join("a.txt");
+        std::fs::write(&target, b"hi").unwrap();
+
+        let lock = Lock::acquire_with_fallback(&target, runtime.path(), fallback.path()).unwrap();
+
+        assert!(lock.path().starts_with(fallback.path()));
+        std::fs::set_permissions(&locks, Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn two_acquires_with_a_read_only_runtime_still_contend_through_the_shared_fallback() {
+        let runtime = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(runtime.path(), Permissions::from_mode(0o500)).unwrap();
+        let fallback = tempfile::tempdir().unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        let target = fixture.path().join("a.txt");
+        std::fs::write(&target, b"hi").unwrap();
+
+        let held = Lock::acquire_with_fallback(&target, runtime.path(), fallback.path()).unwrap();
+        let err =
+            Lock::acquire_with_fallback(&target, runtime.path(), fallback.path()).unwrap_err();
+
+        assert!(matches!(err, Error::Locked { .. }), "{err:?}");
+        drop(held);
         std::fs::set_permissions(runtime.path(), Permissions::from_mode(0o700)).unwrap();
     }
 
