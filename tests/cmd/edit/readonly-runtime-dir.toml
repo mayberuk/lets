@@ -1,0 +1,5 @@
+# A read-only XDG_RUNTIME_DIR reproduces Codex's workspace-write sandbox, where the runtime dir
+# is mounted read-only but the temp dir stays writable; `export` inside the script overrides the
+# harness's own XDG_RUNTIME_DIR for this one process, since a case's `[env]` table would not.
+bin.name = "sh"
+args = ["-c", "set -e; mkdir -p ro-runtime; chmod 0500 ro-runtime; trap 'chmod 0700 ro-runtime' EXIT; export XDG_RUNTIME_DIR=\"$(pwd)/ro-runtime\"; \"$CARGO_BIN_EXE_lets\" edit usage.ts --old 'const cap = 10' --new 'const cap = 20'"]

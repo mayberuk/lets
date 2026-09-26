@@ -3,6 +3,10 @@
 # case would edit its committed `<id>.in` tree in place instead of a throwaway copy.
 one-replacement.trycmd
 one-replacement.out
+readonly-runtime-dir.toml
+readonly-runtime-dir.out
+readonly-runtime-dir-ambiguous.toml
+readonly-runtime-dir-ambiguous.out
 old-not-found.trycmd
 old-not-found.out
 ambiguous.trycmd

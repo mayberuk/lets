@@ -1,0 +1,7 @@
+# Control for readonly-runtime-dir.toml: the lock still falls back and is acquired, but the
+# match itself is ambiguous, so this must exit 2 and write nothing, same as `ambiguous.trycmd`.
+bin.name = "sh"
+args = ["-c", "set -e; mkdir -p ro-runtime; chmod 0500 ro-runtime; trap 'chmod 0700 ro-runtime' EXIT; export XDG_RUNTIME_DIR=\"$(pwd)/ro-runtime\"; \"$CARGO_BIN_EXE_lets\" edit usage.ts --old 'return' --new 'return undefined'"]
+
+[status]
+code = 2
