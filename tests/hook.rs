@@ -1863,11 +1863,18 @@ fn a_codex_apply_patch_event_on_the_same_clean_file_gets_the_same_ok_result() {
 }
 
 /// nextest runs each test as its own process, so a `OnceLock` cannot share a warm build cache
-/// across them; a fixed directory under the OS temp root does, keeping every Go test but the
-/// first well under the 10 s timeout.
+/// across them; a fixed directory under the OS temp root does. It is warmed with the fixtures'
+/// imports outside any timeout first: on a cold CI cache `go vet` of a test file took over 10 s,
+/// so the hook's own timeout fired instead of the result under test.
 fn go_build_cache() -> PathBuf {
     let dir = std::env::temp_dir().join("lets-hook-go-build-cache");
     std::fs::create_dir_all(&dir).expect("a shared go build cache directory");
+    let _ = Command::new("go")
+        .args(["build", "fmt", "os", "testing"])
+        .env("GOCACHE", &dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     dir
 }
 
