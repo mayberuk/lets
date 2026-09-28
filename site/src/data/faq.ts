@@ -5,7 +5,7 @@ export const faq: { q: string; a: string }[] = [
   },
   {
     q: 'Which agents does it work with, and how does it reach them?',
-    a: "Claude Code and Codex. lets hooks install claude-code (or codex) wires three things: a SessionStart note explaining lets at the start of every session, a SubagentStart note that delivers the same explanation to subagents, and a PreToolUse hook that blocks a bare cat, sed -n or grep and hands back the matching lets command. Nothing is appended to the agent's system prompt, and if lets is missing or crashes, the hook lets the command through.",
+    a: "Claude Code and Codex. lets hooks install claude-code (or codex) wires three things: a SessionStart note explaining lets at the start of every session, a SubagentStart note that delivers the same explanation to subagents, and a PreToolUse hook that rewrites a cat, sed -n, head, tail, grep or rg with an exact lets translation in place, and denies only what has none, such as sed -i, naming the lets command to run instead. Nothing is appended to the agent's system prompt, and if lets is missing or crashes, the hook lets the command through.",
   },
   {
     q: 'What does "one call instead of three" mean?',
