@@ -36,6 +36,13 @@ All notable changes to `lets` are documented here. Format:
 - `lets hooks install codex` adds `SessionStart`/`SubagentStart` context and prints the trust
   approval step; it never writes trust itself.
 
+### Fixed
+
+- `edit`, `write` and `transform` no longer fail inside Codex's sandbox. It mounts
+  `XDG_RUNTIME_DIR` read-only, so the edit lock could never be taken and every edit failed with
+  `lock unavailable: Read-only file system`. The lock now falls back to the temp directory when the
+  runtime directory cannot be written, with the same ownership and symlink checks.
+
 ### Removed
 
 - The `PostToolUse` check hook (structural check, then `go build`/`go vet` after an edit) and the
