@@ -128,7 +128,20 @@ iteration, so a shared-machine load burst lands in every arm equally): `show` on
 
 Method, sample sizes and caveats: [`docs/benchmarks.md`](docs/benchmarks.md).
 
-<!-- RESULTS-0.0.3 -->
+0.0.3 was tested against no `lets` on three frozen tasks (the five-turn Kubernetes task above,
+a rename and a bug hunt), interleaved, with each session graded by its task's checker. `lets`
+still costs slightly more on both agents, with the same scores:
+
+| agent | pairs | cost | requests | wall time | checks |
+|---|---|---|---|---|---|
+| Claude Code, Opus 5.5 | 51 | +4.9% [+0.4%, +10.8%] | +0% [−7.7%, +7.1%] | +6.0% [−1.2%, +9.4%] | equal |
+| Codex, gpt-5.6-terra | 15 | +14.7% [+1.2%, +18.0%] | +20% [+6.9%, +23.5%] | +21.3% [+11%, +41.9%] | equal |
+
+Median change per pair, 95% interval. On Claude Code the Kubernetes task went from +10% (0.0.2)
+to +2.4% ($0.452 vs $0.442 per session, an interval that includes zero). The shorter tasks cost
+7% and 11% more, and what remains is context length, not requests. The Codex run used a build in
+which Codex's sandbox broke every `lets edit` and `lets write` on a read-only lock directory, and
+that accounts for most of its increase. 0.0.3 ships the fix, but no paid run has measured it yet.
 
 ## How it steers agents
 

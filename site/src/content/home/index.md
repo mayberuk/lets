@@ -170,6 +170,18 @@ change:
 Caveat: small samples (3–9 sessions per arm), so a smaller difference than this would need many
 more sessions to resolve with confidence.
 
+A larger, pre-registered trial of 0.0.3 on three frozen public tasks (a five-turn Kubernetes task,
+a rename, a bug hunt) found `lets` still costs slightly more, with the same checks passed:
+
+| agent | pairs | cost | requests | wall time |
+|---|---|---|---|---|
+| Claude Code, Opus 5.5 | 51 | +4.9% [+0.4%, +10.8%] | +0% [−7.7%, +7.1%] | +6.0% [−1.2%, +9.4%] |
+| Codex, gpt-5.6-terra | 15 | +14.7% [+1.2%, +18.0%] | +20% [+6.9%, +23.5%] | +21.3% [+11%, +41.9%] |
+
+Median change per pair, 95% interval. What remains on Claude Code is context length, not
+requests. Most of the Codex increase came from a sandbox lock bug that 0.0.3 fixes, and no paid
+run has measured that fix yet.
+
 Local latency, p50 from `just bench-gate`'s wall-clock target against the generated fixture
 corpus: `guide` 1.1 ms, `hook classify` 1.2 ms (1.34× `bash -n`), `show` on 200 lines 1.2 ms,
 `find` on 2,000 files 8.8 ms (1.34× `rg`), `edit` plus a syntax check 2.7 ms, a 10-file batch edit

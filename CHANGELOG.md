@@ -6,7 +6,7 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
-## [0.0.3] - 2026-09-26
+## [0.0.3] - 2026-09-28
 
 ### Added
 
