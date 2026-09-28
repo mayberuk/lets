@@ -6,6 +6,52 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-09-28
+
+### Added
+
+- `find` names how many hits match ignoring case when an exact-case search finds none:
+  `3 hits match only ignoring case (-s for exact case)`.
+- `find --cap-exit-0` prints the same over-cap output but exits 0, so a rewritten `grep … && …`
+  chain keeps the original's exit-status parity.
+- `show --no-header`, and `find --no-numbers` with grep's `--` separator between non-adjacent
+  context groups.
+
+### Changed
+
+- `show` no longer prints `sha:` on a read; only an `edit` result's footer carries the file's
+  hash, as `sha:<unchanged>` or `sha:<before>→<after>`.
+- `show --outline` lists one line per definition instead of the file's content.
+- An edit whose match was exact and whose check passed or did not apply prints one line instead
+  of the full echo; a normalized, guessed-span, confirmed or reverted edit still gets the full
+  echo.
+- The `PreToolUse` hook rewrites an exactly-translatable `cat`, `sed -n`, `head`/`tail`, `nl -ba`,
+  `grep` or `rg` in place (`updatedInput`) on both Claude Code and Codex, instead of denying the
+  command and suggesting a replacement. It denies only what has no exact `lets` translation:
+  `sed -i` and similar in-place edits, or a path a settings deny/ask rule already covers.
+- A search whose exit status is read (`&&`/`||`, `set -e`, `shopt -o errexit`, an `ERR` trap, or a
+  later `$?`/`${?}`/`PIPESTATUS`) keeps exact case and uses `--cap-exit-0`, so the rewritten
+  command's exit status still matches the original's; a plain displayed search keeps smart case.
+- A file a command reads twice is left as typed instead of rewritten.
+- `lets hooks install codex` adds `SessionStart`/`SubagentStart` context and prints the trust
+  approval step; it never writes trust itself.
+
+### Fixed
+
+- `edit`, `write` and `transform` no longer fail inside Codex's sandbox. It mounts
+  `XDG_RUNTIME_DIR` read-only, so the edit lock could never be taken and every edit failed with
+  `lock unavailable: Read-only file system`. The lock now falls back to the temp directory when the
+  runtime directory cannot be written, with the same ownership and symlink checks.
+
+### Removed
+
+- The `PostToolUse` check hook (structural check, then `go build`/`go vet` after an edit) and the
+  `show --outline` row in the session-start paragraph are no longer part of the default install.
+  Two pre-registered side trials on the lets-best-shot candidate found no benefit from either:
+  the check hook cost +0.86% [95% CI −3.46%, +3.01%], 22 pairs; the outline row cost +2.93%
+  [−3.45%, +8.48%], 28 pairs. Both remain available — the check hook by wiring the entry back by
+  hand, `--outline` as a `show` flag.
+
 ## [0.0.2] - 2026-09-25
 
 ### Added

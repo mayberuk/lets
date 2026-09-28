@@ -1,4 +1,4 @@
-// Every right-hand output is pasted from a run of lets 0.0.1 on the demo project, never written
+// Every right-hand output is pasted from a run of lets 0.0.3 on the demo project, never written
 // by hand; `link` ties a stock turn to the output chunk that makes it unnecessary.
 
 type Link = 'a' | 'b' | 'c';
@@ -21,7 +21,7 @@ export const PAIRS: Pair[] = [
     turns: [['cat src/usage.ts', 'read one file', 'a'],
       ['cat src/config.ts', 'then the next', 'b']],
     cmd: 'lets show src/usage.ts src/config.ts',
-    out: [['a', `── src/usage.ts  (1-13 of 13) · sha:6fae9e67700e
+    out: [['a', `── src/usage.ts  (1-13 of 13)
  1 \timport { usageCap } from './config'
  2 \t
  3 \texport function usage(id: string) {
@@ -34,9 +34,9 @@ export const PAIRS: Pair[] = [
 10 \t
 11 \tfunction total(id: string, now: number) {
 12 \t  return now - count(id)
-13 \t}`], ['b', `── src/config.ts  (1-2 of 2) · sha:4f49d457dfea
+13 \t}`], ['b', `── src/config.ts  (1-2 of 2)
  1 \texport const usageCap = 10
- 2 \texport const retries = 3`], [null, '── showed 2 targets · 15 lines · ~77 tokens']],
+ 2 \texport const retries = 3`], [null, '── showed 2 targets · 15 lines']],
   },
   {
     id: 'fn', tab: 'One function', title: 'Just the function, found by parsing.',
@@ -44,14 +44,14 @@ export const PAIRS: Pair[] = [
     turns: [["grep -n 'function usage' src/usage.ts", 'find where it starts', 'a'],
       ["sed -n '3,20p' src/usage.ts", 'guess where it ends', 'b']],
     cmd: 'lets show src/usage.ts#usage',
-    out: [['a', '── src/usage.ts#usage  (3-9 of 13 · via tree-sitter) · sha:6fae9e67700e'],
+    out: [['a', '── src/usage.ts#usage  (3-9 of 13 · via tree-sitter)'],
       ['b', `3 \texport function usage(id: string) {
 4 \t  const now = Date.now()
 5 \t  const cap = 10
 6 \t  if (!id) return
 7 \t  if (count(id) > cap) return
 8 \t  return total(id, now)
-9 \t}`], [null, '── showed 1 target · 7 lines · ~38 tokens']],
+9 \t}`], [null, '── showed 1 target · 7 lines']],
   },
   {
     id: 'find', tab: 'Find, then read', title: 'Every hit, with the lines around it.',
@@ -65,7 +65,7 @@ export const PAIRS: Pair[] = [
 1:\timport { «usageCap» } from './config'
 2-\t
 3-\texport function usage(id: string) {
-4-\t  const now = Date.now()`], [null, '── 2 hits in 2 files · searched 2 files · ~39 tokens']],
+4-\t  const now = Date.now()`], [null, '── 2 hits in 2 files · searched 2 files']],
   },
   {
     id: 'miss', tab: 'A miss', title: 'A miss names the nearest line.',
@@ -84,30 +84,22 @@ export const PAIRS: Pair[] = [
       ['Edit {"old_string": "total(id, now))", …}', 'undo it by hand', 'c']],
     cmd: "lets edit src/usage.ts --old 'return total(id, now)' --new 'return total(id, now))'",
     out: [['a', '── src/usage.ts · 1 replacement · line 8 · REVERTED'],
-      [null, ` 6 \t  if (!id) return
- 7 \t  if (count(id) > cap) return`],
+      [null, ' 7 \t  if (count(id) > cap) return'],
       ['b', ' 8~\t  return total(id, now))          ← parse error'],
-      [null, ` 9 \t}
-10 \t`],
-      ['c', '── check: failed → reverted · file unchanged · sha:6fae9e67700e · ~40 tokens'],
+      [null, ' 9 \t}'],
+      ['c', '── check: failed → reverted · file unchanged · sha:6fae9e67700e'],
       [null, `structure check failed for src/usage.ts: failed
 ERROR_CODE=check_failed`]],
   },
   {
     id: 'batch', tab: 'A batch', title: 'Two files change together, or neither does.',
-    say: 'One batch on stdin; every edit is matched and checked before any file is written.',
+    say: 'One batch on stdin; every edit is matched and checked before either file is written, and one line confirms both.',
     turns: [['Edit {"file_path": "src/config.ts", …}', 'edit one file', 'a'],
-      ['Edit {"file_path": "src/usage.ts", …}', 'edit the other', 'b'],
-      ['cat src/config.ts', 're-read to confirm', 'c'],
-      ['cat src/usage.ts', 're-read to confirm', 'c']],
+      ['Edit {"file_path": "src/usage.ts", …}', 'edit the other', 'a'],
+      ['cat src/config.ts', 're-read to confirm', 'a'],
+      ['cat src/usage.ts', 're-read to confirm', 'a']],
     cmd: "lets edit --from - <<'LETS'", fold: 'the 12-line batch on stdin is folded on this page',
-    out: [['a', `── src/config.ts · 1 replacement · line 1 · exact
-1~\texport const usageLimit = 10
-2 \texport const retries = 3`], ['b', `── src/usage.ts · 1 replacement · line 1 · exact
-1~\timport { usageLimit } from './config'
-2 \t
-3 \texport function usage(id: string) {`],
-      ['c', '── 2 files · 2 edits · all applied · checks: structure ok ×2 · ~60 tokens']],
+    out: [['a', '── 2 files · 2 edits · all applied · checks: structure ok ×2']],
   },
   {
     id: 'cfg', tab: 'Config values', title: 'Set a value; comments and order stay.',
@@ -122,7 +114,7 @@ ERROR_CODE=check_failed`]],
       ['b', '3~\t  "version": "1.4.0",'],
       [null, `4 \t  "scripts": {
 5 \t    "test": "vitest"`],
-      ['c', '── check: json ok · sha:cac96a379708→6c53277fd361 · ~21 tokens']],
+      ['c', '── check: json ok · sha:cac96a379708→6c53277fd361']],
   },
 ];
 

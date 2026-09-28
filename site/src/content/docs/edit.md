@@ -154,7 +154,7 @@ line:
 
 ```console
 $ lets edit src/usage.ts --old 'const cap = 10' --new 'const cap = 20'
-── src/usage.ts · 1 replacement · line 5 · check: structure ok · sha:75d31d847ffb→93b5daea8ace · ~26 tokens
+── src/usage.ts · 1 replacement · line 5 · check: structure ok · sha:75d31d847ffb→93b5daea8ace
 ```
 
 A match that needed `--normalize` to land (the file has an em dash where `--old` typed a plain
@@ -168,7 +168,7 @@ $ lets edit src/usage.ts --old 'cap - 1' --new 'cap - 2' --normalize
 5~    const cap = cap - 2
 6     if (!id) return
 7     if (count(id) > cap) return
-── check: structure ok · sha:75d31d847ffb→93b5daea8ace · ~45 tokens
+── check: structure ok · sha:75d31d847ffb→93b5daea8ace
 ```
 
 Ambiguous match — every candidate listed, nothing written:
@@ -227,7 +227,7 @@ import { usageCap } from './config'
 import { usageLimit } from './config'
 >>>>>>>
 LETS
-── 2 files · 2 edits · all applied · checks: structure ok ×2 · ~17 tokens
+── 2 files · 2 edits · all applied · checks: structure ok ×2
 ```
 
 If any edit in the batch had needed normalizing, or its check had reverted it, every result in

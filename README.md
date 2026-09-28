@@ -52,10 +52,12 @@ $ lets hooks install codex
 ```
 
 Each merges the hooks that agent's harness supports into its own user-level settings — for
-Claude Code, a `SessionStart` paragraph and a `PreToolUse` classifier that blocks a `cat`, `grep`
-or `sed -i` of a repo file only when it has a runnable `lets` replacement, and says what that
-replacement is. `lets hooks uninstall claude-code` and `lets hooks uninstall codex` remove them
-again. Installing only ever writes into the agent's own settings; nothing here modifies your
+Claude Code and Codex alike, a `SessionStart`/`SubagentStart` paragraph and a `PreToolUse`
+classifier that rewrites an exactly-translatable `cat`, `sed -n` or `grep`/`rg` of a repo file
+into the equivalent `lets` call in place, and denies only what has no exact `lets` translation
+(a `sed -i` in-place edit, or a path a settings deny/ask rule already covers), always naming the
+runnable replacement. `lets hooks uninstall claude-code` and `lets hooks uninstall codex` remove
+them again. Installing only ever writes into the agent's own settings; nothing here modifies your
 shell profile.
 
 ## Quickstart
@@ -126,13 +128,30 @@ iteration, so a shared-machine load burst lands in every arm equally): `show` on
 
 Method, sample sizes and caveats: [`docs/benchmarks.md`](docs/benchmarks.md).
 
+0.0.3 was tested against no `lets` on three frozen tasks (the five-turn Kubernetes task above,
+a rename and a bug hunt), interleaved, with each session graded by its task's checker. `lets`
+still costs slightly more on both agents, with the same scores:
+
+| agent | pairs | cost | requests | wall time | checks |
+|---|---|---|---|---|---|
+| Claude Code, Opus 5.5 | 51 | +4.9% [+0.4%, +10.8%] | +0% [−7.7%, +7.1%] | +6.0% [−1.2%, +9.4%] | equal |
+| Codex, gpt-5.6-terra | 15 | +14.7% [+1.2%, +18.0%] | +20% [+6.9%, +23.5%] | +21.3% [+11%, +41.9%] | equal |
+
+Median change per pair, 95% interval. On Claude Code the Kubernetes task went from +10% (0.0.2)
+to +2.4% ($0.452 vs $0.442 per session, an interval that includes zero). The shorter tasks cost
+7% and 11% more, and what remains is context length, not requests. The Codex run used a build in
+which Codex's sandbox broke every `lets edit` and `lets write` on a read-only lock directory, and
+that accounts for most of its increase. 0.0.3 ships the fix, but no paid run has measured it yet.
+
 ## How it steers agents
 
-Discovery is `SessionStart` only: `lets hooks install claude-code` prints a short paragraph
-explaining `lets` and its verbs at the start of every session, `compact` included, so it comes
-back after every compaction. It does not use Claude Code's system-prompt-append flag — a trial
-found that route held tool-call batching to zero across every session it ran, for the same or
-higher cost, so nothing is appended to the system prompt.
+Discovery is `SessionStart` and `SubagentStart`, never a system-prompt append: `lets hooks
+install claude-code` (or `codex`) prints a short paragraph explaining `lets` and its verbs at the
+start of every session, `compact` included, so it comes back after every compaction, and delivers
+the same paragraph to subagents, which a system-prompt append never reaches. It does not use
+Claude Code's system-prompt-append flag — a trial found that route held tool-call batching to
+zero across every session it ran, for the same or higher cost, so nothing is appended to the
+system prompt.
 
 ## Exit codes
 

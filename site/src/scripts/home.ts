@@ -176,9 +176,9 @@ function initSwitch() {
 function initTerminal() {
   const REC: Record<string, { out: string; code?: number; next: string }> = JSON.parse($('#rec').textContent!);
   const HOOK: Record<string, string> = {
-    'cat src/usage.ts': 'lets show reads several files and ranges in one call.\nrun: lets show src/usage.ts',
-    "sed -n '3,9p' src/usage.ts": 'lets show reads several files and ranges in one call.\nrun: lets show src/usage.ts:3-9',
-    'grep -rn usageCap src': "lets find returns every hit numbered and grouped by file.\nrun: lets find 'usageCap' src",
+    'cat src/usage.ts': "lets show src/usage.ts --all --no-header --no-numbers",
+    "sed -n '3,9p' src/usage.ts": 'lets show src/usage.ts:3-9 --no-header --no-numbers',
+    'grep -rn usageCap src': "lets find --hidden --no-ignore --exclude '.git/**' 'usageCap' src",
   };
   const HELP = [
     'lets show src/usage.ts#usage', 'lets show src/usage.ts src/config.ts', 'lets find usageCap', 'lets find cap src',
@@ -192,7 +192,7 @@ function initTerminal() {
   const caret = $('.caret', form), meas = $('.measure', form), line = form;
   let state = 'A', busy = false;
   const hist: string[] = []; let hi = 0;
-  out.innerHTML = '<span class="note">Recorded output from lets 0.0.1 on a demo project with two files, src/usage.ts and src/config.ts. Type help for the list.</span>\n';
+  out.innerHTML = '<span class="note">Recorded output from lets 0.0.3 on a demo project with two files, src/usage.ts and src/config.ts. Type help for the list.</span>\n';
   function fmt(t: string) {
     return t.replace(/\n$/, '').split('\n').map((l) => {
       const h = esc(l).replace(/«([^»]*)»/g, '<mark>«$1»</mark>');
@@ -234,8 +234,7 @@ function initTerminal() {
       return;
     }
     if (HOOK[n]) {
-      const [msg, run1] = HOOK[n].split('\n');
-      await print([note('In an agent session, the lets hook blocks this and hands back:'), '<span class="hookmsg">' + esc(msg) + '\n' + esc(run1) + '</span>' + note('In your own shell it still runs; the hook only answers your agent.')], fast);
+      await print([note('In an agent session, the lets hook rewrites this in place to:'), '<span class="hookmsg">' + esc(HOOK[n]) + '</span>' + note('Your agent gets the lets answer back; in your own shell this line still runs the original.')], fast);
       return;
     }
     const w = n.split(' ')[0];

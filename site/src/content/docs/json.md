@@ -101,7 +101,7 @@ file-derived cost to report:
 
 ```json
 {"guide":"lets — Locate · Edit · Transform · Show ..."}
-{"version":"0.0.1"}
+{"version":"0.0.3"}
 ```
 
 ## The `omitted` array

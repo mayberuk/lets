@@ -5,7 +5,7 @@ export const faq: { q: string; a: string }[] = [
   },
   {
     q: 'Which agents does it work with, and how does it reach them?',
-    a: "Claude Code and Codex. lets hooks install claude-code (or codex) wires three things: a SessionStart note explaining lets at the start of every session, a SubagentStart note that delivers the same explanation to subagents, and a PreToolUse hook that blocks a bare cat, sed -n or grep and hands back the matching lets command. Nothing is appended to the agent's system prompt, and if lets is missing or crashes, the hook lets the command through.",
+    a: "Claude Code and Codex. lets hooks install claude-code (or codex) wires three things: a SessionStart note explaining lets at the start of every session, a SubagentStart note that delivers the same explanation to subagents, and a PreToolUse hook that rewrites a cat, sed -n, head, tail, grep or rg with an exact lets translation in place, and denies only what has none, such as sed -i, naming the lets command to run instead. Nothing is appended to the agent's system prompt, and if lets is missing or crashes, the hook lets the command through.",
   },
   {
     q: 'What does "one call instead of three" mean?',
@@ -17,10 +17,10 @@ export const faq: { q: string; a: string }[] = [
   },
   {
     q: 'What did the trial measure?',
-    a: 'Five tasks on a private 17.7k-file Go monorepo, a stock Claude Code session against one with lets hooks install, nothing else changed. On Sonnet 5: 16% fewer tool calls, 11% faster, 99.1% vs 97.8% checks passed, cost-neutral (within 0.5%). On Opus 5.5: 16% fewer calls, 12% faster, 100% checks passed both, cost 8% higher on average. The samples are small — 3 to 9 sessions per arm.',
+    a: 'Five tasks on a private 17.7k-file Go monorepo, a stock Claude Code session against one with lets hooks install, nothing else changed. On Sonnet 5: 16% fewer tool calls, 11% faster, 99.1% vs 97.8% checks passed, cost-neutral (within 0.5%). On Opus 5.5: 16% fewer calls, 12% faster, 100% checks passed both, cost 8% higher on average. The samples are small — 3 to 9 sessions per arm. A larger trial of 0.0.3 on three public tasks found lets still costs slightly more at the same checks passed: +4.9% on Claude Code with Opus 5.5 (51 pairs) and +14.7% on Codex (15 pairs, on a build with a sandbox lock bug that 0.0.3 fixes).',
   },
   {
     q: 'What platforms and licence?',
-    a: 'Linux and macOS, as one static binary. MIT or Apache-2.0, your choice. Version 0.0.1.',
+    a: 'Linux and macOS, as one static binary. MIT or Apache-2.0, your choice. Version 0.0.3.',
   },
 ];

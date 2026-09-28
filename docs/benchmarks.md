@@ -135,3 +135,44 @@ comparable to 0.0.2's `find --no-expand`; the "expansion on" row measures 0.0.2 
 itself, to show what expansion costs. `show --all` on the 8 MiB file needed `--max-bytes
 16777216`: the default 64 KiB budget refuses `--all` on a file that size on both versions
 (exit 4, `over_budget`).
+
+## 0.0.3 agent trials
+
+Two pre-registered suites compared a stock agent (`none`) against one with `lets hooks install`
+(`lets`), on commit `01a3806` built as the musl dist binary. Three frozen tasks: the five-turn
+Kubernetes task from the large-repo section (`pub`), a cross-package rename and a bug hunt. Each
+task has its own checker, run against the session's real work tree. Sessions ran interleaved,
+one `none` then one `lets` per task and repeat. Intervals are 95% bootstrap intervals on the
+paired difference, pooled as percent change per pair. Dollar differences are never averaged
+across tasks. The win condition was a cost interval below zero on both agents, and neither met
+it.
+
+| agent | sessions | cost | requests | wall time | checks |
+|---|---|---|---|---|---|
+| Claude Code, Opus 5.5 | 102 (17 pairs per task) | +4.9% [+0.4%, +10.8%] | +0% [−7.7%, +7.1%] | +6.0% [−1.2%, +9.4%] | equal |
+| Codex, gpt-5.6-terra | 30 (5 pairs per task) | +14.7% [+1.2%, +18.0%] | +20% [+6.9%, +23.5%] | +21.3% [+11%, +41.9%] | equal |
+
+Claude Code, mean cost per session, `none` → `lets`:
+
+| task | cost | paired median difference |
+|---|---|---|
+| `pub` | $0.442 → $0.452 | +$0.020 [−$0.008, +$0.038] |
+| `rename` | $0.309 → $0.329 | +$0.023 [−$0.017, +$0.055] |
+| bug hunt | $0.225 → $0.249 | +$0.029 [−$0.004, +$0.068] |
+
+On `pub`, `lets` saved a request (median −1 [−2, 0]) and still cost more, because the numbered
+output, footers and session-start text make the context longer. On the other two tasks the hook
+denied a command about 0.5 and 0.7 times per session, and each deny costs a round trip.
+
+The Codex suite stopped at 15 pairs, on an account spend limit. Its build had a bug: Codex's
+workspace-write sandbox mounts `XDG_RUNTIME_DIR` read-only, so `lets edit` and `lets write`
+failed to take their lock 26 times in 13 of 15 sessions. Each failure cost a command and an
+`apply_patch` fallback. 0.0.3 falls back to the temp directory in that case. No paid run has
+measured the fixed build.
+
+Two side trials before the suites found no benefit from the `PostToolUse` check hook (Sonnet,
+22 pairs, +0.86% [−3.46%, +3.01%]) or from listing `--outline` in the session-start text (Opus,
+28 pairs, +2.93% [−3.45%, +8.48%]). 0.0.3 removes both from the default install.
+
+Part of the Claude suite ran with its CPU capped for other work on the machine. That lengthens
+wall time in both arms alike, and it leaves cost and requests unchanged.

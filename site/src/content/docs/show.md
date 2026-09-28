@@ -101,7 +101,7 @@ resolve), one line each, in source order:
 
 ## Examples
 
-Read several files in one call, numbered, with a size estimate:
+Read several files in one call, numbered:
 
 ```console
 $ lets show src/usage.ts src/config.ts
@@ -116,7 +116,7 @@ $ lets show src/usage.ts src/config.ts
 ── src/config.ts  (1-2 of 2)
  1   export const usageCap = 10
  2   export const retries = 3
-── showed 2 targets · 15 lines · ~74 tokens
+── showed 2 targets · 15 lines
 ```
 
 Read exactly one function, found by parsing the file, instead of guessing a line range:
@@ -131,7 +131,7 @@ $ lets show src/usage.ts#usage
 7     if (count(id) > cap) return
 8     return total(id, now)
 9   }
-── showed 1 target · 7 lines · ~38 tokens
+── showed 1 target · 7 lines
 ```
 
 Find a line by regex and read context around it in the same call:
@@ -142,7 +142,7 @@ $ lets show "src/usage.ts@'const cap'" -A 2
 5     const cap = 20
 6     if (!id) return
 7     if (count(id) > cap) return
-── showed 1 target · 3 lines · ~16 tokens
+── showed 1 target · 3 lines
 ```
 
 A file over the default window is truncated and the footer names what was left out:
