@@ -1,0 +1,8 @@
+bin.name = "lets"
+args = ["show", "small.md", "--head", "-1"]
+
+[status]
+code = 64
+
+[fs]
+base = "../../../target/cmd-fixtures/read"
