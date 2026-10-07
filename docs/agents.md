@@ -151,16 +151,17 @@ The mod makes three changes and one check:
 - Before a Bash call runs, the mod asks `lets hook classify` about it. A rewrite runs as the
   rewritten command. A deny that names exactly one `run:` line is answered instead: the mod runs
   that command in place of the one the model wrote and adds a note saying so. A deny with several
-  `run:` lines names separate commands, not one equivalent, so the original runs as typed. The mod
-  keeps no classification of its own; the classifier is the one source of verdicts.
+  `run:` lines names separate commands, not one equivalent, so the mod leaves the call alone and
+  the `PreToolUse` hook then denies it with those lines. The mod keeps no classification of its
+  own; the classifier is the one source of verdicts.
 - At session start the mod compares `lets version --json` with its own version and, when they
   differ, shows a toast naming both and `lets hooks install claude-code`. It never reinstalls.
 
 The mod fails open: a hook that errors, a `lets` that is missing, exits non-zero or prints more
 than the mod will read, passes the event on unchanged. The description and prompt changes depend only
 on their input, so the prompt cache holds for the session. When auto mode or the person refuses a
-changed Bash call, the mod remembers that command and lets it run as typed for the rest of the
-session, so a retry is not changed again.
+changed Bash call, the mod remembers that command and stops classifying it for the rest of the
+session. The `PreToolUse` hook still classifies it, so a retry can be changed again.
 
 `lets update` refreshes the mod files, through the new binary's own `hooks install claude-code`,
 only while the Claude Code settings still load the mod; a mod someone removed is not put back, and
