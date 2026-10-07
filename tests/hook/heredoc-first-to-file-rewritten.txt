@@ -1,0 +1,12 @@
+COMMAND
+cat <<'EOF' > out2.ts
+y
+EOF
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets write --force out2.ts <<'EOF'
+y
+EOF
+===END===
+COMPARE write

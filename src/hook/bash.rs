@@ -42,10 +42,16 @@ enum Finding {
         old: String,
         new: String,
     },
+    /// `cat` and `redirect` are the byte ranges the rewrite replaces and deletes; every other byte
+    /// of the statement, the heredoc included, stays as typed.
     Write {
         path: String,
         operand: Word,
+        cat: Range<usize>,
+        redirect: Range<usize>,
     },
+    /// `lets show` or `lets find` piped into `head`, as that call with `--head`.
+    Head { command: String },
 }
 
 /// A rewrite runs unseen, so its `lets show` prints every line the read would have.
@@ -128,9 +134,73 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
         base: &base,
     };
 
+    let (findings, segments) = classify_statements(&statements, command, dirs);
+    let (findings, segments) = without_repeated_reads(findings, segments, dirs);
+    let operators = operators(&segments, command);
+    let unread = unread_statuses(&segments, operators.as_deref(), &findings, root, command);
+    let (findings, segments) = without_read_heads(findings, segments, &unread);
+    if findings.is_empty() {
+        return Verdict::Allow;
+    }
+    let (notes, prefix) = notes(cd, &findings);
+    if let Some(sources) = claude_code
+        && left_to_claude_code(&findings, dirs, sources)
+    {
+        return Verdict::Allow;
+    }
+    let whole = segments
+        .iter()
+        .all(|segment| segment.replaced && !segment.findings.is_empty());
+    if whole
+        && operators
+            .as_ref()
+            .is_some_and(|operators| !operators.contains(&"||"))
+        && let Some(command) = rewrite(&findings, &prefix, dirs)
+    {
+        return Verdict::Rewrite { command };
+    }
+    // A head pipe has no `run:` line of its own, so listing the others alone would drop it.
+    let drops = segments.iter().any(|segment| {
+        findings[segment.findings.clone()]
+            .iter()
+            .all(|finding| matches!(finding, Finding::Head { .. }))
+    });
+    let replacements = replacements(&segments, &findings, dirs, &unread, command);
+    if operators.is_some()
+        && let Some(command) = replacements
+            .as_deref()
+            .and_then(|replacements| splice_rewrite(command, replacements))
+    {
+        return Verdict::Rewrite { command };
+    }
+    // `lets … | head` already runs `lets`: it is only ever rewritten, never denied.
+    if findings
+        .iter()
+        .all(|finding| matches!(finding, Finding::Head { .. }))
+    {
+        return Verdict::Allow;
+    }
+    // A Codex deny lists each replacement alone unless that would drop a statement. A `run:` line
+    // is one line.
+    let spliced = replacements
+        .filter(|_| {
+            (claude_code.is_some() || drops) && segments.len() > 1 && !command.contains('\n')
+        })
+        .and_then(|replacements| splice(command, &replacements));
+    match reason(&findings, &notes, &prefix, spliced.as_deref()) {
+        Some(reason) => Verdict::Block { reason },
+        None => Verdict::Allow,
+    }
+}
+
+fn classify_statements(
+    statements: &[Statement<'_>],
+    command: &str,
+    dirs: Dirs<'_>,
+) -> (Vec<Finding>, Vec<Segment>) {
     let mut findings = Vec::new();
     let mut segments = Vec::with_capacity(statements.len());
-    for Statement { node, redirected } in &statements {
+    for Statement { node, redirected } in statements {
         let before = findings.len();
         let replaced = match redirected {
             Some(owner) => {
@@ -147,49 +217,7 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
             replaced,
         });
     }
-    let (findings, segments) = without_repeated_reads(findings, segments, dirs);
-    let (notes, prefix) = notes(cd, &findings);
-    if findings.is_empty() {
-        return Verdict::Allow;
-    }
-    if let Some(sources) = claude_code
-        && left_to_claude_code(&findings, dirs, sources)
-    {
-        return Verdict::Allow;
-    }
-    let operators = operators(&segments, command);
-    let whole = segments
-        .iter()
-        .all(|segment| segment.replaced && !segment.findings.is_empty());
-    if whole
-        && operators
-            .as_ref()
-            .is_some_and(|operators| !operators.contains(&"||"))
-        && let Some(command) = rewrite(&findings, &prefix, dirs)
-    {
-        return Verdict::Rewrite { command };
-    }
-    let drops = segments.iter().any(|segment| segment.findings.is_empty());
-    let unread = unread_statuses(&segments, operators.as_deref(), &findings, root, command);
-    let replacements = replacements(&segments, &findings, dirs, &unread);
-    if operators.is_some()
-        && let Some(command) = replacements
-            .as_deref()
-            .and_then(|replacements| splice_rewrite(command, replacements))
-    {
-        return Verdict::Rewrite { command };
-    }
-    // A Codex deny lists each replacement alone unless that would drop a statement. A `run:` line
-    // is one line.
-    let spliced = replacements
-        .filter(|_| {
-            (claude_code.is_some() || drops) && segments.len() > 1 && !command.contains('\n')
-        })
-        .and_then(|replacements| splice(command, &replacements));
-    match reason(&findings, &notes, &prefix, spliced.as_deref()) {
-        Some(reason) => Verdict::Block { reason },
-        None => Verdict::Allow,
-    }
+    (findings, segments)
 }
 
 /// Leaves every statement that reads a file some read in the command also names as typed: one
@@ -252,6 +280,57 @@ fn without_repeated_reads(
     (kept, segments)
 }
 
+/// Leaves a `lets … | head` whose exit status is read as typed: `--head` exits as `lets` does,
+/// where the pipe exits as `head` does. `unread` is `unread_statuses`.
+fn without_read_heads(
+    findings: Vec<Finding>,
+    segments: Vec<Segment>,
+    unread: &[bool],
+) -> (Vec<Finding>, Vec<Segment>) {
+    let read = |at: usize, segment: &Segment| {
+        !unread.get(at).copied().unwrap_or(false)
+            && findings[segment.findings.clone()]
+                .iter()
+                .any(|finding| matches!(finding, Finding::Head { .. }))
+    };
+    if !segments
+        .iter()
+        .enumerate()
+        .any(|(at, segment)| read(at, segment))
+    {
+        return (findings, segments);
+    }
+    let dropped: Vec<bool> = segments
+        .iter()
+        .enumerate()
+        .map(|(at, segment)| read(at, segment))
+        .collect();
+    let mut kept = Vec::with_capacity(findings.len());
+    let mut findings = findings.into_iter();
+    let segments = segments
+        .into_iter()
+        .zip(dropped)
+        .map(|(segment, dropped)| {
+            let start = kept.len();
+            let found = findings.by_ref().take(segment.findings.len());
+            if dropped {
+                found.for_each(drop);
+                return Segment {
+                    findings: start..start,
+                    replaced: false,
+                    ..segment
+                };
+            }
+            kept.extend(found);
+            Segment {
+                findings: start..kept.len(),
+                ..segment
+            }
+        })
+        .collect();
+    (kept, segments)
+}
+
 /// What the reason says before its clauses, and the `cd` every unspliced `run:` line starts with.
 fn notes(cd: Option<String>, findings: &[Finding]) -> (Vec<String>, String) {
     let (mut notes, prefix) = match cd {
@@ -287,7 +366,7 @@ fn unread_statuses(
 ) -> Vec<bool> {
     let searches = findings
         .iter()
-        .any(|finding| matches!(finding, Finding::Find { .. }));
+        .any(|finding| matches!(finding, Finding::Find { .. } | Finding::Head { .. }));
     let Some(operators) = operators.filter(|_| searches && !acts_on_status(root, src)) else {
         return vec![false; segments.len()];
     };
@@ -335,13 +414,14 @@ struct Replacement {
     exact: bool,
 }
 
-/// One per statement with findings, or `None` when one needs more than a one-line command: a
-/// heredoc write, whose `lets write` takes the heredoc on stdin. `unread` is `unread_statuses`.
+/// One per statement with findings, or `None` when one has no single command to stand in for it.
+/// `unread` is `unread_statuses`.
 fn replacements(
     segments: &[Segment],
     findings: &[Finding],
     dirs: Dirs,
     unread: &[bool],
+    src: &str,
 ) -> Option<Vec<Replacement>> {
     let mut replacements = Vec::new();
     for (at, segment) in segments.iter().enumerate() {
@@ -349,11 +429,25 @@ fn replacements(
         if found.is_empty() {
             continue;
         }
-        if found
-            .iter()
-            .any(|finding| matches!(finding, Finding::Write { .. }))
-        {
-            return None;
+        let standalone = match found {
+            [Finding::Head { command }] => Some((command.clone(), segment.replaced)),
+            [
+                Finding::Write {
+                    path,
+                    cat,
+                    redirect,
+                    ..
+                },
+            ] => Some((written(src, &segment.span, cat, redirect, path)?, true)),
+            _ => None,
+        };
+        if let Some((command, exact)) = standalone {
+            replacements.push(Replacement {
+                span: segment.span.clone(),
+                command,
+                exact,
+            });
+            continue;
         }
         let (lines, _) = run_lines(found);
         let [line] = <[String; 1]>::try_from(lines).ok()?;
@@ -399,6 +493,41 @@ fn replacements(
         });
     }
     Some(replacements)
+}
+
+/// The statement at `span` with `cat` as `lets write --force <path>` and the stdout redirect gone
+/// along with one space beside it, so the heredoc that fed `cat` now feeds `lets write`.
+fn written(
+    src: &str,
+    span: &Range<usize>,
+    cat: &Range<usize>,
+    redirect: &Range<usize>,
+    path: &str,
+) -> Option<String> {
+    let redirect = if src.get(..redirect.start)?.ends_with(' ') {
+        redirect.start - 1..redirect.end
+    } else if src.get(redirect.end..)?.starts_with(' ') {
+        redirect.start..redirect.end + 1
+    } else {
+        redirect.clone()
+    };
+    let mut edits = [
+        Replacement {
+            span: cat.start.checked_sub(span.start)?..cat.end.checked_sub(span.start)?,
+            command: format!("lets write --force {path}"),
+            exact: true,
+        },
+        Replacement {
+            span: redirect.start.checked_sub(span.start)?..redirect.end.checked_sub(span.start)?,
+            command: String::new(),
+            exact: true,
+        },
+    ];
+    edits.sort_by_key(|edit| edit.span.start);
+    if edits[0].span.end > edits[1].span.start {
+        return None;
+    }
+    splice(src.get(span.clone())?, &edits)
 }
 
 /// Every path a search names, or the directory it searches when it names none, is inside the tree
@@ -716,6 +845,7 @@ fn left_as_typed(found: &[Finding], dirs: Dirs) -> bool {
                     return true;
                 }
             },
+            Finding::Head { .. } => {},
         }
     }
     if reads.is_empty() {
@@ -851,6 +981,8 @@ fn left_to_claude_code(findings: &[Finding], dirs: Dirs, sources: &Sources) -> b
         Finding::Find { operands, .. } => operands.iter().any(|word| covered(word, Access::Read)),
         Finding::Edit { operands, .. } => operands.iter().any(|word| covered(word, Access::Edit)),
         Finding::Write { operand, .. } => covered(operand, Access::Edit),
+        // The original already ran `lets`, which Claude Code judges either way.
+        Finding::Head { .. } => false,
     })
 }
 
@@ -959,6 +1091,7 @@ fn classify_displayed(
             let stages: Vec<Node> = node.children(&mut cursor).filter(Node::is_named).collect();
             if let Some(finding) = cat_head_pipeline(&stages, src, dirs)
                 .or_else(|| numbered_range_pipeline(&stages, src, dirs))
+                .or_else(|| lets_head_pipeline(node, &stages, src))
             {
                 findings.push(finding);
                 return true;
@@ -1035,22 +1168,24 @@ fn classify_redirected(
     let heredoc = redirects
         .iter()
         .any(|redirect| redirect.kind() == "heredoc_redirect");
-    let write = redirects
-        .iter()
-        .find_map(|redirect| stdout_write(*redirect, src));
+    let write = redirects.iter().find_map(|redirect| {
+        stdout_write(*redirect, src)
+            .map(|(destination, operator)| (destination, operator, *redirect))
+    });
 
-    if let Some((destination, operator)) = write {
+    if let Some((destination, operator, redirect)) = write {
         // Nothing is displayed; only a bare `cat` fed by a heredoc maps to `lets write`.
-        if !destination.glob && in_tree(dirs, &destination.text).is_some() {
-            let replaceable = heredoc
-                && matches!(operator, ">" | ">|" | "&>")
-                && body.is_some_and(|body| is_bare_cat(body, src));
-            if replaceable {
-                findings.push(Finding::Write {
-                    path: shell_quote(&destination.text),
-                    operand: destination,
-                });
-            }
+        if let Some(cat) = body
+            .filter(|body| is_bare_cat(*body, src))
+            .and_then(|body| body.child_by_field_name("name"))
+            && writes_as_lets_write(node, &redirects, &destination, operator, src, dirs)
+        {
+            findings.push(Finding::Write {
+                path: shell_quote(&destination.text),
+                operand: destination,
+                cat: cat.byte_range(),
+                redirect: redirect.byte_range(),
+            });
         }
         return false;
     }
@@ -1072,6 +1207,89 @@ fn classify_redirected(
         && redirects
             .iter()
             .all(|redirect| only_moves_stderr(*redirect, src))
+}
+
+/// True when `lets write --force` leaves the tree and the exit status as `cat` fed by `node`'s one
+/// heredoc would: `&>` also sends stderr to the file, noclobber fails a `>` onto an existing
+/// file, a write through a second hard link or onto a non-regular file is not an atomic replace,
+/// and `lets write` refuses empty or over-`--max-file-bytes` input.
+fn writes_as_lets_write(
+    node: Node,
+    redirects: &[Node],
+    destination: &Word,
+    operator: &str,
+    src: &str,
+    dirs: Dirs,
+) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    if destination.glob
+        || in_tree(dirs, &destination.text).is_none()
+        || !matches!(operator, ">" | ">|")
+    {
+        return false;
+    }
+    let [first, second] = redirects else {
+        return false;
+    };
+    let heredoc = if first.kind() == "heredoc_redirect" {
+        first
+    } else {
+        second
+    };
+    if heredoc.kind() != "heredoc_redirect" {
+        return false;
+    }
+    // `cat > f <<'EOF' && ls` hangs the rest of the line inside the heredoc node.
+    let mut cursor = heredoc.walk();
+    let mut body = None;
+    for child in heredoc.named_children(&mut cursor) {
+        match child.kind() {
+            "heredoc_start" | "heredoc_end" | "file_redirect" => {},
+            "heredoc_body" => body = Some(child),
+            _ => return false,
+        }
+    }
+    let Some(body) = body else {
+        return false;
+    };
+    let bytes = u64::try_from(body.byte_range().len()).unwrap_or(u64::MAX);
+    if bytes == 0 || bytes > SHOW_MAX_FILE_BYTES {
+        return false;
+    }
+    if operator == ">" {
+        let mut root = node;
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+        if sets_an_option(root, src) {
+            return false;
+        }
+    }
+    let path = dirs.base.join(&destination.text);
+    match std::fs::metadata(&path) {
+        Ok(metadata) => metadata.is_file() && metadata.nlink() == 1,
+        Err(error) => {
+            error.kind() == std::io::ErrorKind::NotFound
+                && std::fs::symlink_metadata(&path).is_err()
+        },
+    }
+}
+
+/// `set` or `shopt` anywhere, a substitution or a compound body included: either can turn on
+/// noclobber.
+fn sets_an_option(node: Node, src: &str) -> bool {
+    if node.kind() == "command"
+        && matches!(
+            node.child_by_field_name("name").and_then(|n| text(n, src)),
+            Some("set" | "shopt")
+        )
+    {
+        return true;
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(|child| sets_an_option(child, src))
 }
 
 /// `cat <<'EOF' > f` nests the file redirect inside the heredoc node, unlike `cat > f <<'EOF'`.
@@ -1447,6 +1665,55 @@ fn cat_head_pipeline(stages: &[Node], src: &str, dirs: Dirs) -> Option<Finding> 
         }),
         source: Some((*path).clone()),
         numbered,
+    })
+}
+
+/// `lets show …` or `lets find …` piped into `head` as that call with `--head N`, which prints the
+/// same first N lines plus a footer naming the rest. `|&` would also hand `head` the stderr, and
+/// `--json`, `--jsonl` and a second `--head` refuse `--head`; `--` would make it an operand.
+fn lets_head_pipeline(pipeline: Node, stages: &[Node], src: &str) -> Option<Finding> {
+    let [lets_stage, head_stage] = stages else {
+        return None;
+    };
+    let mut cursor = pipeline.walk();
+    if pipeline
+        .children(&mut cursor)
+        .any(|child| !child.is_named() && text(child, src) != Some("|"))
+    {
+        return None;
+    }
+    let words = |stage: &Node, name: &str| -> Option<Vec<Word>> {
+        if stage.kind() != "command"
+            || !is_plain(*stage)
+            || stage.child_by_field_name("name").and_then(|n| text(n, src)) != Some(name)
+        {
+            return None;
+        }
+        let mut cursor = stage.walk();
+        stage
+            .children_by_field_name("argument", &mut cursor)
+            .map(|argument| literal(argument, src))
+            .collect()
+    };
+    let lets_words = words(lets_stage, "lets")?;
+    let lets_arguments = texts(&lets_words);
+    if !matches!(lets_arguments.first(), Some(&("show" | "find")))
+        || lets_arguments.iter().any(|argument| {
+            matches!(
+                *argument,
+                "--" | "--json" | "--jsonl" | "--head" | "-h" | "--help"
+            ) || argument.starts_with("--head=")
+        })
+    {
+        return None;
+    }
+    let head_arguments = words(head_stage, "head")?;
+    let lines = match head_arguments.as_slice() {
+        [] => 10,
+        _ => head_sole_count(&texts(&head_arguments))?,
+    };
+    Some(Finding::Head {
+        command: format!("{} --head {lines}", text(*lets_stage, src)?),
     })
 }
 
@@ -2181,6 +2448,7 @@ fn run_lines(findings: &[Finding]) -> (Vec<String>, Vec<&'static str>) {
                 lines.push(format!("lets write --force {path}"));
                 add_clause(&mut clauses, WRITE_CLAUSE);
             },
+            Finding::Head { .. } => {},
         }
     }
     if let Some(at) = show_line {
@@ -2782,9 +3050,12 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_or_a_write_stays_a_deny() {
+    fn an_edit_stays_a_deny_where_a_heredoc_write_is_rewritten() {
         assert_still_blocked("sed -i 's/a/b/g' src/a.ts");
-        assert_still_blocked("cat > out.txt <<'EOF'\nx\nEOF");
+        assert_eq!(
+            rewritten("cat > out.txt <<'EOF'\nx\nEOF"),
+            "lets write --force out.txt <<'EOF'\nx\nEOF"
+        );
     }
 
     #[test]
@@ -3977,25 +4248,185 @@ mod tests {
     }
 
     #[test]
-    fn a_heredoc_that_writes_a_file_blocks_with_lets_write() {
-        let reason = blocked("cat > scripts/x.sh <<'EOF'\necho hi\nEOF");
-
-        assert!(
-            reason.contains("run: lets write --force scripts/x.sh"),
-            "{reason}"
-        );
-        assert!(reason.contains("heredoc"), "{reason}");
+    fn a_lets_read_piped_into_head_is_that_read_with_head() {
+        for (command, replacement) in [
+            ("lets find x src | head -20", "lets find x src --head 20"),
+            ("lets find x src | head -n 5", "lets find x src --head 5"),
+            (
+                "lets find x src | head --lines=3",
+                "lets find x src --head 3",
+            ),
+            ("lets find x src | head", "lets find x src --head 10"),
+            (
+                "lets show a.ts b.ts | head -5",
+                "lets show a.ts b.ts --head 5",
+            ),
+            (
+                "ls; lets show 'my dir/a.ts' | head -2",
+                "ls; lets show 'my dir/a.ts' --head 2",
+            ),
+        ] {
+            assert_eq!(rewritten(command), replacement, "{command:?}");
+            assert_eq!(
+                verdict(command),
+                Verdict::Rewrite {
+                    command: replacement.to_owned()
+                },
+                "{command:?}"
+            );
+        }
     }
 
     #[test]
-    fn both_heredoc_write_orderings_block_with_lets_write() {
+    fn a_lets_head_pipe_with_no_exact_head_form_or_a_read_status_runs_as_typed() {
+        for command in [
+            "lets find x src | head -c 10",
+            "lets find x src | tail -5",
+            "lets find x src |& head -5",
+            "lets find x src | head -5 && ls",
+            "lets find x src | head -5 || ls",
+            "set -e; lets find x src | head -5",
+            "lets find x src | head -5; echo $?",
+            "lets --json find x | head",
+            "lets find x --json | head",
+            "lets find x --jsonl | head",
+            "lets find x --head 3 | head",
+            "lets find x --head=3 | head",
+            "lets find -- -x src | head",
+            "lets show --help | head",
+            "lets show f 2>&1 | head",
+            "lets find x | head -5 | cat",
+            "lets edit src/a.ts --old a --new b | head",
+            "lets find \"$x\" src | head",
+            "lets find x src | head -5 &",
+        ] {
+            assert_allowed(command);
+            assert_eq!(claude_code(command), Verdict::Allow, "{command:?}");
+        }
+    }
+
+    #[test]
+    fn a_lets_head_pipe_never_causes_a_deny_of_its_own() {
+        let reason = blocked("sed -i 's/a/b/g' src/a.ts && lets show src/b.ts | head -3");
         assert!(
-            blocked("cat > scripts/x.sh <<'EOF'\necho hi\nEOF")
-                .contains("run: lets write --force scripts/x.sh")
+            reason.ends_with(
+                "\nrun: lets edit src/a.ts --old 'a' --new 'b' --all && lets show src/b.ts --head 3"
+            ),
+            "{reason}"
         );
+        let reason = blocked("lets show src/b.ts | head -3 && sed -i 's/a/b/g' src/a.ts");
         assert!(
-            blocked("cat <<'EOF' > scripts/x.sh\necho hi\nEOF")
-                .contains("run: lets write --force scripts/x.sh")
+            reason.ends_with(
+                "\nrun: lets show src/b.ts | head -3 && lets edit src/a.ts --old 'a' --new 'b' \
+                 --all"
+            ),
+            "{reason}"
+        );
+        let reason = blocked("sed -i 's/a/b/g' src/a.ts\nlets show src/b.ts | head -3");
+        assert!(
+            reason.ends_with("\nrun: lets edit src/a.ts --old 'a' --new 'b' --all"),
+            "{reason}"
+        );
+        assert!(!reason.contains("--head"), "{reason}");
+    }
+
+    #[test]
+    fn a_heredoc_that_writes_a_file_is_rewritten_to_lets_write_on_both_harnesses() {
+        let command = "cat > scripts/x.sh <<'EOF'\necho hi\nEOF";
+        let replacement = "lets write --force scripts/x.sh <<'EOF'\necho hi\nEOF";
+
+        assert_eq!(rewritten(command), replacement);
+        assert_eq!(verdict(command), Verdict::Rewrite {
+            command: replacement.to_owned()
+        });
+    }
+
+    #[test]
+    fn both_heredoc_write_orderings_keep_every_byte_but_cat_and_the_redirect() {
+        assert_eq!(
+            rewritten("cat > scripts/x.sh <<'EOF'\necho hi\nEOF"),
+            "lets write --force scripts/x.sh <<'EOF'\necho hi\nEOF"
+        );
+        assert_eq!(
+            rewritten("cat <<'EOF' > scripts/x.sh\necho hi\nEOF"),
+            "lets write --force scripts/x.sh <<'EOF'\necho hi\nEOF"
+        );
+        assert_eq!(
+            rewritten("cat <<-EOF >| 'my dir/new.ts'\n\texport const $x = 1;\n\tEOF\n"),
+            "lets write --force 'my dir/new.ts' <<-EOF\n\texport const $x = 1;\n\tEOF\n"
+        );
+    }
+
+    #[test]
+    fn a_heredoc_write_in_a_chain_is_spliced_where_it_stands() {
+        assert_eq!(
+            rewritten("cat > out.txt <<'EOF'\nx\nEOF\ncat src/a.ts"),
+            "lets write --force out.txt <<'EOF'\nx\nEOF\nlets show src/a.ts --all --no-header \
+             --no-numbers"
+        );
+        assert_eq!(
+            rewritten("ls; cat <<'EOF' > out.txt\nset -euo pipefail\nEOF"),
+            "ls; lets write --force out.txt <<'EOF'\nset -euo pipefail\nEOF"
+        );
+    }
+
+    #[test]
+    fn a_heredoc_write_lets_write_cannot_reproduce_runs_as_typed() {
+        for command in [
+            "set -C; cat > out.txt <<'EOF'\nx\nEOF",
+            "cat > out.txt <<'EOF'\nx\nEOF\nshopt -so noclobber",
+            "cat &> out.txt <<'EOF'\nx\nEOF",
+            "cat > out.txt <<'A' <<'B'\nx\nA\ny\nB",
+            "cat > out.txt <<'EOF' 2>&1\nx\nEOF",
+            "cat > out.txt <<'EOF' && ls\nx\nEOF",
+            "cat > out.txt <<'EOF' | tee copy.txt\nx\nEOF",
+            "cat > out.txt <<'EOF'\nEOF",
+            "cat > src <<'EOF'\nx\nEOF",
+        ] {
+            assert_allowed(command);
+            assert_eq!(claude_code(command), Verdict::Allow, "{command:?}");
+        }
+        assert_eq!(
+            rewritten("set -C; cat >| out.txt <<'EOF'\nx\nEOF"),
+            "set -C; lets write --force out.txt <<'EOF'\nx\nEOF"
+        );
+    }
+
+    #[test]
+    fn a_heredoc_write_through_a_second_hard_link_runs_as_typed() {
+        let tree = tree();
+        std::fs::hard_link(
+            tree.path().join("src/a.ts"),
+            tree.path().join("src/linked.ts"),
+        )
+        .expect("a hard link in the temp tree");
+        let command = "cat > src/a.ts <<'EOF'\nx\nEOF";
+
+        assert_eq!(classify_command(command, cwd(&tree), None), Verdict::Allow);
+        assert_eq!(
+            classify_command("cat > src/b.ts <<'EOF'\nx\nEOF", cwd(&tree), None),
+            Verdict::Rewrite {
+                command: "lets write --force src/b.ts <<'EOF'\nx\nEOF".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn a_heredoc_write_through_a_symlink_is_rewritten_only_onto_a_regular_file() {
+        let tree = tree();
+        std::os::unix::fs::symlink("a.ts", tree.path().join("src/to-a.ts")).expect("a symlink");
+        std::os::unix::fs::symlink("gone.ts", tree.path().join("src/dangling.ts"))
+            .expect("a symlink");
+
+        assert_eq!(
+            classify_command("cat > src/to-a.ts <<'EOF'\nx\nEOF", cwd(&tree), None),
+            Verdict::Rewrite {
+                command: "lets write --force src/to-a.ts <<'EOF'\nx\nEOF".to_owned()
+            }
+        );
+        assert_eq!(
+            classify_command("cat > src/dangling.ts <<'EOF'\nx\nEOF", cwd(&tree), None),
+            Verdict::Allow
         );
     }
 
@@ -4011,22 +4442,16 @@ mod tests {
     }
 
     #[test]
-    fn every_write_redirect_operator_is_a_write() {
-        for command in [
-            "cat > out.txt <<'EOF'\nx\nEOF",
-            "cat >| out.txt <<'EOF'\nx\nEOF",
-            "cat &> out.txt <<'EOF'\nx\nEOF",
-        ] {
-            assert!(
-                blocked(command).contains("run: lets write --force out.txt"),
-                "{command:?}"
+    fn only_a_stdout_only_overwrite_is_a_write() {
+        for operator in [">", ">|"] {
+            assert_eq!(
+                rewritten(&format!("cat {operator} out.txt <<'EOF'\nx\nEOF")),
+                "lets write --force out.txt <<'EOF'\nx\nEOF",
+                "{operator}"
             );
         }
-        for command in [
-            "cat >> out.txt <<'EOF'\nx\nEOF",
-            "cat &>> out.txt <<'EOF'\nx\nEOF",
-        ] {
-            assert_allowed(command);
+        for operator in ["&>", ">>", "&>>"] {
+            assert_allowed(&format!("cat {operator} out.txt <<'EOF'\nx\nEOF"));
         }
     }
 
@@ -4708,11 +5133,13 @@ mod tests {
 
     #[test]
     fn a_heredoc_write_after_a_leading_cd_is_the_write_replacement() {
-        let reason = blocked("cd src && cat > new.ts <<'EOF'\nx\nEOF");
-
-        assert!(
-            reason.contains("run: cd src && lets write --force new.ts"),
-            "{reason}"
+        assert_eq!(
+            rewritten("cd src && cat > new.ts <<'EOF'\nx\nEOF"),
+            "cd src && lets write --force new.ts <<'EOF'\nx\nEOF"
+        );
+        assert_eq!(
+            rewritten("cd src && cat <<'EOF' > new.ts\nx\nEOF\n"),
+            "cd src && lets write --force new.ts <<'EOF'\nx\nEOF\n"
         );
         assert_allowed("cd /tmp/x && cat > a.txt <<'EOF'\nx\nEOF");
         assert_allowed("cd src && jq . - <<'EOF'\nx\nEOF");

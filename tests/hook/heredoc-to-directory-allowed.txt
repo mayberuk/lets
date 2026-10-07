@@ -1,0 +1,6 @@
+COMMAND
+cat > src <<'EOF'
+x
+EOF
+===END===
+VERDICT allow

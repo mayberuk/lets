@@ -1,0 +1,4 @@
+COMMAND
+lets find export src | head -5 && ls
+===END===
+VERDICT allow

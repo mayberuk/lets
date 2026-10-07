@@ -1,0 +1,4 @@
+COMMAND
+lets show src/a.ts | tail -3
+===END===
+VERDICT allow

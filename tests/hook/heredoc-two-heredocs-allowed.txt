@@ -1,0 +1,8 @@
+COMMAND
+cat > out.ts <<'A' <<'B'
+x
+A
+y
+B
+===END===
+VERDICT allow

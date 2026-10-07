@@ -1,0 +1,8 @@
+COMMAND
+lets find const src | head
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find const src --head 10
+===END===
+COMPARE head
