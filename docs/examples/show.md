@@ -97,10 +97,136 @@ ERROR_CODE=usage
 ```
 
 ```console
+$ lets show nope1.ts small.md:3 --head 2
+? 1
+── small.md:3  (3-3 of 15)
+3 	One grammar every verb speaks.
+── showed 1 target · 1 line · nope1.ts failed (not_found) · output lines 3-3 not shown (--head 2)
+nope1.ts: No such file or directory (os error 2)
+ERROR_CODE=not_found
+
+```
+
+```console
+$ lets show small.md --head -1
+? 64
+...
+ERROR_CODE=usage
+
+```
+
+```console
 $ lets show big.ts --head 102
 ── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
-...
+  1 	// big.ts — padded fixture for lets show's window-truncation and #usage cases.
+  2 	// Total file length and the usage() span are pinned to spec.md's own worked
+  3 	// example (38-61 of 212) so a golden's numbers come from the spec, not a run.
+  4 	// filler 4
+  5 	// filler 5
+  6 	// filler 6
+  7 	// filler 7
+  8 	// filler 8
+  9 	// filler 9
+ 10 	// filler 10
+ 11 	// filler 11
+ 12 	// filler 12
+ 13 	// filler 13
+ 14 	// filler 14
+ 15 	// filler 15
+ 16 	// filler 16
+ 17 	// filler 17
+ 18 	// filler 18
+ 19 	// filler 19
+ 20 	// filler 20
+ 21 	// filler 21
+ 22 	// filler 22
+ 23 	// filler 23
+ 24 	// filler 24
+ 25 	// filler 25
+ 26 	// filler 26
+ 27 	// filler 27
+ 28 	// filler 28
+ 29 	// filler 29
+ 30 	// filler 30
+ 31 	// filler 31
+ 32 	// filler 32
+ 33 	// filler 33
+ 34 	// filler 34
+ 35 	// filler 35
+ 36 	// filler 36
+ 37 	// filler 37
+ 38 	export function usage(id: string) {
+ 39 	  const store = new Map<string, number>();
+ 40 	  const cap = 10;
+ 41 	  const seen = store.get(id) ?? 0;
+ 42 	  if (seen >= cap) {
+ 43 	    throw new Error(`usage cap exceeded for ${id}`);
+ 44 	  }
+ 45 	  const total = seen + 1;
+ 46 	  store.set(id, total);
+ 47 	  const a = 1;
+ 48 	  const b = 2;
+ 49 	  const c = 3;
+ 50 	  const d = 4;
+ 51 	  const e = 5;
+ 52 	  const f = 6;
+ 53 	  const g = 7;
+ 54 	  const h = 8;
+ 55 	  const i = 9;
+ 56 	  const j = 10;
+ 57 	  const k = 11;
+ 58 	  const l = 12;
+ 59 	  const m = 13;
+ 60 	  return total;
+ 61 	}
+ 62 	// filler 62
+ 63 	// filler 63
+ 64 	// filler 64
+ 65 	// filler 65
+ 66 	// filler 66
+ 67 	// filler 67
+ 68 	// filler 68
+ 69 	// filler 69
+ 70 	// filler 70
+ 71 	// filler 71
+ 72 	// filler 72
+ 73 	// filler 73
+ 74 	// filler 74
+ 75 	// filler 75
+ 76 	// filler 76
+ 77 	// filler 77
+ 78 	// filler 78
+ 79 	// filler 79
+ 80 	// filler 80
+ 81 	// filler 81
+ 82 	// filler 82
+ 83 	// filler 83
+ 84 	// filler 84
+ 85 	// filler 85
+ 86 	// filler 86
+ 87 	// filler 87
+ 88 	// filler 88
+ 89 	// filler 89
+ 90 	// filler 90
+ 91 	// filler 91
+ 92 	// filler 92
+ 93 	// filler 93
+ 94 	// filler 94
+ 95 	// filler 95
+ 96 	// filler 96
+ 97 	// filler 97
+ 98 	// filler 98
+ 99 	// filler 99
+100 	// filler 100
 ── showed 1 target · 100 lines · :101-212 not shown
+
+```
+
+```console
+$ lets show small.md --head nope
+? 64
+...
+ERROR_CODE=usage
 
 ```
 
