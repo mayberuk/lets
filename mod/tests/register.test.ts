@@ -8,20 +8,23 @@ const CWD = '/work/repo';
 type Answer = { exitCode: number; stdout: string } | 'reject';
 
 type World = {
+  session: string;
   ran: string[];
+  timeouts: (number | undefined)[];
   runs: { argv: readonly string[]; init?: ProcessRunInit }[];
   toasts: string[];
 };
 
-// Stands in for everything beneath the plugin: the session's cwd, `lets`, the Bash tool and the toast line.
+// Stands in for everything beneath the plugin: the session's cwd and id, `lets`, the Bash tool and the toast line.
 function world(
   on: On,
   answer: (argv: readonly string[]) => Answer,
   refuse: (command: string) => boolean = () => false,
   fail: (command: string) => string | undefined = () => undefined,
 ): World {
-  const seen: World = { ran: [], runs: [], toasts: [] };
+  const seen: World = { session: 'session-a', ran: [], timeouts: [], runs: [], toasts: [] };
   on('session.cwd', () => ({ value: CWD }));
+  on('session.id', () => ({ value: seen.session }));
   on('process.run', ($, e) => {
     seen.runs.push({ argv: e.argv, init: e.init });
     const reply = answer(e.argv);
@@ -37,9 +40,10 @@ function world(
   on('tool.call', ($, e) => {
     if (e.tool !== 'Bash') return { deny: `unexpected tool ${e.tool}` };
     seen.ran.push(e.command);
+    seen.timeouts.push(e.timeout);
     if (refuse(e.command)) return { deny: 'refused by the person' };
     const failure = fail(e.command);
-    if (failure !== undefined) return { result: { stdout: '', stderr: failure, interrupted: false }, isError: true, text: failure };
+    if (failure !== undefined) return { result: failure, isError: true, text: failure };
     return { result: { stdout: 'ok\n', stderr: '', interrupted: false } };
   });
   return seen;
@@ -179,6 +183,74 @@ describe('tool.call on Bash', () => {
     expect(seen.runs).toHaveLength(1);
   });
 
+  test('a permission prompt the person declines is passed back, and the same command is not changed again', async ($, on) => {
+    const declined =
+      "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
+    const seen = world(on, classifyAnswers(ONE_RUN), () => false, (command) => (command === REPLACEMENT ? declined : undefined));
+
+    const first = await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(first.text).toBe(declined);
+    expect(first.context).toBe(undefined);
+    expect(seen.ran).toEqual([REPLACEMENT, ORIGINAL_EDIT]);
+    expect(seen.runs).toHaveLength(1);
+  });
+
+  test('a permission prompt declined with feedback is not changed again', async ($, on) => {
+    const declined =
+      "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nuse sed";
+    const seen = world(on, classifyAnswers(ONE_RUN), () => false, (command) => (command === REPLACEMENT ? declined : undefined));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT, ORIGINAL_EDIT]);
+  });
+
+  test('a permission rule denying the replacement is not changed again', async ($, on) => {
+    const denied = `Permission to use Bash with command ${REPLACEMENT} has been denied.`;
+    const seen = world(on, classifyAnswers(ONE_RUN), () => false, (command) => (command === REPLACEMENT ? denied : undefined));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT, ORIGINAL_EDIT]);
+  });
+
+  test('a replacement that exits non-zero with a permission error on stderr is changed again', async ($, on) => {
+    const failure = "Exit code 1\nThe user doesn't want to proceed with this tool use.\nsed: couldn't open README.md: Permission denied";
+    const seen = world(on, classifyAnswers(ONE_RUN), () => false, (command) => (command === REPLACEMENT ? failure : undefined));
+
+    const first = await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(first.context).toEqual([NOTE]);
+    expect(seen.ran).toEqual([REPLACEMENT, REPLACEMENT]);
+  });
+
+  test('a refusal in one session does not exempt the same command in the next', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), (command) => command === REPLACEMENT && seen.session === 'session-a');
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    seen.session = 'session-b';
+    const second = await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT, REPLACEMENT]);
+    expect(second.context).toEqual([NOTE]);
+    expect(seen.runs).toHaveLength(2);
+  });
+
+  test('a refusal still exempts the same command later in its own session', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), (command) => command === REPLACEMENT);
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT, ORIGINAL_EDIT]);
+    expect(seen.runs).toHaveLength(1);
+  });
+
   test('a replacement that ran and failed keeps its note and is changed again', async ($, on) => {
     const seen = world(on, classifyAnswers(ONE_RUN), () => false, () => 'error: `--old` not found in README.md');
 
@@ -226,6 +298,39 @@ describe('classic.PreToolUse on Bash after a refusal', () => {
 
     expect(seen.ran).toEqual([REPLACEMENT, ORIGINAL_EDIT]);
     expect(retry.isError).toBe(undefined);
+  });
+
+  test('the retry keeps the settings hook other changes when it also rewrites to the tried replacement', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), refusedReplacement);
+    settingsHook(on, (typed) => (typed === ORIGINAL_EDIT ? { updatedInput: { command: REPLACEMENT, timeout: 999 } } : {}));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT, timeout: 9000 });
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT, timeout: 9000 });
+
+    expect(seen.ran).toEqual([REPLACEMENT, ORIGINAL_EDIT]);
+    expect(seen.timeouts).toEqual([9000, 999]);
+  });
+
+  test('the retry keeps its own input when the settings hook changed only the command', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), refusedReplacement);
+    settingsHook(on, rewriteTo(REPLACEMENT));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT, timeout: 9000 });
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT, timeout: 9000 });
+
+    expect(seen.ran).toEqual([REPLACEMENT, ORIGINAL_EDIT]);
+    expect(seen.timeouts).toEqual([9000, 9000]);
+  });
+
+  test('a refusal in one session leaves the settings hook rewrite in the next', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), (command) => command === REPLACEMENT && seen.session === 'session-a');
+    settingsHook(on, rewriteTo(REPLACEMENT));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    seen.session = 'session-b';
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT, REPLACEMENT]);
   });
 
   test('a settings hook rewriting the retry to a different command keeps its rewrite', async ($, on) => {
@@ -336,6 +441,17 @@ describe('tool.describe', () => {
     );
   });
 
+  test('the lean Bash description, which has no steer paragraph, gets the table after its first paragraph', async ($, on) => {
+    on('tool.describe', ($, e) => ({ description: e.description }));
+    const lean = 'Executes a bash command and returns its output.\n\n- Command output is displayed to you, not reliably to the user.\n';
+
+    const r = await $.tool.describe({ tool: 'Bash', description: lean, provider: ENGINE });
+
+    expect(r.description).toBe(
+      `Executes a bash command and returns its output.\n\n${LETS_TABLE}\n\n- Command output is displayed to you, not reliably to the user.\n`,
+    );
+  });
+
   test('another tool keeps its description', async ($, on) => {
     on('tool.describe', ($, e) => ({ description: e.description }));
 
@@ -367,6 +483,21 @@ describe('prompt.compose', () => {
     const r = await $.prompt.compose(COMPOSE);
 
     expect(r.sections).toEqual([intro, { id: 'tools', text: `# Using your tools\n${PARALLEL}`, scope: 'shared' }]);
+  });
+
+  test('the lean body loses the prefer sentence, keeps the rest of the line, and keeps its id and scope', async ($, on) => {
+    const lean = ' - Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.\n';
+    const other = { id: 'memory', text: lean, scope: 'session' } as const;
+    on('prompt.compose', () => ({
+      sections: [{ id: 'lean_body', text: `# Harness\n${lean} - Reference code.`, scope: 'shared' }, other],
+    }));
+
+    const r = await $.prompt.compose({ ...COMPOSE, traits: ['lean'] });
+
+    expect(r.sections).toEqual([
+      { id: 'lean_body', text: '# Harness\n - Independent tool calls can run in parallel in one response.\n - Reference code.', scope: 'shared' },
+      other,
+    ]);
   });
 
   test('a tools section without the line is sent as it was', async ($, on) => {

@@ -249,7 +249,7 @@ post-write hook has no before-state, so it reports the whole file, not only the 
 // Claude Code ~/.claude/settings.json, or Codex ~/.codex/hooks.json with "matcher": "apply_patch"
 {"hooks": {"PostToolUse": [
   {"matcher": "Edit|Write", "hooks": [{"type": "command",
-    "command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"}]}
+    "command": "if command -v lets >/dev/null 2>&1; then out=$(lets hook classify 2>/dev/null && printf .) && printf '%s' \"${out%.}\"; fi; exit 0"}]}
 ]}}
 ```
 

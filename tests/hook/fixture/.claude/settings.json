@@ -1,1 +1,1 @@
-{"permissions":{"deny":["Read(./private/**)"]}}
+{"permissions":{"deny":["Read(/private/**)"]}}

@@ -3,6 +3,6 @@ grep -A1 fooBar src/c.ts
 ===END===
 VERDICT rewrite
 REPLACEMENT
-run: lets find -C 1 'fooBar' src/c.ts --no-numbers
+run: lets find -A 1 'fooBar' src/c.ts --no-numbers
 ===END===
 COMPARE search

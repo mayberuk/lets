@@ -5,6 +5,8 @@ import { decide, dropPreferDedicatedTools, rewriteBashDescription, singleRun, VE
 const CLASSIFY_TIMEOUT_MS = 5000;
 const VERSION_TIMEOUT_MS = 2000;
 const PASS: Decision = { kind: 'pass' };
+// The full prompt carries the prefer-dedicated-tools line in `tools`; the lean prompt carries its sentence in `lean_body`.
+const STEERED_SECTIONS = new Set(['tools', 'lean_body']);
 
 async function classify($: Pick<EngineInterface, 'session' | 'process'>, command: string): Promise<Decision> {
   try {
@@ -23,14 +25,25 @@ async function classify($: Pick<EngineInterface, 'session' | 'process'>, command
   }
 }
 
-// Auto mode refuses an input a hook changed and tells the model to issue the call again as recorded.
-function refusedChangedInput(result: ToolCallResult): boolean {
-  return result.isError === true && (result.text ?? '').includes("changed this call's input");
+// Core's own denial texts (engine 2.1.293): a declined permission prompt, a permission rule, an approval nobody
+// could give. A Bash command that ran and failed reads `Exit code N` first, so it never matches.
+const PERMISSION_REFUSALS = ["The user doesn't want to proceed with this tool use.", 'Permission to use ', 'Permission for this '];
+
+function refusedByCore(result: ToolCallResult): boolean {
+  if (result.isError !== true) return false;
+  const text = result.text ?? '';
+  // Auto mode refuses an input a hook changed and tells the model to issue the call again as recorded.
+  return text.includes("changed this call's input") || PERMISSION_REFUSALS.some((prefix) => text.startsWith(prefix));
+}
+
+// `/clear` and an in-process resume change the session id without a `session.start`.
+async function refusalKey($: Pick<EngineInterface, 'session'>, command: string): Promise<string> {
+  return JSON.stringify([await $.session.id(), command]);
 }
 
 export const register: Register = (on) => {
   // Without it, a refused change would be retried as recorded and changed again, every time.
-  // Maps each refused original command to the replacement that was tried.
+  // Maps each refused original command, keyed with its session, to the replacement that was tried.
   const refused = new Map<string, string>();
 
   on('tool.describe', { tool: 'Bash' }, async ($, e, next) => {
@@ -42,7 +55,7 @@ export const register: Register = (on) => {
     const r = await next(e);
     let changed = false;
     const sections = r.sections.map((section) => {
-      if (section.id !== 'tools') return section;
+      if (!STEERED_SECTIONS.has(section.id)) return section;
       const text = dropPreferDedicatedTools(section.text);
       if (text === section.text) return section;
       changed = true;
@@ -52,12 +65,14 @@ export const register: Register = (on) => {
   }).catch(($, e, next) => next(e));
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    if (e.tool !== 'Bash' || refused.has(e.command)) return next(e);
+    if (e.tool !== 'Bash') return next(e);
+    const key = await refusalKey($, e.command);
+    if (refused.has(key)) return next(e);
     const decision = await classify($, e.command);
     if (decision.kind === 'pass') return next(e);
     const r = await next({ ...e, command: decision.command });
-    if (r.deny !== undefined || refusedChangedInput(r)) {
-      refused.set(e.command, decision.command);
+    if (r.deny !== undefined || refusedByCore(r)) {
+      refused.set(key, decision.command);
       return r;
     }
     if (decision.kind === 'rewrite') return r;
@@ -67,11 +82,14 @@ export const register: Register = (on) => {
   // Always calls next: answering in its place would skip the user's other settings hooks.
   on('classic.PreToolUse', { tool: 'Bash' }, async ($, e, next) => {
     const r = await next(e);
-    const tried = e.tool === 'Bash' ? refused.get(e.command) : undefined;
+    if (e.tool !== 'Bash') return r;
+    const tried = refused.get(await refusalKey($, e.command));
     if (tried === undefined) return r;
     if (r.updatedInput?.command === tried) {
       const { updatedInput, ...rest } = r;
-      return rest;
+      const { command, ...others } = updatedInput;
+      // updatedInput replaces the whole input, so a kept field carries the typed command back with it.
+      return Object.keys(others).length === 0 ? rest : { ...rest, updatedInput: { ...others, command: e.command } };
     }
     if (r.deny !== undefined && singleRun(r.deny) === tried) {
       const { deny, ...rest } = r;

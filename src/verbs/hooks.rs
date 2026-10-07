@@ -47,15 +47,27 @@ LETS
 For the first lines only, pass `--head N` to `lets show` or `lets find` instead of piping to `head`: the footer still names the cut. Do not add `2>/dev/null`: it hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.";
 
 /// Both harnesses report a hook command that cannot run as an error on every call it is bound to,
-/// so like the `SessionStart` command this exits 0 and prints nothing while `lets` is missing,
-/// crashing or mid-update.
-pub(crate) const GUARDED_CLASSIFY_COMMAND: &str =
+/// and read exit 2 as a block, so like the `SessionStart` command this exits 0 and prints nothing
+/// unless `lets` itself exits 0. The `.` sentinel keeps the trailing newlines that `$(…)` strips.
+pub(crate) const GUARDED_CLASSIFY_COMMAND: &str = "if command -v lets >/dev/null 2>&1; then \
+    out=$(lets hook classify 2>/dev/null && printf .) && printf '%s' \"${out%.}\"; fi; exit 0";
+
+/// An earlier install's guard, which passed a failing `lets`'s exit code through; kept only so
+/// an install replaces it.
+const PASS_THROUGH_CLASSIFY_COMMAND: &str =
     "if command -v lets >/dev/null 2>&1; then lets hook classify; fi";
+
+fn forward_on_success(program: &str) -> String {
+    format!(
+        "out=$({program} hook classify 2>/dev/null && printf .) && printf '%s' \"${{out%.}}\"; \
+         fi; exit 0"
+    )
+}
 
 /// The same guard for an install that named `lets` by absolute path, which keeps that path.
 fn classify_guarded_at(program: &str) -> String {
     let program = quote_path(program);
-    format!("if [ -x {program} ]; then {program} hook classify; fi")
+    format!("if [ -x {program} ]; then {}", forward_on_success(&program))
 }
 
 fn quote_path(path: &str) -> String {
@@ -71,14 +83,14 @@ fn quote_path(path: &str) -> String {
 
 /// The program any installed classify command runs, guarded or not.
 fn classify_program(command: &str) -> Option<String> {
-    if command == GUARDED_CLASSIFY_COMMAND {
+    if command == GUARDED_CLASSIFY_COMMAND || command == PASS_THROUGH_CLASSIFY_COMMAND {
         return Some("lets".to_owned());
     }
     if runs_lets_with(command, &["hook", "classify"]) {
         return command.split_whitespace().next().map(str::to_owned);
     }
     let (quoted, rest) = command.strip_prefix("if [ -x ")?.split_once(" ]; then ")?;
-    if rest != format!("{quoted} hook classify; fi") {
+    if rest != forward_on_success(quoted) && rest != format!("{quoted} hook classify; fi") {
         return None;
     }
     let program = match quoted
@@ -771,7 +783,7 @@ mod tests {
             serde_json::json!({"PreToolUse": [
                 {"matcher": "Bash", "hooks": [{
                     "type": "command",
-                    "command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"
+                    "command": GUARDED
                 }]}
             ]})
         );
@@ -1034,14 +1046,27 @@ mod tests {
         assert!(!is_classify("notlets hook classify"));
     }
 
-    const GUARDED: &str = "if command -v lets >/dev/null 2>&1; then lets hook classify; fi";
-    const GUARDED_AT_PATH: &str =
+    const GUARDED: &str = "if command -v lets >/dev/null 2>&1; then out=$(lets hook classify \
+                           2>/dev/null && printf .) && printf '%s' \"${out%.}\"; fi; exit 0";
+    const GUARDED_AT_PATH: &str = "if [ -x /usr/local/bin/lets ]; then \
+        out=$(/usr/local/bin/lets hook classify 2>/dev/null && printf .) && printf '%s' \
+        \"${out%.}\"; fi; exit 0";
+    const V0_0_4_GUARDED: &str = "if command -v lets >/dev/null 2>&1; then lets hook classify; fi";
+    const V0_0_4_GUARDED_AT_PATH: &str =
         "if [ -x /usr/local/bin/lets ]; then /usr/local/bin/lets hook classify; fi";
+
+    fn v0_0_4_guarded_at(program: &str) -> String {
+        format!("if [ -x {program} ]; then {program} hook classify; fi")
+    }
 
     #[test]
     fn both_guarded_classify_forms_are_recognised_as_ours_and_near_misses_are_not() {
+        assert_eq!(GUARDED_CLASSIFY_COMMAND, GUARDED);
+        assert_eq!(classify_guarded_at("/usr/local/bin/lets"), GUARDED_AT_PATH);
         assert!(is_classify(GUARDED));
         assert!(is_classify(GUARDED_AT_PATH));
+        assert!(is_classify(V0_0_4_GUARDED));
+        assert!(is_classify(V0_0_4_GUARDED_AT_PATH));
         assert!(is_classify(
             "if [ -x '/opt/my $dir/lets' ]; then '/opt/my $dir/lets' hook classify; fi"
         ));
@@ -1084,16 +1109,24 @@ mod tests {
     }
 
     #[test]
-    fn installing_twice_over_the_unguarded_entry_leaves_one_guarded_entry() {
-        let sandbox = Sandbox::new().with_lets_on_path(true);
-        settings_with_pre_tool_use(&sandbox, "lets hook classify");
+    fn installing_twice_over_the_unguarded_or_0_0_4_entry_leaves_one_guarded_entry() {
+        for existing in ["lets hook classify", V0_0_4_GUARDED] {
+            let sandbox = Sandbox::new().with_lets_on_path(true);
+            settings_with_pre_tool_use(&sandbox, existing);
 
-        let first = sandbox.install(Format::Text);
-        let second = sandbox.install(Format::Text);
+            let first = sandbox.install(Format::Text);
+            let second = sandbox.install(Format::Text);
 
-        assert!(body_text(&first).starts_with("updated the PreToolUse hook\n"));
-        assert!(body_text(&second).starts_with("the PreToolUse hook was already installed\n"));
-        assert_eq!(pre_tool_use_commands(&sandbox), [GUARDED]);
+            assert!(
+                body_text(&first).starts_with("updated the PreToolUse hook\n"),
+                "{existing}"
+            );
+            assert!(
+                body_text(&second).starts_with("the PreToolUse hook was already installed\n"),
+                "{existing}"
+            );
+            assert_eq!(pre_tool_use_commands(&sandbox), [GUARDED], "{existing}");
+        }
     }
 
     fn settings_with_post_tool_use(sandbox: &Sandbox, command: &str) {
@@ -1125,7 +1158,7 @@ mod tests {
 
     #[test]
     fn install_removes_an_earlier_builds_post_tool_use_entry_guarded_or_not() {
-        for existing in ["lets hook classify", GUARDED] {
+        for existing in ["lets hook classify", V0_0_4_GUARDED, GUARDED] {
             let sandbox = Sandbox::new().with_lets_on_path(true);
             settings_with_post_tool_use(&sandbox, existing);
 
@@ -1160,8 +1193,12 @@ mod tests {
     fn an_install_that_named_an_executable_absolute_path_keeps_it_inside_the_guard() {
         let dir = TempDir::new().unwrap();
         let program = lets_at(&dir, 0o755);
-        let guarded_at = format!("if [ -x {program} ]; then {program} hook classify; fi");
-        for existing in [format!("{program} hook classify"), guarded_at.clone()] {
+        let guarded_at = classify_guarded_at(&program);
+        for existing in [
+            format!("{program} hook classify"),
+            v0_0_4_guarded_at(&program),
+            guarded_at.clone(),
+        ] {
             let sandbox = Sandbox::new().with_lets_on_path(true);
             settings_with_pre_tool_use(&sandbox, &existing);
 
@@ -1183,8 +1220,11 @@ mod tests {
         let not_executable = lets_at(&dir, 0o644);
         for program in [gone, not_executable] {
             let unguarded = format!("{program} hook classify");
-            let guarded_at = format!("if [ -x {program} ]; then {program} hook classify; fi");
-            for existing in [unguarded, guarded_at] {
+            for existing in [
+                unguarded,
+                v0_0_4_guarded_at(&program),
+                classify_guarded_at(&program),
+            ] {
                 let sandbox = Sandbox::new().with_lets_on_path(true);
                 settings_with_pre_tool_use(&sandbox, &existing);
 
@@ -1214,6 +1254,8 @@ mod tests {
         for existing in [
             "lets hook classify",
             "/usr/local/bin/lets hook classify",
+            V0_0_4_GUARDED,
+            V0_0_4_GUARDED_AT_PATH,
             GUARDED,
             GUARDED_AT_PATH,
         ] {
@@ -1250,10 +1292,7 @@ mod tests {
     #[test]
     fn a_guarded_classify_command_is_silent_and_exits_zero_when_lets_is_missing() {
         let empty = TempDir::new().unwrap();
-        let missing_path = format!(
-            "if [ -x {0}/lets ]; then {0}/lets hook classify; fi",
-            empty.path().display()
-        );
+        let missing_path = classify_guarded_at(empty.path().join("lets").to_str().unwrap());
 
         for command in [GUARDED, missing_path.as_str()] {
             let output = run_guarded(command, empty.path());
@@ -1286,6 +1325,59 @@ mod tests {
                 "hook classify\n{\"event\":1}",
                 "{command}"
             );
+        }
+    }
+
+    /// Both harnesses read exit 2 from a hook as a block and any other non-zero exit as a hook
+    /// error, so only `lets`'s exit 0 may reach them, with its stdout byte for byte.
+    #[test]
+    fn a_guarded_classify_command_exits_zero_silently_unless_lets_succeeds() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let success = "{\"hookSpecificOutput\":{}}\n\n";
+        let cases = [
+            ("exits 2", "printf '{\"x\":1}\\n'\nexit 2\n", ""),
+            ("exits 1", "echo oops >&2\nexit 1\n", ""),
+            ("is missing", "", ""),
+            (
+                "succeeds",
+                "cat >/dev/null\nprintf '{\"hookSpecificOutput\":{}}\\n\\n'\n",
+                success,
+            ),
+        ];
+        let shells: Vec<&str> = ["/bin/sh", "/bin/bash"]
+            .into_iter()
+            .filter(|shell| Path::new(shell).exists())
+            .collect();
+        assert!(!shells.is_empty());
+        for (case, body, expected) in cases {
+            let dir = TempDir::new().unwrap();
+            let lets = dir.path().join("lets");
+            if !body.is_empty() {
+                std::fs::write(&lets, format!("#!/bin/sh\n{body}")).unwrap();
+                std::fs::set_permissions(&lets, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let at_path = classify_guarded_at(lets.to_str().unwrap());
+            for command in [GUARDED_CLASSIFY_COMMAND, at_path.as_str()] {
+                for shell in &shells {
+                    let path = format!("{}:/usr/bin:/bin", dir.path().display());
+                    let output = std::process::Command::new(shell)
+                        .arg("-c")
+                        .arg(command)
+                        .env("PATH", path)
+                        .stdin(std::process::Stdio::null())
+                        .output()
+                        .unwrap();
+
+                    let context = format!("{shell}, lets {case}: {command}");
+                    assert_eq!(output.status.code(), Some(0), "{context}");
+                    assert_eq!(
+                        String::from_utf8_lossy(&output.stdout),
+                        expected,
+                        "{context}"
+                    );
+                    assert!(output.stderr.is_empty(), "{context}: {:?}", output.stderr);
+                }
+            }
         }
     }
 
@@ -1609,7 +1701,7 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
 
     #[test]
     fn uninstall_also_removes_an_earlier_builds_retired_post_tool_use_entry() {
-        for existing in ["lets hook classify", GUARDED] {
+        for existing in ["lets hook classify", V0_0_4_GUARDED, GUARDED] {
             let sandbox = Sandbox::new();
             settings_with_post_tool_use(&sandbox, existing);
 

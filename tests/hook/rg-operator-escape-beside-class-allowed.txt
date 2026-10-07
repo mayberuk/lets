@@ -1,0 +1,4 @@
+COMMAND
+rg -n '[z]zz\|alpha' src/grep.txt
+===END===
+VERDICT allow

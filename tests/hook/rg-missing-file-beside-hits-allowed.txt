@@ -1,0 +1,4 @@
+COMMAND
+rg -n foo src/c.ts src/missing.ts
+===END===
+VERDICT allow

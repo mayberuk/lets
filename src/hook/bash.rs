@@ -70,6 +70,8 @@ const SHOW_MAX_FILE_BYTES: u64 = 8_388_608;
 
 /// Flags that consume the next argument, so their value is never read as a path.
 const COUNT_FLAGS: &[&str] = &["-n", "-c", "--lines", "--bytes"];
+/// POSIX `head`: "the first 10 lines" when no count is given.
+const HEAD_DEFAULT_LINES: usize = 10;
 /// Complete only because `find_flags` has already refused every other value-taking flag.
 const FIND_VALUE_FLAGS: &[&str] = &[
     "-A",
@@ -978,6 +980,9 @@ fn left_to_claude_code(findings: &[Finding], dirs: Dirs, sources: &Sources) -> b
         Finding::Show { source, .. } => source
             .as_ref()
             .is_some_and(|word| covered(word, Access::Read)),
+        Finding::Find { operands, .. } if operands.is_empty() => {
+            rules.cover(dirs.base, Access::Read)
+        },
         Finding::Find { operands, .. } => operands.iter().any(|word| covered(word, Access::Read)),
         Finding::Edit { operands, .. } => operands.iter().any(|word| covered(word, Access::Edit)),
         Finding::Write { operand, .. } => covered(operand, Access::Edit),
@@ -1389,8 +1394,9 @@ fn classify_simple(
 
     match head {
         "cat" => classify_cat(&words, &arguments, dirs, findings),
-        "head" | "tail" => {
-            // `show` has no byte, follow or NUL-record mode.
+        // No `tail` arm: its range needs the file's length, which this classifier never reads.
+        "head" => {
+            // `show` has no byte or NUL-record mode.
             if arguments.iter().any(|a| {
                 a.starts_with("-c")
                     || a.starts_with("--bytes")
@@ -1399,39 +1405,28 @@ fn classify_simple(
             }) {
                 return;
             }
-            if head == "tail"
-                && arguments
-                    .iter()
-                    .any(|a| matches!(*a, "-f" | "-F" | "--follow" | "--retry"))
-            {
+            // `head -n -5` (all but the last 5) has no range form.
+            let Some(lines) = line_count(&arguments)
+                .map_or(Some(HEAD_DEFAULT_LINES), number)
+                .filter(|lines| *lines > 0)
+            else {
                 return;
-            }
-            let count = line_count(&arguments);
-            // A tail range needs the file's length, which this classifier never reads.
-            if head == "tail" && count.is_some() {
-                return;
-            }
-            // Without a count, the whole-file replacement is not the ten lines they print.
-            let (suffix, extent) = match count {
-                None => (String::new(), None),
-                // `head -n -5` (all but the last 5) has no range form.
-                Some(value) => {
-                    let Some(lines) = number(value).filter(|lines| *lines > 0) else {
-                        return;
-                    };
-                    (
-                        format!(":1-{lines}"),
-                        Some(Extent::Lines {
-                            first: 1,
-                            last: lines,
-                        }),
-                    )
-                },
             };
             let Some(operands) = operands(&words, COUNT_FLAGS) else {
                 return;
             };
-            show(&operands, &suffix, extent, false, dirs, findings);
+            let extent = Extent::Lines {
+                first: 1,
+                last: lines,
+            };
+            show(
+                &operands,
+                &format!(":1-{lines}"),
+                Some(extent),
+                false,
+                dirs,
+                findings,
+            );
         },
         "nl" => {
             if !nl_numbers_every_line(&arguments, None) {
@@ -1503,6 +1498,13 @@ fn classify_find(
     {
         return;
     }
+    // The original prints its hits and a diagnostic for a missing operand, and exits 2.
+    if candidates
+        .iter()
+        .any(|candidate| !candidate.glob && !dirs.base.join(&candidate.text).exists())
+    {
+        return;
+    }
     // `lets find` takes its paths as plain paths, never through the target grammar.
     let Some(paths) = candidates
         .iter()
@@ -1524,7 +1526,8 @@ fn classify_find(
     let translated = match syntax {
         Syntax::Basic => bre::translate(written),
         Syntax::Extended => bre::translate_extended(written),
-        Syntax::Native => Some(written.clone()),
+        Syntax::Native if flags.iter().any(|flag| flag == "-F") => Some(written.clone()),
+        Syntax::Native => bre::bracket_operator_escapes(written),
     };
     let Some(pattern) = translated else {
         return;
@@ -1838,12 +1841,15 @@ fn classify_sed_i(words: &[Word], dirs: Dirs, findings: &mut Vec<Finding>) {
         return;
     }
     // sed edits a repeated operand once per mention where `lets edit` makes one pass, and it
-    // refuses a directory.
+    // refuses a directory. GNU sed replaces a symlink operand with a regular file and leaves its
+    // target as it was, where `lets edit` writes through to the target.
     let mut resolved: Vec<PathBuf> = paths
         .iter()
         .map(|path| normalize(&dirs.base.join(&path.text)))
         .collect();
-    if resolved.iter().any(|path| path.is_dir()) {
+    if resolved.iter().any(|path| {
+        path.is_dir() || std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink())
+    }) {
         return;
     }
     resolved.sort();
@@ -2238,7 +2244,8 @@ fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
     let mut files = false;
     let mut count = false;
     let mut numbered = false;
-    let mut contexts: Vec<String> = Vec::new();
+    // grep and rg let `-A` and `-B` override `-C` whatever the order, as `lets find` does.
+    let mut contexts: Vec<(char, String)> = Vec::new();
     let mut arguments = arguments.iter();
 
     while let Some(&argument) = arguments.next() {
@@ -2263,10 +2270,12 @@ fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
                 "word-regexp" => word = true,
                 "files-with-matches" => files = true,
                 "count" => count = true,
-                "context" | "after-context" | "before-context" => contexts.push(match attached {
-                    Some(value) => value.to_owned(),
-                    None => (*arguments.next()?).to_owned(),
-                }),
+                "after-context" | "before-context" | "context" => {
+                    contexts.push((name.chars().next()?.to_ascii_uppercase(), match attached {
+                        Some(value) => value.to_owned(),
+                        None => (*arguments.next()?).to_owned(),
+                    }));
+                },
                 "recursive" if head == "grep" => recursive = true,
                 "line-number" => numbered = true,
                 "with-filename" | "no-messages" | "color" | "colour" => {},
@@ -2293,33 +2302,31 @@ fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
                 'r' | 'R' if head == "grep" => recursive = true,
                 'A' | 'B' | 'C' => {
                     let attached: String = characters.by_ref().collect();
-                    contexts.push(if attached.is_empty() {
-                        (*arguments.next()?).to_owned()
-                    } else {
-                        attached
-                    });
+                    contexts.push((
+                        character,
+                        if attached.is_empty() {
+                            (*arguments.next()?).to_owned()
+                        } else {
+                            attached
+                        },
+                    ));
                 },
                 _ => return None,
             }
         }
     }
 
-    let context = match contexts.first() {
-        None => None,
-        // An asymmetric `-A 3 -B 1` has no `-C n` form.
-        Some(first) if contexts.iter().any(|value| value != first) => return None,
-        Some(first) => Some(number(first)?),
-    };
-
     let flags: Vec<String> = [
         (dialect == Some('F')).then(|| "-F".to_owned()),
         case_flag(case, files || count).map(str::to_owned),
         word.then(|| "-w".to_owned()),
-        context.map(|context| format!("-C {context}")),
-        files.then(|| "--files".to_owned()),
-        count.then(|| "--count".to_owned()),
     ]
     .into_iter()
+    .chain(context_flags(&contexts)?.into_iter().map(Some))
+    .chain([
+        files.then(|| "--files".to_owned()),
+        count.then(|| "--count".to_owned()),
+    ])
     .flatten()
     .collect();
     let syntax = match dialect {
@@ -2335,6 +2342,17 @@ fn find_flags(arguments: &[&str], head: &str) -> Option<Search> {
         numbered,
         case_chosen: case.is_some(),
     })
+}
+
+/// Each of `-A`, `-B` and `-C` at its last value.
+fn context_flags(contexts: &[(char, String)]) -> Option<Vec<String>> {
+    let mut flags = Vec::new();
+    for flag in ['A', 'B', 'C'] {
+        if let Some((_, value)) = contexts.iter().rev().find(|(kind, _)| *kind == flag) {
+            flags.push(format!("-{flag} {}", number(value)?));
+        }
+    }
+    Some(flags)
 }
 
 /// The original's own case choice, else grep's exact case for a count or file list, whose number
@@ -3038,7 +3056,7 @@ mod tests {
         let reason = blocked("head src/a.ts && sed -i 's/x/y/g' src/b.ts");
         assert!(
             reason.ends_with(
-                "\nrun: lets show src/a.ts\nrun: lets edit src/b.ts --old 'x' --new 'y' --all"
+                "\nrun: lets show src/a.ts:1-10\nrun: lets edit src/b.ts --old 'x' --new 'y' --all"
             ),
             "{reason}"
         );
@@ -3348,8 +3366,6 @@ mod tests {
 
     #[test]
     fn a_read_one_lets_show_cannot_stand_in_for_stays_a_deny() {
-        assert_still_blocked("head src/a.ts");
-        assert_still_blocked("tail src/a.ts");
         assert_still_blocked("sed -n '/^func Target(/,/^}/p' src/sym.go");
         assert_still_blocked("find . | xargs cat");
         assert_still_blocked("cat src/a.ts &");
@@ -4064,10 +4080,89 @@ mod tests {
             command_of(rewrite_in(&tree, "cat src/alias.ts")),
             "lets show src/alias.ts --all --no-header --no-numbers"
         );
+    }
+
+    #[test]
+    fn sed_i_on_a_symlink_runs_as_typed_since_gnu_sed_replaces_the_link_not_its_target() {
+        let tree = tree();
+        std::os::unix::fs::symlink("a.ts", tree.path().join("src/alias.ts"))
+            .expect("an in-tree file symlink");
+        std::os::unix::fs::symlink("src", tree.path().join("linked"))
+            .expect("an in-tree directory symlink");
+
+        for command in [
+            "sed -i 's/x/y/g' src/alias.ts",
+            "sed -i 's/x/y/g' src/b.ts src/alias.ts",
+            "cd src && sed -i 's/x/y/g' alias.ts",
+        ] {
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+            assert_eq!(
+                classify_command(command, cwd(&tree), None),
+                Verdict::Allow,
+                "{command}"
+            );
+        }
         assert!(
-            reason_of(rewrite_in(&tree, "sed -i 's/x/y/g' src/alias.ts"))
-                .contains("run: lets edit src/alias.ts --old 'x' --new 'y' --all")
+            reason_of(rewrite_in(&tree, "sed -i 's/x/y/g' linked/a.ts"))
+                .contains("run: lets edit linked/a.ts --old 'x' --new 'y' --all")
         );
+        assert!(
+            reason_of(rewrite_in(&tree, "sed -i 's/x/y/g' src/a.ts"))
+                .contains("run: lets edit src/a.ts --old 'x' --new 'y' --all")
+        );
+    }
+
+    #[test]
+    fn a_search_whose_directory_could_hold_a_covered_path_is_left_to_claude_code() {
+        let anchored = with_rules(PROJECT, &deny(&["Read(/private/**)"]));
+        for command in ["rg HELLO", "rg HELLO .", "rg -l HELLO", "grep -rn HELLO ."] {
+            assert_eq!(rewrite_in(&anchored, command), Verdict::Allow, "{command}");
+        }
+        assert_eq!(
+            command_of(rewrite_in(&anchored, "rg HELLO src")),
+            "lets find 'HELLO' src --no-numbers"
+        );
+        assert_eq!(
+            command_of(rewrite_in(&anchored, "cd src && rg HELLO")),
+            "cd src && lets find 'HELLO' --no-numbers"
+        );
+
+        let nested = with_rules(PROJECT, &deny(&["Read(/src/private/**)"]));
+        write(&nested, "src/private/key.txt", "secret\n");
+        for command in [
+            "rg secret src",
+            "rg secret",
+            "cd src && rg secret",
+            "rg secret src/*",
+        ] {
+            assert_eq!(rewrite_in(&nested, command), Verdict::Allow, "{command}");
+        }
+        assert_eq!(
+            command_of(rewrite_in(&nested, "rg secret src/a.ts")),
+            "lets find 'secret' src/a.ts --no-numbers"
+        );
+
+        // A rule with no leading `/` matches at any depth, so only a walk could clear a directory.
+        let floating = with_rules(PROJECT, &deny(&["Read(./private/**)"]));
+        assert_eq!(rewrite_in(&floating, "rg secret src"), Verdict::Allow);
+        assert_eq!(
+            command_of(rewrite_in(&floating, "rg secret src/a.ts")),
+            "lets find 'secret' src/a.ts --no-numbers"
+        );
+    }
+
+    #[test]
+    fn settings_written_as_jsonc_are_read_as_claude_code_reads_them() {
+        let jsonc = "{\n  // project rules\n  /* deny */ \"permissions\": {\"deny\": [\"Read(./private/**)\",],},\n}\n";
+        let tree = with_rules(PROJECT, jsonc);
+        assert_eq!(rewrite_in(&tree, "cat private/notes.txt"), Verdict::Allow);
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cat src/a.ts")),
+            "lets show src/a.ts --all --no-header --no-numbers"
+        );
+
+        let single_quoted = with_rules(PROJECT, "{'permissions': {}}");
+        assert_eq!(rewrite_in(&single_quoted, "cat src/a.ts"), Verdict::Allow);
     }
 
     #[test]
@@ -4101,14 +4196,30 @@ mod tests {
     }
 
     #[test]
+    fn an_rg_operator_escape_is_rewritten_as_the_class_it_means() {
+        assert_eq!(
+            rewritten(r"rg 'a\|b' src/*.ts"),
+            "lets find 'a[|]b' src/*.ts --no-numbers"
+        );
+        assert_eq!(
+            rewritten(r"rg -n 'f\(x\)\+' src/a.ts && ls"),
+            "lets find 'f[(]x[)][+]' src/a.ts -s --cap-exit-0 && ls"
+        );
+        assert_eq!(
+            rewritten(r"rg -F 'a\|b' src/a.ts"),
+            r"lets find -F 'a\|b' src/a.ts --no-numbers"
+        );
+        assert_allowed(r"rg '[a]\|b' src/a.ts");
+    }
+
+    #[test]
     fn two_displayed_reads_in_one_chain_share_one_show_line() {
         assert_eq!(verdict("cat src/a.ts && cat src/b.ts"), Verdict::Rewrite {
             command: "lets show src/a.ts src/b.ts --all --no-numbers".to_owned()
         });
-        let reason = blocked("cat src/a.ts && head src/b.ts");
-        assert!(
-            reason.ends_with("\nrun: lets show src/a.ts src/b.ts"),
-            "{reason}"
+        assert_eq!(
+            rewritten("cat src/a.ts && head src/b.ts"),
+            "lets show src/a.ts src/b.ts:1-10 --all --no-numbers"
         );
     }
 
@@ -4163,10 +4274,9 @@ mod tests {
             rewritten("lets show a.ts && cat src/b.ts"),
             "lets show a.ts && lets show src/b.ts --all --no-header --no-numbers"
         );
-        let reason = blocked("lets show a.ts && head src/b.ts");
-        assert!(
-            reason.ends_with("\nrun: lets show a.ts && lets show src/b.ts"),
-            "{reason}"
+        assert_eq!(
+            rewritten("lets show a.ts && head src/b.ts"),
+            "lets show a.ts && lets show src/b.ts:1-10 --no-header --no-numbers"
         );
     }
 
@@ -4553,10 +4663,9 @@ mod tests {
             rewritten("cat src/b.ts && head -n 20 src/a.ts"),
             "lets show src/b.ts src/a.ts:1-20 --all --no-numbers"
         );
-        let reason = blocked("head src/b.ts && head -n 20 src/a.ts");
-        assert!(
-            reason.ends_with("\nrun: lets show src/b.ts src/a.ts:1-20"),
-            "{reason}"
+        assert_eq!(
+            rewritten("head src/b.ts && head -n 20 src/a.ts"),
+            "lets show src/b.ts:1-10 src/a.ts:1-20 --no-numbers"
         );
     }
 
@@ -4565,7 +4674,8 @@ mod tests {
         assert_allowed("tail -n 5 src/a.ts");
         assert_allowed("tail -5 src/a.ts");
         assert_allowed("head -n -5 src/a.ts");
-        assert!(blocked("tail src/a.ts").contains("run: lets show src/a.ts"));
+        assert_allowed("tail src/a.ts");
+        assert_eq!(claude_code("tail src/a.ts"), Verdict::Allow);
     }
 
     #[test]
@@ -4730,7 +4840,15 @@ mod tests {
             ),
             (
                 "grep -A 2 -B 2 'cap' src/a.ts",
-                "lets find -C 2 'cap' src/a.ts --no-numbers",
+                "lets find -A 2 -B 2 'cap' src/a.ts --no-numbers",
+            ),
+            (
+                "grep -A 3 -B 1 'cap' src/a.ts",
+                "lets find -A 3 -B 1 'cap' src/a.ts --no-numbers",
+            ),
+            (
+                "rg -C 3 -A 1 -C 2 'cap' src/a.ts",
+                "lets find -A 1 -C 2 'cap' src/a.ts --no-numbers",
             ),
             (
                 "grep -l 'cap' src/a.ts",
@@ -4760,7 +4878,6 @@ mod tests {
         assert_allowed("grep -P 'ca.w' src/a.ts");
         assert_allowed("grep -z 'cap' src/a.ts");
         assert_allowed("grep --include=*.ts -r 'cap' src/");
-        assert_allowed("grep -A 3 -B 1 'cap' src/a.ts");
         assert_allowed("rg -e 'cap' src/");
     }
 
@@ -4778,10 +4895,10 @@ mod tests {
             "lets find 'a' src/a.ts --no-numbers -s --cap-exit-0 && lets find 'b' src/b.ts \
              --no-numbers"
         );
-        let reason = blocked("grep -r 'a' gone && grep 'b' src/b.ts");
+        let reason = blocked("LC_ALL=C grep -r 'a' src && grep 'b' src/b.ts");
         assert!(
             reason.ends_with(
-                "\nrun: lets find --hidden --no-ignore --exclude '.git/**' 'a' gone\nrun: lets \
+                "\nrun: lets find --hidden --no-ignore --exclude '.git/**' 'a' src\nrun: lets \
                  find 'b' src/b.ts"
             ),
             "{reason}"
@@ -4902,12 +5019,12 @@ mod tests {
             "cat src/a.ts && cat src/b.ts",
             "cat src/*.ts",
             "head -n 20 src/a.ts",
-            "tail src/a.ts",
+            "head src/a.ts",
             "sed -n '1,10p' src/a.ts",
             "sed -i 's/a/b/g' src/a.ts",
             "grep -n 'cap' src/a.ts",
             "grep -n 'cap' src/*.ts",
-            "grep -rn 'cap' gone && ls",
+            "LC_ALL=C grep -rn 'cap' src && ls",
             "grep -F 'a.b' -i src/a.ts",
             "rg 'cap'",
             "nl -ba src/n.txt | sed -n '2,3p'",
@@ -5465,7 +5582,7 @@ mod tests {
 
     #[test]
     fn a_translated_plain_grep_pattern_is_named_after_the_cd_note() {
-        let reason = blocked(r"cd src && grep -r 'a\|b' gone");
+        let reason = blocked(r"cd src && LC_ALL=C grep -r 'a\|b' .");
 
         assert!(
             reason.starts_with("`cd src` kept; grep pattern translated to lets regex; "),
@@ -5473,7 +5590,7 @@ mod tests {
         );
         assert!(
             reason.contains(
-                "run: cd src && lets find --hidden --no-ignore --exclude '.git/**' 'a|b' gone"
+                "run: cd src && lets find --hidden --no-ignore --exclude '.git/**' 'a|b' ."
             ),
             "{reason}"
         );
@@ -5481,7 +5598,7 @@ mod tests {
 
     #[test]
     fn a_plain_grep_pattern_the_translation_leaves_unchanged_carries_no_note() {
-        let reason = blocked("grep -r 'cap' gone");
+        let reason = blocked("LC_ALL=C grep -r 'cap' src");
 
         assert!(!reason.contains("translated"), "{reason}");
     }
@@ -5501,7 +5618,7 @@ mod tests {
     }
 
     #[test]
-    fn extended_fixed_and_rg_patterns_pass_unchanged() {
+    fn extended_and_fixed_patterns_pass_unchanged() {
         for (command, replacement) in [
             (
                 "grep -E 'a|b' src/*.ts",
@@ -5515,15 +5632,11 @@ mod tests {
                 "grep -F 'a|b' src/*.ts",
                 "lets find -F 'a|b' src/*.ts --no-numbers",
             ),
-            (
-                r"rg 'a\|b' src/*.ts",
-                r"lets find 'a\|b' src/*.ts --no-numbers",
-            ),
         ] {
             assert_eq!(rewritten(command), replacement, "{command:?}");
         }
-        let reason = blocked("grep -rE 'a|b' gone");
-        assert!(reason.contains("'a|b' gone"), "{reason}");
+        let reason = blocked("LC_ALL=C grep -rE 'a|b' src");
+        assert!(reason.contains("'a|b' src"), "{reason}");
         assert!(!reason.contains("translated"), "{reason}");
     }
 

@@ -1,8 +1,8 @@
 COMMAND
-rg -l foo
+rg -l foo src
 ===END===
 VERDICT rewrite
 REPLACEMENT
-run: lets find -s --files 'foo'
+run: lets find -s --files 'foo' src
 ===END===
 COMPARE search-files

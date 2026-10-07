@@ -4,20 +4,34 @@ export const LETS_TABLE = "# File work: use `lets` through Bash\n\n| Instead of 
 const BASH_STEER_START = 'IMPORTANT: Avoid using this tool to run `cat`';
 const BASH_STEER_END = 'give permission.';
 const PREFER_DEDICATED_TOOLS = /^ - Prefer dedicated tools over Bash.*(?:\n|$)/m;
+const LEAN_PREFER_DEDICATED_TOOLS = /^( - )Prefer the dedicated file\/search tools over shell commands when one fits\.(?: (.*))?(?:\n|$)/m;
 
-/** A description without Claude Code 2.1.292's "use Read, not cat" paragraph comes back as given. */
+/**
+ * Puts the lets table in place of Claude Code's "use Read, not cat" paragraph, or, in a description
+ * without it (the lean prompt has none), after the first paragraph, so the table always lands.
+ */
 export function rewriteBashDescription(description: string): string {
+  if (description.includes(LETS_TABLE)) return description;
   const start = description.indexOf(BASH_STEER_START);
-  if (start === -1) return description;
-  const endText = description.indexOf(BASH_STEER_END, start);
-  if (endText === -1) return description;
-  let end = endText + BASH_STEER_END.length;
-  if (description[end] === '\n') end += 1;
-  return description.slice(0, start) + LETS_TABLE + '\n\n' + description.slice(end);
+  const endText = start === -1 ? -1 : description.indexOf(BASH_STEER_END, start);
+  if (endText !== -1) {
+    let end = endText + BASH_STEER_END.length;
+    if (description[end] === '\n') end += 1;
+    return description.slice(0, start) + LETS_TABLE + '\n\n' + description.slice(end);
+  }
+  const firstBreak = description.indexOf('\n\n');
+  if (firstBreak === -1) return description + '\n\n' + LETS_TABLE;
+  const at = firstBreak + 2;
+  return description.slice(0, at) + LETS_TABLE + '\n\n' + description.slice(at);
 }
 
+/** Drops the full prompt's prefer-dedicated-tools line, and the lean prompt's sentence while keeping the rest of its line. */
 export function dropPreferDedicatedTools(text: string): string {
-  return text.replace(PREFER_DEDICATED_TOOLS, '');
+  return text
+    .replace(PREFER_DEDICATED_TOOLS, '')
+    .replace(LEAN_PREFER_DEDICATED_TOOLS, (line: string, bullet: string, rest: string | undefined) =>
+      rest === undefined || rest === '' ? '' : `${bullet}${rest}${line.endsWith('\n') ? '\n' : ''}`,
+    );
 }
 
 export type Decision =
