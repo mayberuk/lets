@@ -223,16 +223,6 @@ fn agents_md_quotes_its_own_discovery_paragraph_verbatim() {
         "docs/agents.md's Claude Code excerpt has drifted from CLAUDE_CODE_PARAGRAPH \
          in src/verbs/hooks.rs"
     );
-
-    let subagent_start = AGENTS
-        .split("## The SubagentStart line")
-        .nth(1)
-        .expect("docs/agents.md has a SubagentStart section");
-    assert!(
-        subagent_start.contains(&quoted),
-        "the SubagentStart section must quote the same paragraph as the Claude Code section, \
-         not a separately authored paraphrase"
-    );
 }
 
 #[test]
@@ -298,4 +288,35 @@ fn a_reader_that_closes_the_pipe_without_reading_still_exits_0() {
         "a closed reader is not a failure to report"
     );
     assert!(stderr.is_empty(), "{stderr}");
+}
+
+fn claude_plugin(subcommand: &str) -> (Option<i32>, String) {
+    let output = Command::new("claude")
+        .args(["plugin", subcommand, "mod"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap_or_else(|error| panic!("claude absent: {error}"));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (output.status.code(), text)
+}
+
+/// Needs the real `claude`; a direct exec, so the user's shell alias does not apply.
+#[test]
+#[ignore = "needs the claude binary on PATH"]
+fn mod_passes_claude_plugin_validate_and_test() {
+    let (code, validate) = claude_plugin("validate");
+    assert_eq!(code, Some(0), "{validate}");
+    assert!(
+        validate
+            .lines()
+            .any(|line| line.contains("gating hook with .catch") && line.contains("tool.call")),
+        "{validate}"
+    );
+
+    let (code, test) = claude_plugin("test");
+    assert_eq!(code, Some(0), "{test}");
 }

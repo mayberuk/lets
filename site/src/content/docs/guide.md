@@ -13,9 +13,9 @@ lets guide
 ```
 
 Prints one screen: every verb, the target grammar, and the exit-code shorthand, so an agent (or a
-person) reads it once and has the whole surface. This is the same text a `SessionStart` hook
-installed by `lets hooks install claude-code` shows at the start of every session — see
-[the hooks reference](/docs/hooks/).
+person) reads it once and has the whole surface. The mod that `lets hooks install claude-code`
+installs puts a shorter table in the Bash tool's description, and this is the full screen behind
+it — see [the hooks reference](/docs/hooks/).
 
 ```console
 $ lets guide

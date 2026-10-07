@@ -1,0 +1,6 @@
+# Claude Code reads the variable as a `:`-separated list, so another mod's entry stays first.
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; unset XDG_DATA_HOME; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install claude-code; echo plugin dirs: $(grep -F CLAUDE_CODE_PLUGIN_DIRS \"$HOME/.claude/settings.json\" | cut -d'\"' -f4)"]
+
+[fs]
+sandbox = true

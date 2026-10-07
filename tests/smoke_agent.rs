@@ -103,6 +103,7 @@ impl Smoke {
             }
         }
         command
+            .env_remove("XDG_DATA_HOME")
             .env("PATH", self.path())
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", &self.home)
@@ -269,6 +270,7 @@ fn each_arm_leaves_its_raw_evidence_and_no_verdict() {
         "meta.txt".to_owned(),
         "hooks-install.out".to_owned(),
         "hooks-settings.json".to_owned(),
+        "data".to_owned(),
     ]);
     for arm in ["baseline", "with-hooks"] {
         for suffix in [
@@ -364,13 +366,14 @@ fn a_run_that_writes_into_the_fixture_copy_fails_the_run() {
     assert_ne!(before, after);
 }
 
-fn installed_settings(smoke: &Smoke) -> Vec<u8> {
+fn installed_settings(smoke: &Smoke, data_home: &Path) -> Vec<u8> {
     let home = TempDir::new().expect("an install HOME");
     let inherited = std::env::var("PATH").unwrap_or_default();
     let output = Command::new(LETS)
         .args(["hooks", "install", "claude-code"])
         .env("HOME", home.path())
         .env("XDG_RUNTIME_DIR", home.path())
+        .env("XDG_DATA_HOME", data_home)
         .env("PATH", format!("{}:{inherited}", smoke.bin.display()))
         .output()
         .expect("lets runs");
@@ -378,8 +381,8 @@ fn installed_settings(smoke: &Smoke) -> Vec<u8> {
     fs::read(home.path().join(".claude/settings.json")).expect("the installed settings")
 }
 
-// Discovery tier 1 is a SessionStart hook, so the arm loads what `hooks install` writes, not
-// `docs/agents.md`, which is a reference page.
+// Discovery tier 1 is the lets mod that `CLAUDE_CODE_PLUGIN_DIRS` names, so the arm loads what
+// `hooks install` writes, not `docs/agents.md`, which is a reference page.
 #[test]
 fn the_with_hooks_arm_loads_the_settings_hooks_install_writes() {
     let smoke = smoke();
@@ -387,16 +390,95 @@ fn the_with_hooks_arm_loads_the_settings_hooks_install_writes() {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
 
     let loaded = fs::read(smoke.run_dir().join("hooks-settings.json")).expect("the kept settings");
+    let data_home = smoke.run_dir().join("data");
+    let mod_dir = data_home.join("lets/claude-code");
+    assert!(mod_dir.join("hooks/steer.ts").is_file());
 
-    assert_eq!(loaded, installed_settings(&smoke));
+    assert_eq!(loaded, installed_settings(&smoke, &data_home));
     assert_ne!(loaded, include_bytes!("../docs/agents.md").to_vec());
     let text = String::from_utf8(loaded).expect("utf-8");
-    assert!(text.contains("SessionStart"), "{text}");
-    assert!(text.contains("SubagentStart"), "{text}");
+    assert!(text.contains("PreToolUse"), "{text}");
     assert!(
-        text.contains("# File work: use `lets` through Bash"),
+        text.contains(&format!(
+            "\"CLAUDE_CODE_PLUGIN_DIRS\": \"{}\"",
+            mod_dir.display()
+        )),
         "{text}"
     );
+    assert!(!text.contains("SessionStart"), "{text}");
+    assert!(!text.contains("SubagentStart"), "{text}");
+}
+
+fn assert_kept_settings_name_a_surviving_mod(smoke: &Smoke) {
+    let run_dir = smoke.run_dir();
+    let settings = fs::read_to_string(run_dir.join("hooks-settings.json")).expect("kept settings");
+    let settings: serde_json::Value = serde_json::from_str(&settings).expect("settings are JSON");
+    let named = settings["env"]["CLAUDE_CODE_PLUGIN_DIRS"]
+        .as_str()
+        .expect("settings name the mod directory");
+
+    let named = Path::new(named);
+    assert!(named.is_dir(), "{} is gone after the run", named.display());
+    assert!(named.join("hooks/steer.ts").is_file());
+    assert!(
+        named.starts_with(&run_dir),
+        "{} is outside {}",
+        named.display(),
+        run_dir.display()
+    );
+    let meta = fs::read_to_string(run_dir.join("meta.txt")).expect("meta.txt");
+    assert!(
+        meta.lines()
+            .any(|line| line == format!("lets-mod-dir={}", named.display())),
+        "{meta}"
+    );
+}
+
+#[test]
+fn the_mod_the_settings_name_outlives_the_run_when_xdg_data_home_is_unset() {
+    let smoke = smoke();
+    let output = smoke.run(&[]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+
+    assert_kept_settings_name_a_surviving_mod(&smoke);
+    assert!(
+        !smoke.home.join(".local").exists(),
+        "the mod landed in the caller's default data directory"
+    );
+}
+
+#[test]
+fn the_mod_the_settings_name_outlives_the_run_and_the_callers_xdg_data_home_stays_empty() {
+    let smoke = smoke();
+    let other = TempDir::new().expect("a caller data directory");
+    let output = smoke.run(&[("XDG_DATA_HOME", other.path().to_str().expect("utf-8 path"))]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+
+    assert_kept_settings_name_a_surviving_mod(&smoke);
+    assert_eq!(
+        fs::read_dir(other.path())
+            .expect("the caller data directory")
+            .count(),
+        0,
+        "the caller's XDG_DATA_HOME was written to"
+    );
+}
+
+#[test]
+fn a_hooks_install_that_leaves_no_mod_stops_before_either_arm() {
+    let smoke = smoke();
+    fs::remove_file(smoke.bin.join("lets")).expect("the symlink goes");
+    write_executable(&smoke.bin.join("lets"), "#!/bin/sh\nexit 0\n");
+
+    let output = smoke.run(&[]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("hooks install left no mod at"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(smoke.arms().is_empty());
 }
 
 #[test]
@@ -417,4 +499,402 @@ fn a_failed_hooks_install_stops_before_either_arm() {
         smoke.arms().is_empty(),
         "no arm may run without the paragraph"
     );
+}
+
+const LIVE_CAT_PROMPT: &str =
+    "Use the Bash tool to run exactly `cat README.md`, then reply with only its first line.";
+const LIVE_SED_COMMAND: &str = "sed -i 's/alpha/beta/g' notes.txt";
+const LIVE_REWRITTEN_SHOW: &str = "show README.md --all --no-header --no-numbers";
+const LIVE_BUDGET_USD: f64 = 5.0;
+
+struct LiveRun {
+    stream: String,
+    verdicts: String,
+    notes: String,
+    lets_argv: String,
+}
+
+impl LiveRun {
+    fn events(&self) -> Vec<serde_json::Value> {
+        self.stream
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+
+    fn bash_commands(&self) -> Vec<String> {
+        let mut commands = Vec::new();
+        for event in self.events() {
+            let blocks = event["message"]["content"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            for block in blocks {
+                if block["type"] == "tool_use" && block["name"] == "Bash" {
+                    commands.push(
+                        block["input"]["command"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                    );
+                }
+            }
+        }
+        commands
+    }
+
+    fn tool_results(&self) -> Vec<(String, bool)> {
+        let mut results = Vec::new();
+        for event in self.events() {
+            let blocks = event["message"]["content"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            for block in blocks.iter().filter(|block| block["type"] == "tool_result") {
+                let text = match &block["content"] {
+                    serde_json::Value::String(text) => text.clone(),
+                    serde_json::Value::Array(parts) => parts
+                        .iter()
+                        .filter_map(|part| part["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => String::new(),
+                };
+                results.push((text, block["is_error"] == true));
+            }
+        }
+        results
+    }
+
+    fn reply(&self) -> String {
+        self.events()
+            .iter()
+            .rev()
+            .find(|event| event["type"] == "result")
+            .and_then(|event| event["result"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    fn cost(&self) -> f64 {
+        self.events()
+            .iter()
+            .filter(|event| event["type"] == "result")
+            .filter_map(|event| event["total_cost_usd"].as_f64())
+            .sum()
+    }
+
+    fn ran_lets(&self, argv: &str) -> bool {
+        self.lets_argv.lines().any(|line| line == argv)
+    }
+
+    fn has_verdict(&self, kind: &str) -> bool {
+        self.verdicts
+            .lines()
+            .any(|line| line == format!("{{\"verdict\":\"{kind}\"}}"))
+    }
+}
+
+fn credential_variables() -> Vec<std::ffi::OsString> {
+    let bedrock =
+        std::env::var_os("CLAUDE_CODE_USE_BEDROCK").is_some_and(|value| !value.is_empty());
+    std::env::vars_os()
+        .map(|(name, _)| name)
+        .filter(|name| {
+            let Some(name) = name.to_str() else {
+                return false;
+            };
+            if name.starts_with("GIT_") {
+                return true;
+            }
+            if matches!(
+                name,
+                "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN" | "CLAUDE_CODE_OAUTH_TOKEN"
+            ) {
+                return false;
+            }
+            if name.starts_with("AWS_") {
+                return !bedrock;
+            }
+            ["_TOKEN", "_KEY", "_SECRET"]
+                .iter()
+                .any(|suffix| name.ends_with(suffix))
+        })
+        .collect()
+}
+
+fn live_fixture(root: &Path, label: &str) -> PathBuf {
+    let fixture = root.join(label);
+    fs::create_dir_all(fixture.join("run")).expect("a fixture directory");
+    fs::write(fixture.join("README.md"), "alpha line\nsecond line\n").expect("README.md");
+    fs::write(fixture.join("notes.txt"), "alpha\n").expect("notes.txt");
+    let init = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&fixture)
+        .envs([("GIT_CONFIG_NOSYSTEM", "1")])
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .expect("git runs");
+    assert!(init.status.success(), "{}", stderr(&init));
+    fixture
+}
+
+fn live_arm(
+    root: &Path,
+    label: &str,
+    prompt: &str,
+    plugin_dir: Option<&Path>,
+) -> (LiveRun, PathBuf) {
+    let fixture = live_fixture(root, label);
+    let verdict_log = root.join(format!("{label}.verdicts.jsonl"));
+    let argv_log = root.join(format!("{label}.lets-argv"));
+    let shim_dir = root.join(format!("{label}.bin"));
+    fs::create_dir_all(&shim_dir).expect("a shim directory");
+    let shim = shim_dir.join("lets");
+    fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >>'{}'\nexec '{LETS}' \"$@\"\n",
+            argv_log.display()
+        ),
+    )
+    .expect("the lets shim");
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("an executable shim");
+    let inherited = std::env::var("PATH").unwrap_or_default();
+
+    let mut command = Command::new("claude");
+    command
+        .args(["-p", prompt])
+        .args(["--output-format", "stream-json", "--verbose"])
+        .args(["--permission-mode", "acceptEdits"])
+        .args(["--allowedTools", "Bash"])
+        .args(["--settings", r#"{"outputStyle":"default"}"#])
+        .args(["--setting-sources", "project"])
+        .arg("--strict-mcp-config")
+        .args(["--tools", "Bash"])
+        .arg("--disable-slash-commands")
+        .args(["--max-turns", "6"])
+        .args(["--model", "haiku"])
+        .current_dir(&fixture);
+    for name in credential_variables() {
+        command.env_remove(name);
+    }
+    command
+        .env("PATH", format!("{}:{inherited}", shim_dir.display()))
+        .env("XDG_RUNTIME_DIR", fixture.join("run"))
+        .env("LETS_NO_STATS", "1")
+        .env("LETS_HOOK_LOG", &verdict_log);
+    match plugin_dir {
+        Some(dir) => command.env("CLAUDE_CODE_PLUGIN_DIRS", dir),
+        None => command.env_remove("CLAUDE_CODE_PLUGIN_DIRS"),
+    };
+
+    let output = command.output().expect("claude runs");
+    let stream = String::from_utf8_lossy(&output.stdout).into_owned();
+    fs::write(root.join(format!("{label}.stream.jsonl")), &stream).expect("the raw stream");
+    fs::write(root.join(format!("{label}.stderr.log")), &output.stderr).expect("claude's stderr");
+    let run = LiveRun {
+        stream,
+        verdicts: fs::read_to_string(&verdict_log).unwrap_or_default(),
+        notes: fs::read_to_string(fixture.join("notes.txt")).unwrap_or_default(),
+        lets_argv: fs::read_to_string(&argv_log).unwrap_or_default(),
+    };
+    (run, fixture)
+}
+
+fn live_failures(cat_with: &LiveRun, sed_with: &LiveRun) -> Vec<String> {
+    let mut failures = Vec::new();
+    let mut check = |ok: bool, what: &str| {
+        if !ok {
+            failures.push(what.to_owned());
+        }
+    };
+
+    check(
+        cat_with.bash_commands() == ["cat README.md"],
+        "with mod: the model ran exactly `cat README.md`",
+    );
+    check(
+        cat_with.has_verdict("rewrite"),
+        "with mod: the verdict log has a rewrite line",
+    );
+    check(
+        cat_with.ran_lets(LIVE_REWRITTEN_SHOW),
+        "with mod: lets was run as `show README.md --all --no-header --no-numbers`",
+    );
+    check(
+        cat_with
+            .tool_results()
+            .iter()
+            .any(|(text, is_error)| !is_error && text.contains("alpha line")),
+        "with mod: the Bash tool_result holds the README text and is not an error",
+    );
+    check(
+        cat_with.reply().contains("alpha line"),
+        "with mod: the reply holds `alpha line`",
+    );
+
+    check(
+        sed_with.bash_commands() == [LIVE_SED_COMMAND],
+        "with mod: the model ran exactly the sed command",
+    );
+    check(sed_with.notes == "beta\n", "with mod: notes.txt reads beta");
+    check(
+        sed_with
+            .lets_argv
+            .lines()
+            .any(|line| line.starts_with("edit notes.txt ")),
+        "with mod: lets edit ran on notes.txt in place of the sed command",
+    );
+    check(
+        sed_with
+            .tool_results()
+            .iter()
+            .any(|(text, _)| text.contains("1 replacement")),
+        "with mod: the sed tool_result holds lets edit's footer",
+    );
+    check(
+        sed_with.has_verdict("block"),
+        "with mod: the verdict log has a block line",
+    );
+    check(
+        sed_with
+            .tool_results()
+            .iter()
+            .all(|(_, is_error)| !is_error)
+            && !sed_with.tool_results().is_empty(),
+        "with mod: the sed tool_result is present and is not an error",
+    );
+    failures
+}
+
+fn live_control_failures(cat_control: &LiveRun, sed_control: &LiveRun) -> Vec<String> {
+    let mut failures = Vec::new();
+    let mut check = |ok: bool, what: &str| {
+        if !ok {
+            failures.push(what.to_owned());
+        }
+    };
+
+    check(
+        cat_control.bash_commands() == ["cat README.md"],
+        "control: the model ran exactly `cat README.md`",
+    );
+    check(
+        !cat_control
+            .lets_argv
+            .lines()
+            .any(|line| line.starts_with("show")),
+        "control: lets show never ran",
+    );
+    check(
+        cat_control.verdicts.is_empty(),
+        "control: the cat arm logged no verdict",
+    );
+    check(
+        cat_control
+            .tool_results()
+            .iter()
+            .any(|(text, _)| text.contains("alpha line")),
+        "control: the cat tool_result holds the raw README text",
+    );
+    check(
+        sed_control.bash_commands() == [LIVE_SED_COMMAND],
+        "control: the model ran exactly the sed command",
+    );
+    check(
+        !sed_control
+            .lets_argv
+            .lines()
+            .any(|line| line.starts_with("edit")),
+        "control: lets edit never ran",
+    );
+    check(
+        !sed_control
+            .tool_results()
+            .iter()
+            .any(|(text, _)| text.contains("1 replacement")),
+        "control: the sed tool_result holds no lets output",
+    );
+    check(
+        sed_control.verdicts.is_empty(),
+        "control: the sed arm logged no verdict",
+    );
+    check(
+        sed_control.notes == "beta\n",
+        "control: sed ran as written and notes.txt reads beta",
+    );
+    failures
+}
+
+/// Real `claude -p` under dp's child flags, so a pass also shows a dp child loads the mod. Costs
+/// API budget (four Haiku runs, a few cents), hence the opt-in variable on top of `#[ignore]`.
+/// Run with `--success-output immediate` so the cost line shows on a pass.
+#[test]
+#[ignore = "spends API budget; set LETS_LIVE_SMOKE=1 and pass --run-ignored"]
+fn live_haiku_loads_the_mod_and_answers_instead_of_denying() {
+    if std::env::var_os("LETS_LIVE_SMOKE").is_none_or(|value| value != "1") {
+        return;
+    }
+    let temp = TempDir::new().expect("a temp directory");
+    let root = temp.path();
+
+    let install_home = root.join("install-home");
+    fs::create_dir_all(&install_home).expect("an install home");
+    let lets_dir = Path::new(LETS)
+        .parent()
+        .expect("the lets binary has a directory");
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    let install = Command::new(LETS)
+        .args(["hooks", "install", "claude-code"])
+        .env("HOME", &install_home)
+        .env("XDG_RUNTIME_DIR", &install_home)
+        .env("XDG_DATA_HOME", install_home.join(".local/share"))
+        .env("PATH", format!("{}:{inherited}", lets_dir.display()))
+        .output()
+        .expect("lets runs");
+    assert!(install.status.success(), "{}", stderr(&install));
+    let mod_dir = install_home.join(".local/share/lets/claude-code");
+    assert!(
+        mod_dir.join("hooks/register.ts").is_file(),
+        "{}",
+        mod_dir.display()
+    );
+
+    let sed_prompt =
+        format!("Use the Bash tool to run exactly `{LIVE_SED_COMMAND}`, then reply done.");
+    let (cat_with, _) = live_arm(root, "with-mod-cat", LIVE_CAT_PROMPT, Some(&mod_dir));
+    let (sed_with, _) = live_arm(root, "with-mod-sed", &sed_prompt, Some(&mod_dir));
+    let (cat_control, _) = live_arm(root, "control-cat", LIVE_CAT_PROMPT, None);
+    let (sed_control, _) = live_arm(root, "control-sed", &sed_prompt, None);
+
+    let total: f64 = [&cat_with, &sed_with, &cat_control, &sed_control]
+        .iter()
+        .map(|run| run.cost())
+        .sum();
+    let cost_line = format!(
+        "live smoke cost: with-mod cat ${:.4}, sed ${:.4}; control cat ${:.4}, sed ${:.4}; total ${total:.4}",
+        cat_with.cost(),
+        sed_with.cost(),
+        cat_control.cost(),
+        sed_control.cost()
+    );
+    eprintln!("{cost_line}");
+
+    let mut failures = live_failures(&cat_with, &sed_with);
+    failures.extend(live_control_failures(&cat_control, &sed_control));
+    if total > LIVE_BUDGET_USD {
+        failures.push(format!(
+            "over the ${LIVE_BUDGET_USD:.2} budget: {cost_line}"
+        ));
+    }
+    if !failures.is_empty() {
+        let kept = temp.keep();
+        panic!(
+            "live smoke failed:\n  {}\nraw streams: {}",
+            failures.join("\n  "),
+            kept.display()
+        );
+    }
 }

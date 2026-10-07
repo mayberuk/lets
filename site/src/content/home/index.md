@@ -126,13 +126,15 @@ it runs once per batch and reverts if the command newly fails. See [`/docs/edit/
 
 The fix people try first is a rule in CLAUDE.md telling the agent to batch its reads. That doesn't
 hold: prose rules get roughly 55% compliance in practice. `lets hooks install claude-code` (or
-`codex`) wires the tool in at three points instead of asking nicely:
+`codex`) wires the tool in instead of asking nicely:
 
-- A `SessionStart` paragraph explains `lets` and its verbs at the start of every session,
-  including after compaction, since injected context doesn't survive compaction the way a system
-  prompt does.
-- A `SubagentStart` hook delivers the same paragraph to subagents, which a system-prompt append
-  never reaches.
+- On Claude Code, a mod replaces the paragraph in the Bash tool's description that tells the model
+  to use Read, not `cat`, with a short `lets` table. The table is part of the tool description,
+  so it is there from the first call and survives compaction. `lets hooks install claude-code`
+  also removes any `SessionStart` and `SubagentStart` lets hooks.
+- On Codex, a `SessionStart` paragraph explains `lets` and its verbs at the start of every
+  session, including after compaction, and a `SubagentStart` hook delivers the same paragraph to
+  subagents.
 - A `PreToolUse` hook (`lets hook classify`) inspects each shell command before it runs, on both
   Claude Code and Codex. A bare `cat`, `sed -n` or `grep` of a repo file is rewritten in place
   into the matching `lets` command — no permission prompt, the agent just gets the bounded

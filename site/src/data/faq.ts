@@ -5,7 +5,7 @@ export const faq: { q: string; a: string }[] = [
   },
   {
     q: 'Which agents does it work with, and how does it reach them?',
-    a: "Claude Code and Codex. lets hooks install claude-code (or codex) wires three things: a SessionStart note explaining lets at the start of every session, a SubagentStart note that delivers the same explanation to subagents, and a PreToolUse hook that rewrites a cat, sed -n, head, tail, grep or rg with an exact lets translation in place, and denies only what has none, such as sed -i, naming the lets command to run instead. Nothing is appended to the agent's system prompt, and if lets is missing or crashes, the hook lets the command through.",
+    a: "Claude Code and Codex. lets hooks install claude-code installs a small mod that replaces two passages in Claude Code's own prompt (the Bash tool's use-Read-not-cat paragraph and the prefer-dedicated-tools line) with a short lets table, and runs the lets translation of a cat, sed -n, head, grep or rg in place of the command the model typed. A PreToolUse hook stays as the fallback when mods are off: it rewrites the same commands, allows a dotfile or out-of-tree read as typed, and denies only what has no exact translation, such as sed -i, naming the lets command to run instead. lets hooks install codex adds the PreToolUse hook plus a SessionStart and a SubagentStart note. Nothing is appended to the agent's system prompt, and if lets is missing or crashes, the command goes through.",
   },
   {
     q: 'What does "one call instead of three" mean?',

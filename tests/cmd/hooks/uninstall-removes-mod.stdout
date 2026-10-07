@@ -1,0 +1,4 @@
+removed the PreToolUse hook
+removed the lets mod
+home/.local/share/lets/claude-code/hooks/mine.ts
+plugin dirs: /opt/other-mod

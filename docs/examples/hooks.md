@@ -98,70 +98,93 @@ hooks.json byte-identical after install then uninstall
 ```
 
 ```console
-$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code'
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; cd "$HOME/.local/share/lets/claude-code"; find . -type f | LC_ALL=C sort; for f in $(find . -type f); do cmp -s "$f" "$CARGO_MANIFEST_DIR/mod/$f" || echo "differs from mod/: $f"; done; cd "$HOME"; echo plugin dirs: $(grep -F CLAUDE_CODE_PLUGIN_DIRS .claude/settings.json | cut -d'\''"'\'' -f4); echo start hooks: $(grep -c -E '\''SessionStart|SubagentStart'\'' .claude/settings.json || true)'
 added the PreToolUse hook
-added the SubagentStart hook
-added the SessionStart hook
+added the lets mod
+./.claude-plugin/plugin.json
+./hooks/hooks.json
+./hooks/register.ts
+./hooks/steer.ts
+./tsconfig.json
+plugin dirs: [CWD]/home/.local/share/lets/claude-code
+start hooks: 0
 
 ```
 
 ```console
-$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; hash1=$(sha256sum "$HOME/.claude/settings.json" | cut -d'\'' '\'' -f1); "$CARGO_BIN_EXE_lets" hooks install claude-code; hash2=$(sha256sum "$HOME/.claude/settings.json" | cut -d'\'' '\'' -f1); if [ "$hash1" = "$hash2" ]; then echo '\''settings.json byte-identical across reinstall'\''; else echo '\''settings.json changed across reinstall'\''; fi'
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; hash1=$(sha256sum "$HOME/.claude/settings.json" | cut -d'\'' '\'' -f1); mods1=$(cat "$HOME"/.local/share/lets/claude-code/.claude-plugin/plugin.json "$HOME"/.local/share/lets/claude-code/hooks/* "$HOME"/.local/share/lets/claude-code/tsconfig.json | sha256sum); "$CARGO_BIN_EXE_lets" hooks install claude-code; hash2=$(sha256sum "$HOME/.claude/settings.json" | cut -d'\'' '\'' -f1); if [ "$hash1" = "$hash2" ]; then echo '\''settings.json byte-identical across reinstall'\''; else echo '\''settings.json changed across reinstall'\''; fi; mods2=$(cat "$HOME"/.local/share/lets/claude-code/.claude-plugin/plugin.json "$HOME"/.local/share/lets/claude-code/hooks/* "$HOME"/.local/share/lets/claude-code/tsconfig.json | sha256sum); if [ "$mods1" = "$mods2" ]; then echo '\''mod files byte-identical across reinstall'\''; else echo '\''mod files changed across reinstall'\''; fi'
 added the PreToolUse hook
-added the SubagentStart hook
-added the SessionStart hook
+added the lets mod
 the PreToolUse hook was already installed
-the SubagentStart hook was already installed
-the SessionStart hook was already installed
+the lets mod was already installed
 settings.json byte-identical across reinstall
+mod files byte-identical across reinstall
 
 ```
 
 ```console
-$ sh -c 'export HOME="$(pwd)/home"; export PATH="$(pwd)/empty"; "$CARGO_BIN_EXE_lets" hooks install claude-code; status=$?; if [ -e "$HOME/.claude" ]; then echo unexpected-claude-dir-exists; else echo no-claude-dir-created; fi; exit "$status"'
+$ sh -c 'export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(pwd)/empty"; "$CARGO_BIN_EXE_lets" hooks install claude-code; status=$?; if [ -e "$HOME/.claude" ]; then echo unexpected-claude-dir-exists; else echo no-claude-dir-created; fi; if [ -e "$HOME/.local/share/lets" ]; then echo unexpected-mod-dir-exists; else echo no-mod-dir-created; fi; exit "$status"'
 ? 1
 no-claude-dir-created
+no-mod-dir-created
 ...
 ERROR_CODE=not_on_path
 
 ```
 
 ```console
-$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$(pwd)/fake-bin:$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code'
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$(pwd)/fake-bin:$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code'
 added the PreToolUse hook
-added the SubagentStart hook
-added the SessionStart hook
+added the lets mod
 
 ```
 
 ```console
-$ sh -c 'export HOME="$(pwd)/home"; export PATH="$(pwd)/fake-bin:$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; status=$?; if [ -e "$HOME/.claude" ]; then echo unexpected-claude-dir-exists; else echo no-claude-dir-created; fi; exit "$status"'
+$ sh -c 'export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(pwd)/fake-bin:$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; status=$?; if [ -e "$HOME/.claude" ]; then echo unexpected-claude-dir-exists; else echo no-claude-dir-created; fi; if [ -e "$HOME/.local/share/lets" ]; then echo unexpected-mod-dir-exists; else echo no-mod-dir-created; fi; exit "$status"'
 ? 1
 no-claude-dir-created
+no-mod-dir-created
 a different `lets` comes first on PATH at [CWD]/fake-bin/lets — this one is [..]/lets · remove the other, or put this one's directory ahead of it on PATH
 ERROR_CODE=path_conflict
 
 ```
 
 ```console
-$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; f="$HOME/.claude/settings.json"; head -n 12 "$f" > before; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; if head -n 12 "$f" | cmp -s - before; then echo unrelated-entry-byte-identical; else echo unrelated-entry-changed; fi; grep -c -F '\''"command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"'\'' "$f"'
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; echo plugin dirs: $(grep -F CLAUDE_CODE_PLUGIN_DIRS "$HOME/.claude/settings.json" | cut -d'\''"'\'' -f4)'
+added the PreToolUse hook
+added the lets mod
+plugin dirs: /opt/other-mod:[CWD]/home/.local/share/lets/claude-code
+
+```
+
+```console
+$ sh -c 'export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; cp "$HOME/.claude/settings.json" before; "$CARGO_BIN_EXE_lets" hooks install claude-code; status=$?; if cmp -s before "$HOME/.claude/settings.json"; then echo settings.json-untouched; else echo settings.json-changed; fi; if [ -e "$HOME/.local/share/lets" ]; then echo unexpected-mod-dir-exists; else echo no-mod-dir-created; fi; exit "$status"'
+? 7
+settings.json-untouched
+no-mod-dir-created
+[..]`env.CLAUDE_CODE_PLUGIN_DIRS` is not a string[..]
+ERROR_CODE=io_error
+
+```
+
+```console
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; f="$HOME/.claude/settings.json"; head -n 12 "$f" > before; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; if head -n 12 "$f" | cmp -s - before; then echo unrelated-entry-byte-identical; else echo unrelated-entry-changed; fi; grep -c -F '\''"command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"'\'' "$f"'
 unrelated-entry-byte-identical
 1
 
 ```
 
 ```console
-$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; f="$HOME/.claude/settings.json"; grep -q PostToolUse "$f" && echo post-tool-use-still-present || echo post-tool-use-gone'
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; f="$HOME/.claude/settings.json"; grep -q PostToolUse "$f" && echo post-tool-use-still-present || echo post-tool-use-gone'
 added the PreToolUse hook
-added the SubagentStart hook
-added the SessionStart hook
+added the lets mod
 removed the PostToolUse hook · the check trial showed no benefit, so it is no longer installed by default
 post-tool-use-gone
 
 ```
 
 ```console
-$ sh -c 'export HOME="$(pwd)/home"; "$CARGO_BIN_EXE_lets" hooks uninstall claude-code; f="$HOME/.claude/settings.json"; echo user hooks: $(grep -c -F userhookmarker "$f"); echo lets hooks: $(grep -c -F '\''lets hook classify'\'' "$f"); echo matchers: $(grep -c -F '\''"matcher": "Bash"'\'' "$f")'
+$ sh -c 'export HOME="$(pwd)/home"; unset XDG_DATA_HOME; "$CARGO_BIN_EXE_lets" hooks uninstall claude-code; f="$HOME/.claude/settings.json"; echo user hooks: $(grep -c -F userhookmarker "$f"); echo lets hooks: $(grep -c -F '\''lets hook classify'\'' "$f"); echo matchers: $(grep -c -F '\''"matcher": "Bash"'\'' "$f")'
 removed the PreToolUse hook
 user hooks: 1
 lets hooks: 0
@@ -170,25 +193,67 @@ matchers: 1
 ```
 
 ```console
-$ sh -c 'set -e; export HOME="$(pwd)/home"; f="$HOME/.claude/settings.json"; before=$(sha256sum "$f" | cut -d'\'' '\'' -f1); export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; PATH=/nonexistent "$CARGO_BIN_EXE_lets" hooks uninstall claude-code; after=$(sha256sum "$f" | cut -d'\'' '\'' -f1); if [ "$before" = "$after" ]; then echo '\''settings.json byte-identical after install then uninstall'\''; else echo '\''settings.json changed'\''; fi'
+$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; XDG_DATA_HOME="$(pwd)/data" "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; echo files before: $(find data -type f | wc -l); (unset XDG_DATA_HOME; PATH=/nonexistent "$CARGO_BIN_EXE_lets" hooks uninstall claude-code); echo files after: $(find data -type f | wc -l); echo plugin dirs mentions: $(grep -c CLAUDE_CODE_PLUGIN_DIRS "$HOME/.claude/settings.json" || true)'
+files before: 5
 removed the PreToolUse hook
-removed the SubagentStart hook
-removed the SessionStart hook
+removed the lets mod
+files after: 0
+plugin dirs mentions: 0
+
+```
+
+```console
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; echo theirs > "$HOME/.local/share/lets/claude-code/hooks/mine.ts"; PATH=/nonexistent "$CARGO_BIN_EXE_lets" hooks uninstall claude-code; find home/.local -type f | LC_ALL=C sort; echo plugin dirs: $(grep -F CLAUDE_CODE_PLUGIN_DIRS "$HOME/.claude/settings.json" | cut -d'\''"'\'' -f4)'
+removed the PreToolUse hook
+removed the lets mod
+home/.local/share/lets/claude-code/hooks/mine.ts
+plugin dirs: /opt/other-mod
+
+```
+
+```console
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; f="$HOME/.claude/settings.json"; before=$(sha256sum "$f" | cut -d'\'' '\'' -f1); export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; PATH=/nonexistent "$CARGO_BIN_EXE_lets" hooks uninstall claude-code; after=$(sha256sum "$f" | cut -d'\'' '\'' -f1); if [ "$before" = "$after" ]; then echo '\''settings.json byte-identical after install then uninstall'\''; else echo '\''settings.json changed'\''; fi'
+removed the PreToolUse hook
+removed the lets mod
 settings.json byte-identical after install then uninstall
 
 ```
 
 ```console
-$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; "$CARGO_BIN_EXE_lets" hooks uninstall claude-code >/dev/null; "$CARGO_BIN_EXE_lets" hooks uninstall claude-code'
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; "$CARGO_BIN_EXE_lets" hooks uninstall claude-code >/dev/null; "$CARGO_BIN_EXE_lets" hooks uninstall claude-code'
 nothing to remove
 
 ```
 
 ```console
-$ sh -c 'export HOME="$(pwd)/home"; cp "$HOME/.claude/settings.json" before; "$CARGO_BIN_EXE_lets" hooks uninstall claude-code; status=$?; if cmp -s before "$HOME/.claude/settings.json"; then echo settings.json-untouched; else echo settings.json-changed; fi; exit "$status"'
+$ sh -c 'export HOME="$(pwd)/home"; unset XDG_DATA_HOME; cp "$HOME/.claude/settings.json" before; "$CARGO_BIN_EXE_lets" hooks uninstall claude-code; status=$?; if cmp -s before "$HOME/.claude/settings.json"; then echo settings.json-untouched; else echo settings.json-changed; fi; exit "$status"'
 ? 7
 settings.json-untouched
 ...
 ERROR_CODE=io_error
+
+```
+
+```console
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; f="$HOME/.claude/settings.json"; echo start hooks: $(grep -c -E '\''SessionStart|SubagentStart'\'' "$f" || true); echo classify hooks: $(grep -c -F '\''lets hook classify'\'' "$f")'
+the PreToolUse hook was already installed
+added the lets mod
+removed the SessionStart hook · the lets mod carries its text now
+removed the SubagentStart hook · the lets mod carries its text now
+start hooks: 0
+classify hooks: 1
+
+```
+
+```console
+$ sh -c 'set -e; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; HOME="$(pwd)/home" XDG_DATA_HOME="$(pwd)/data" "$CARGO_BIN_EXE_lets" hooks install claude-code; HOME="$(pwd)/home2" XDG_DATA_HOME=rel-data "$CARGO_BIN_EXE_lets" hooks install claude-code; find . -name plugin.json | LC_ALL=C sort; grep -h -F CLAUDE_CODE_PLUGIN_DIRS home/.claude/settings.json home2/.claude/settings.json | cut -d'\''"'\'' -f4'
+added the PreToolUse hook
+added the lets mod
+added the PreToolUse hook
+added the lets mod
+./data/lets/claude-code/.claude-plugin/plugin.json
+./home2/.local/share/lets/claude-code/.claude-plugin/plugin.json
+[CWD]/data/lets/claude-code
+[CWD]/home2/.local/share/lets/claude-code
 
 ```

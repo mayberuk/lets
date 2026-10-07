@@ -51,13 +51,14 @@ $ lets hooks install claude-code
 $ lets hooks install codex
 ```
 
-Each merges the hooks that agent's harness supports into its own user-level settings — for
-Claude Code and Codex alike, a `SessionStart`/`SubagentStart` paragraph and a `PreToolUse`
-classifier that rewrites an exactly-translatable `cat`, `sed -n` or `grep`/`rg` of a repo file
-into the equivalent `lets` call in place, and denies only what has no exact `lets` translation
-(a `sed -i` in-place edit, or a path a settings deny/ask rule already covers), always naming the
-runnable replacement. `lets hooks uninstall claude-code` and `lets hooks uninstall codex` remove
-them again. Installing only ever writes into the agent's own settings; nothing here modifies your
+Each merges what that agent's harness supports into its own user-level settings. Both add a
+`PreToolUse` classifier that rewrites an exactly-translatable `cat`, `sed -n` or `grep`/`rg` of a
+repo file into the equivalent `lets` call in place, and denies only what has no exact `lets`
+translation (a `sed -i` in-place edit, or a path a settings deny/ask rule already covers),
+always naming the runnable replacement. For Claude Code the install also writes a mod that puts a
+short `lets` table in the Bash tool's description, and removes any `SessionStart` and
+`SubagentStart` lets hooks. Codex gets a `SessionStart`/`SubagentStart` paragraph instead.
+`lets hooks uninstall claude-code` and `lets hooks uninstall codex` remove them again. Installing only ever writes into the agent's own settings; nothing here modifies your
 shell profile.
 
 ## Quickstart
@@ -145,13 +146,14 @@ that accounts for most of its increase. 0.0.3 ships the fix, but no paid run has
 
 ## How it steers agents
 
-Discovery is `SessionStart` and `SubagentStart`, never a system-prompt append: `lets hooks
-install claude-code` (or `codex`) prints a short paragraph explaining `lets` and its verbs at the
-start of every session, `compact` included, so it comes back after every compaction, and delivers
-the same paragraph to subagents, which a system-prompt append never reaches. It does not use
-Claude Code's system-prompt-append flag — a trial found that route held tool-call batching to
-zero across every session it ran, for the same or higher cost, so nothing is appended to the
-system prompt.
+Discovery never appends to the system prompt. On Claude Code, `lets hooks install claude-code`
+installs a mod that replaces the Bash tool description's use-Read-not-`cat` paragraph with a short
+`lets` table, which is there from the first call of every session. On Codex,
+`lets hooks install codex` adds `SessionStart` and `SubagentStart` hooks that print a short
+paragraph explaining `lets` and its verbs at the start of every session, `compact` included, and
+to subagents. Neither uses Claude Code's system-prompt-append flag — a trial found that route held tool-call batching to zero
+across every session it ran, for the same or higher cost, so nothing is appended to the system
+prompt.
 
 ## Exit codes
 

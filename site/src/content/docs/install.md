@@ -94,6 +94,12 @@ $ lets version --json
 above), or it can be done separately at any time with `lets hooks install claude-code` or `lets
 hooks install codex`. See [the hooks reference](/docs/hooks/) for what each hook does and how to uninstall it.
 
+For Claude Code, the install writes the `lets` mod, a few TypeScript files embedded in the binary,
+under `$XDG_DATA_HOME/lets/claude-code/` (`~/.local/share/lets/claude-code/` by default), adds that
+directory to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, and keeps a `PreToolUse` hook
+as the fallback for when mods are off. `lets update` refreshes the mod files along with the binary
+while Claude Code's settings still load the mod.
+
 A Codex install needs one more step Claude Code's does not: Codex requires a human to trust a hook
 before it runs, so open Codex and choose "Trust all and continue" when prompted, or press `t` in
 the hooks browser — `lets hooks install codex` reports the current trust status on every run,
@@ -105,4 +111,5 @@ naming any entry Codex does not trust yet.
 $ curl -fsSL https://raw.githubusercontent.com/mayberuk/lets/main/install.sh | sh -s -- --uninstall
 ```
 
-Removes any agent hooks `install.sh` added, then deletes the binary from `$LETS_BIN_DIR`.
+Removes any agent hooks `install.sh` added, along with the Claude Code mod files, then deletes the
+binary from `$LETS_BIN_DIR`.

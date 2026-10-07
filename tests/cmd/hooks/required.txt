@@ -18,3 +18,9 @@ uninstall-twice.toml
 uninstall-unparsable.toml
 codex-uninstall.toml
 codex-retires-post-tool-use.toml
+upgrade-retires-start-hooks.toml
+plugin-dirs-kept.toml
+plugin-dirs-not-a-string.toml
+xdg-data-home.toml
+uninstall-removes-mod.toml
+uninstall-other-data-home.toml

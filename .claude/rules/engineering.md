@@ -16,6 +16,10 @@ the size of its real job, and the decided seams below are the only seams.
 - Enforce mechanically what can be enforced mechanically: `clippy pedantic` with the allow-list
   in `Cargo.toml` `[lints]`, `cargo-deny`, `cargo-machete`, `scripts/deps-gate.sh`. A prose rule
   exists only for a judgment call.
+- Make the Claude Code mod fail open. Every hook passes the event on unchanged (`next(e)`) on any
+  error, and a `.catch` on every gating hook does the same. The Bash description and prompt changes
+  are pure functions of their input, so the prompt cache holds for the session; the only state is
+  the set of commands whose change was refused, which then run as typed.
 - Make every code path deterministic for identical input and file state: no `HashMap` iteration
   in output order, no timestamps in stdout, no randomness.
 
