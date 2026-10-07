@@ -34,6 +34,7 @@ tool. See [target grammar](/docs/targets/) (`path`, `path:40`, `path:40-80`,
 | `--no-numbers` | omit line numbers, for content piped onward | off |
 | `--no-header` | omit each target's header line, and the footer when nothing was left out | off |
 | `--outline` | list each definition's line range and first line instead of the content; whole-file targets only | off |
+| `--head <N>` | print the first N output lines; name any cut in a footer, preserving the original footer if removed; text only | unset |
 | `--json` | one JSON object on stdout | off |
 | `--jsonl` | one JSON object per target, plus a trailing stats/omitted record | off |
 | `--budget <N>` | shape the whole answer to ~N tokens, trimming the largest target first | unset |

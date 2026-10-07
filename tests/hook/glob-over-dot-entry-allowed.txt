@@ -1,0 +1,4 @@
+COMMAND
+cat globdot/*.md
+===END===
+VERDICT allow

@@ -1,0 +1,8 @@
+COMMAND
+cd dashed && cat ./*.md
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: cd dashed && lets show ./*.md --all --no-numbers
+===END===
+COMPARE read

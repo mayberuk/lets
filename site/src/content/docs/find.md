@@ -49,6 +49,7 @@ matched only because case was ignored is named in the footer.
 | `--no-numbers` | print hit lines with no line-number gutter | off |
 | `--no-ignore` | do not honor `.gitignore`/`.ignore`/global excludes | off |
 | `--allow-outside` | permit a path outside the working tree | off |
+| `--head <N>` | print the first N output lines; name any cut in a footer, preserving the original footer if removed; text only | unset |
 | `--json` / `--jsonl` | structured output | off |
 | `--budget <N>` | shape the answer to ~N tokens | unset |
 | `--max-bytes <N>` | content budget | 65536 |

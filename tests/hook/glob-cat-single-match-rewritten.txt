@@ -1,0 +1,8 @@
+COMMAND
+cat src/n.*
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets show src/n.* --all --no-header --no-numbers
+===END===
+COMPARE read

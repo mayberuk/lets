@@ -488,3 +488,18 @@ fn an_unreadable_directory_whose_name_is_utf8_reaches_json_as_is() {
 
     assert_the_unreadable_dir_is_named(&text, &json, "locked-caf\u{e9}");
 }
+
+#[test]
+fn head_is_refused_in_both_structured_formats_for_both_verbs() {
+    let sandbox = sandbox("read");
+    for verb in ["show", "find"] {
+        for format in ["--json", "--jsonl"] {
+            let run = sandbox.lets([verb, "small.md", "--head", "2", format]);
+            assert_eq!(run.code, 64, "{verb} {format}");
+            assert_eq!(last_line(&run.err), "ERROR_CODE=usage");
+            let value: serde_json::Value = serde_json::from_str(&run.out).unwrap();
+            assert_eq!(value["error"]["slug"], "usage");
+            assert!(!run.out.contains("\"head\""));
+        }
+    }
+}

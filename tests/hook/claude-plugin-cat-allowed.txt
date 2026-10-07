@@ -1,0 +1,4 @@
+COMMAND
+cat .claude-plugin/plugin.json
+===END===
+VERDICT allow

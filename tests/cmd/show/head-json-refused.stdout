@@ -1,0 +1,1 @@
+{"error":{"slug":"usage","message":"--head is text-only and cannot be combined with --json or --jsonl"},"omitted":[],"stats":{"lines":0,"bytes":0,"tokens_est":null}}

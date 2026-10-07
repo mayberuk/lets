@@ -1,0 +1,6 @@
+── many-hits.txt
+ 1:	line 01 contains the «needle» for lets find's over-cap fixture
+ 2:	line 02 contains the «needle» for lets find's over-cap fixture
+ 3:	line 03 contains the «needle» for lets find's over-cap fixture
+ 4:	line 04 contains the «needle» for lets find's over-cap fixture
+── 64 hits in 1 file · searched 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files · first 10 of 64 hits in the busiest file shown · top 1 file shown · output lines 6-13 not shown (--head 5)

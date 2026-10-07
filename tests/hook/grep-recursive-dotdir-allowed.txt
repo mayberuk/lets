@@ -1,0 +1,4 @@
+COMMAND
+grep -rn deny .claude
+===END===
+VERDICT allow

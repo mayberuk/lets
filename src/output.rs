@@ -44,6 +44,9 @@ pub struct Response {
     /// Text only: `--json` and `--jsonl` carry no header or footer line to drop.
     #[serde(skip)]
     pub no_header: bool,
+    /// Text only: `--head` is refused with `--json` and `--jsonl`.
+    #[serde(skip)]
+    pub head: Option<usize>,
 }
 
 impl Response {
@@ -59,6 +62,7 @@ impl Response {
             top_files: Vec::new(),
             top_files_more: 0,
             no_header: false,
+            head: None,
         }
     }
 
@@ -935,6 +939,7 @@ fn error_text(message: &str, slug: &str) -> String {
 fn render_text(resp: &Response, opts: RenderOptions) -> String {
     let mut out = String::with_capacity(capacity_hint(resp));
     let width = number_width(resp);
+    let mut footer = None;
     match &resp.body {
         Body::Raw { text, .. } => out.push_str(text),
         Body::Targets(blocks) => {
@@ -954,7 +959,7 @@ fn render_text(resp: &Response, opts: RenderOptions) -> String {
             let mut leads: Vec<&str> = Vec::with_capacity(1 + header_notes.len());
             leads.push(summary_lead(resp));
             leads.extend(header_notes.iter().map(String::as_str));
-            push_footer(&mut out, &leads, &resp.omitted);
+            footer = push_footer(&mut out, &leads, &resp.omitted);
         },
         Body::Outline(blocks) => {
             for block in blocks {
@@ -965,7 +970,7 @@ fn render_text(resp: &Response, opts: RenderOptions) -> String {
                     push_outline(&mut out, &block.entries);
                 }
             }
-            push_footer(&mut out, &[summary_lead(resp)], &resp.omitted);
+            footer = push_footer(&mut out, &[summary_lead(resp)], &resp.omitted);
         },
         Body::Files(paths) => {
             if !opts.quiet {
@@ -973,10 +978,10 @@ fn render_text(resp: &Response, opts: RenderOptions) -> String {
                     writeln!(out, "{}", path.display()).unwrap();
                 }
             }
-            push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
+            footer = push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
         },
         Body::Counts(rows) => {
-            push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
+            footer = push_footer(&mut out, &[&resp.footer.summary], &resp.omitted);
             push_count_rows(&mut out, rows, opts);
         },
         Body::Edit(results) => {
@@ -988,6 +993,36 @@ fn render_text(resp: &Response, opts: RenderOptions) -> String {
         },
         Body::Stats(report) => push_stats(&mut out, report),
         Body::Update(check) => push_update(&mut out, check),
+    }
+    if let Some(head) = resp.head {
+        let mut lines = 0;
+        let mut cut = out.len();
+        for (index, byte) in out.bytes().enumerate() {
+            if byte == b'\n' {
+                lines += 1;
+                if lines == head {
+                    cut = index + 1;
+                }
+            }
+        }
+        lines += usize::from(!out.is_empty() && !out.ends_with('\n'));
+        if lines > head {
+            if let Some(range) = footer.filter(|range| range.start >= cut) {
+                let footer_len = range.len();
+                out.replace_range(cut..range.start, "");
+                out.truncate(cut + footer_len);
+                out.push_str(" · ");
+            } else {
+                out.truncate(cut);
+                out.push_str("── ");
+            }
+            writeln!(
+                out,
+                "output lines {}-{lines} not shown (--head {head})",
+                head + 1
+            )
+            .unwrap();
+        }
     }
     out
 }
@@ -1240,9 +1275,9 @@ fn push_edit(
             )
         };
         let unchanged = if only.reverted { "file unchanged" } else { "" };
-        push_footer(out, &[&lead, &check, unchanged, &sha], &omitted);
+        let _ = push_footer(out, &[&lead, &check, unchanged, &sha], &omitted);
     } else {
-        push_footer(out, &[&resp.footer.summary], &omitted);
+        let _ = push_footer(out, &[&resp.footer.summary], &omitted);
     }
 }
 
@@ -1361,9 +1396,9 @@ fn push_transform(
             only.sha.before.as_str(),
             only.sha.after.as_str()
         );
-        push_footer(out, &[&resp.footer.summary, &check, &sha], &resp.omitted);
+        let _ = push_footer(out, &[&resp.footer.summary, &check, &sha], &resp.omitted);
     } else {
-        push_footer(out, &[&resp.footer.summary], &resp.omitted);
+        let _ = push_footer(out, &[&resp.footer.summary], &resp.omitted);
     }
 }
 
@@ -1432,7 +1467,7 @@ fn push_write(out: &mut String, result: &WriteResult, omitted: &[Omission]) {
             if let Some(check) = &result.check {
                 writeln!(out, "── {}", check_line(check)).unwrap();
             }
-            push_footer(out, &[], omitted);
+            let _ = push_footer(out, &[], omitted);
         },
     }
 }
@@ -1490,11 +1525,16 @@ fn push_stats(out: &mut String, report: &StatsReport) {
     }
 }
 
-fn push_footer(out: &mut String, lead: &[&str], omitted: &[Omission]) {
+fn push_footer(
+    out: &mut String,
+    lead: &[&str],
+    omitted: &[Omission],
+) -> Option<std::ops::Range<usize>> {
     let lead = lead.iter().filter(|s| !s.is_empty());
     if lead.clone().count() == 0 && omitted.is_empty() {
-        return;
+        return None;
     }
+    let start = out.len();
     out.push_str("── ");
     let mut first = true;
     for segment in lead {
@@ -1505,7 +1545,9 @@ fn push_footer(out: &mut String, lead: &[&str], omitted: &[Omission]) {
         push_segment(out, &mut first);
         write!(out, "{omission}").unwrap();
     }
+    let end = out.len();
     out.push('\n');
+    Some(start..end)
 }
 
 fn push_segment(out: &mut String, first: &mut bool) {
@@ -1782,7 +1824,79 @@ mod tests {
             top_files: Vec::new(),
             top_files_more: 0,
             no_header: false,
+            head: None,
         }
+    }
+
+    #[test]
+    fn head_counts_an_unterminated_final_line_and_leaves_a_short_read_identical() {
+        for text in ["a\nb\nc", "a\nb\nc\n"] {
+            let mut resp = response(
+                "show",
+                Body::Raw {
+                    field: "text",
+                    text: text.to_owned(),
+                },
+                0,
+            );
+            for head in [3, 4, usize::MAX] {
+                resp.head = Some(head);
+                assert_eq!(render_text(&resp, opts()), text);
+            }
+            resp.head = Some(2);
+            assert_eq!(
+                render_text(&resp, opts()),
+                "a\nb\n── output lines 3-3 not shown (--head 2)\n"
+            );
+        }
+    }
+
+    #[test]
+    fn head_preserves_the_removed_footer_and_does_not_mistake_a_header_for_it() {
+        let mut a = bare_block("a");
+        a.lines = vec![line(1, Marker::None, "one")];
+        let mut b = bare_block("b");
+        b.lines = vec![line(1, Marker::None, "two"), line(2, Marker::None, "three")];
+        let mut resp = targets(vec![a, b], 0);
+        resp.footer.summary = "showed 2 targets · 3 lines".to_owned();
+        resp.omitted.push(Omission::Window {
+            shown: (1, 3),
+            total: 5,
+        });
+        resp.head = Some(2);
+        assert_eq!(
+            render_text(&resp, opts()),
+            "── a\n1 \tone\n── showed 2 targets · 3 lines · :4-5 not shown · output lines 3-6 not shown (--head 2)\n"
+        );
+        resp.head = Some(5);
+        assert_eq!(
+            render_text(&resp, opts()),
+            "── a\n1 \tone\n── b\n1 \ttwo\n2 \tthree\n── showed 2 targets · 3 lines · :4-5 not shown · output lines 6-6 not shown (--head 5)\n"
+        );
+    }
+
+    #[test]
+    fn head_keeps_a_count_footer_once_and_appends_only_the_cut() {
+        let mut resp = response(
+            "find",
+            Body::Counts(vec![
+                CountRow {
+                    path: PathBuf::from("a"),
+                    count: 2,
+                },
+                CountRow {
+                    path: PathBuf::from("b"),
+                    count: 1,
+                },
+            ]),
+            0,
+        );
+        resp.footer.summary = "3 hits in 2 files".to_owned();
+        resp.head = Some(2);
+        assert_eq!(
+            render_text(&resp, opts()),
+            "── 3 hits in 2 files\n2  a\n── output lines 3-3 not shown (--head 2)\n"
+        );
     }
 
     fn targets(blocks: Vec<TargetBlock>, bytes: usize) -> Response {
