@@ -18,12 +18,19 @@ export PATH
 run="$(date -u +%Y%m%dT%H%M%SZ)"
 log_dir="${LETS_SMOKE_LOGS_DIR:-$root/logs}/agent-smoke/$run"
 mkdir -p "$log_dir"
+log_dir="$(cd "$log_dir" && pwd)"
 
-# The real installer writes the with-hooks settings, so that arm tests what users get.
+# The real installer writes the with-hooks settings, so that arm tests what users get. The mod
+# directory those settings name must outlive `install_home`, so XDG_DATA_HOME points into the run.
 install_home="$(mktemp -d)"
-if ! env HOME="$install_home" XDG_RUNTIME_DIR="$install_home" lets hooks install claude-code \
-  >"$log_dir/hooks-install.out" 2>&1; then
+mod_dir="$log_dir/data/lets/claude-code"
+if ! env HOME="$install_home" XDG_RUNTIME_DIR="$install_home" XDG_DATA_HOME="$log_dir/data" \
+  lets hooks install claude-code >"$log_dir/hooks-install.out" 2>&1; then
   echo "smoke-agent: lets hooks install claude-code failed — see $log_dir/hooks-install.out" >&2
+  exit 1
+fi
+if [ ! -f "$mod_dir/.claude-plugin/plugin.json" ]; then
+  echo "smoke-agent: hooks install left no mod at $mod_dir — see $log_dir/hooks-install.out" >&2
   exit 1
 fi
 hooks_settings="$log_dir/hooks-settings.json"
@@ -34,6 +41,7 @@ rm -rf "${install_home:?}"
   echo "claude-version=$(claude --version 2>&1 | head -1)"
   echo "lets-commit=$(git -C "$root" rev-parse HEAD)"
   echo "lets-binary=$bin_dir/lets"
+  echo "lets-mod-dir=$mod_dir"
   echo "lets-bytes=$(wc -c <"$bin_dir/lets" | tr -d ' ')"
   echo "lets-sha256=$(sha256sum "$bin_dir/lets" | cut -d' ' -f1)"
 } >"$log_dir/meta.txt"

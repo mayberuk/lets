@@ -103,10 +103,10 @@ impl Smoke {
             }
         }
         command
+            .env_remove("XDG_DATA_HOME")
             .env("PATH", self.path())
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", &self.home)
-            .env("XDG_DATA_HOME", self.data_home())
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("LETS_SMOKE_LOGS_DIR", &self.logs)
             .env("LETS_SMOKE_BIN_DIR", &self.bin)
@@ -117,11 +117,6 @@ impl Smoke {
             command.env(name, value);
         }
         command.output().expect("the smoke-agent script runs")
-    }
-
-    /// Pinned for the script and `installed_settings` alike: the settings name the mod directory.
-    fn data_home(&self) -> PathBuf {
-        self.home.join(".local/share")
     }
 
     fn path(&self) -> String {
@@ -275,6 +270,7 @@ fn each_arm_leaves_its_raw_evidence_and_no_verdict() {
         "meta.txt".to_owned(),
         "hooks-install.out".to_owned(),
         "hooks-settings.json".to_owned(),
+        "data".to_owned(),
     ]);
     for arm in ["baseline", "with-hooks"] {
         for suffix in [
@@ -370,14 +366,14 @@ fn a_run_that_writes_into_the_fixture_copy_fails_the_run() {
     assert_ne!(before, after);
 }
 
-fn installed_settings(smoke: &Smoke) -> Vec<u8> {
+fn installed_settings(smoke: &Smoke, data_home: &Path) -> Vec<u8> {
     let home = TempDir::new().expect("an install HOME");
     let inherited = std::env::var("PATH").unwrap_or_default();
     let output = Command::new(LETS)
         .args(["hooks", "install", "claude-code"])
         .env("HOME", home.path())
         .env("XDG_RUNTIME_DIR", home.path())
-        .env("XDG_DATA_HOME", smoke.data_home())
+        .env("XDG_DATA_HOME", data_home)
         .env("PATH", format!("{}:{inherited}", smoke.bin.display()))
         .output()
         .expect("lets runs");
@@ -394,10 +390,11 @@ fn the_with_hooks_arm_loads_the_settings_hooks_install_writes() {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
 
     let loaded = fs::read(smoke.run_dir().join("hooks-settings.json")).expect("the kept settings");
-    let mod_dir = smoke.data_home().join("lets/claude-code");
+    let data_home = smoke.run_dir().join("data");
+    let mod_dir = data_home.join("lets/claude-code");
     assert!(mod_dir.join("hooks/steer.ts").is_file());
 
-    assert_eq!(loaded, installed_settings(&smoke));
+    assert_eq!(loaded, installed_settings(&smoke, &data_home));
     assert_ne!(loaded, include_bytes!("../docs/agents.md").to_vec());
     let text = String::from_utf8(loaded).expect("utf-8");
     assert!(text.contains("PreToolUse"), "{text}");
@@ -410,6 +407,78 @@ fn the_with_hooks_arm_loads_the_settings_hooks_install_writes() {
     );
     assert!(!text.contains("SessionStart"), "{text}");
     assert!(!text.contains("SubagentStart"), "{text}");
+}
+
+fn assert_kept_settings_name_a_surviving_mod(smoke: &Smoke) {
+    let run_dir = smoke.run_dir();
+    let settings = fs::read_to_string(run_dir.join("hooks-settings.json")).expect("kept settings");
+    let settings: serde_json::Value = serde_json::from_str(&settings).expect("settings are JSON");
+    let named = settings["env"]["CLAUDE_CODE_PLUGIN_DIRS"]
+        .as_str()
+        .expect("settings name the mod directory");
+
+    let named = Path::new(named);
+    assert!(named.is_dir(), "{} is gone after the run", named.display());
+    assert!(named.join("hooks/steer.ts").is_file());
+    assert!(
+        named.starts_with(&run_dir),
+        "{} is outside {}",
+        named.display(),
+        run_dir.display()
+    );
+    let meta = fs::read_to_string(run_dir.join("meta.txt")).expect("meta.txt");
+    assert!(
+        meta.lines()
+            .any(|line| line == format!("lets-mod-dir={}", named.display())),
+        "{meta}"
+    );
+}
+
+#[test]
+fn the_mod_the_settings_name_outlives_the_run_when_xdg_data_home_is_unset() {
+    let smoke = smoke();
+    let output = smoke.run(&[]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+
+    assert_kept_settings_name_a_surviving_mod(&smoke);
+    assert!(
+        !smoke.home.join(".local").exists(),
+        "the mod landed in the caller's default data directory"
+    );
+}
+
+#[test]
+fn the_mod_the_settings_name_outlives_the_run_and_the_callers_xdg_data_home_stays_empty() {
+    let smoke = smoke();
+    let other = TempDir::new().expect("a caller data directory");
+    let output = smoke.run(&[("XDG_DATA_HOME", other.path().to_str().expect("utf-8 path"))]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+
+    assert_kept_settings_name_a_surviving_mod(&smoke);
+    assert_eq!(
+        fs::read_dir(other.path())
+            .expect("the caller data directory")
+            .count(),
+        0,
+        "the caller's XDG_DATA_HOME was written to"
+    );
+}
+
+#[test]
+fn a_hooks_install_that_leaves_no_mod_stops_before_either_arm() {
+    let smoke = smoke();
+    fs::remove_file(smoke.bin.join("lets")).expect("the symlink goes");
+    write_executable(&smoke.bin.join("lets"), "#!/bin/sh\nexit 0\n");
+
+    let output = smoke.run(&[]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("hooks install left no mod at"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(smoke.arms().is_empty());
 }
 
 #[test]
