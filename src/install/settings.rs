@@ -131,13 +131,24 @@ fn merge_one(
     Ok(InstallStatus::Updated)
 }
 
-/// One lock spans read and write so concurrent installs cannot both append; every entry is merged
-/// before the single write, so a shape error on any leaves the file untouched.
 pub fn merge_hook_entries(
     settings_path: &Path,
     entries: &[HookEntry],
     runtime: &Path,
 ) -> Result<Vec<InstallStatus>, Error> {
+    merge_and_retire_hook_entries(settings_path, entries, &[], runtime)
+        .map(|(statuses, _)| statuses)
+}
+
+/// One lock spans read and write so concurrent installs cannot both append; every entry is merged
+/// and every retired one removed before the single write, so a shape error on any leaves the file
+/// untouched.
+pub fn merge_and_retire_hook_entries(
+    settings_path: &Path,
+    entries: &[HookEntry],
+    retired: &[HookEntry],
+    runtime: &Path,
+) -> Result<(Vec<InstallStatus>, Vec<bool>), Error> {
     let _lock = lock::Lock::acquire(settings_path, runtime)?;
     let text = read_text(settings_path)?;
     let root = CstRootNode::parse(&text, &parse_options())
@@ -153,14 +164,19 @@ pub fn merge_hook_entries(
         .iter()
         .map(|entry| merge_one(&hooks, entry, settings_path))
         .collect::<Result<Vec<_>, _>>()?;
-
-    if statuses
+    let removed = retired
         .iter()
-        .any(|status| *status != InstallStatus::AlreadyInstalled)
+        .map(|entry| remove_one(&hooks, entry, settings_path))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if removed.contains(&true)
+        || statuses
+            .iter()
+            .any(|status| *status != InstallStatus::AlreadyInstalled)
     {
         atomic::write_atomic(settings_path, root.to_string().as_bytes(), None)?;
     }
-    Ok(statuses)
+    Ok((statuses, removed))
 }
 
 fn is_ours(hook: &CstNode, entry: &HookEntry) -> bool {

@@ -168,7 +168,7 @@ ERROR_CODE=io_error
 ```
 
 ```console
-$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; f="$HOME/.claude/settings.json"; head -n 12 "$f" > before; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; if head -n 12 "$f" | cmp -s - before; then echo unrelated-entry-byte-identical; else echo unrelated-entry-changed; fi; grep -c -F '\''"command": "if command -v lets >/dev/null 2>&1; then lets hook classify; fi"'\'' "$f"'
+$ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; f="$HOME/.claude/settings.json"; head -n 12 "$f" > before; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; if head -n 12 "$f" | cmp -s - before; then echo unrelated-entry-byte-identical; else echo unrelated-entry-changed; fi; grep -c -F '\''then out=$(lets hook classify 2>/dev/null && printf .)'\'' "$f"'
 unrelated-entry-byte-identical
 1
 
@@ -236,7 +236,7 @@ ERROR_CODE=io_error
 
 ```console
 $ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code; f="$HOME/.claude/settings.json"; echo start hooks: $(grep -c -E '\''SessionStart|SubagentStart'\'' "$f" || true); echo classify hooks: $(grep -c -F '\''lets hook classify'\'' "$f")'
-the PreToolUse hook was already installed
+updated the PreToolUse hook
 added the lets mod
 removed the SessionStart hook · the lets mod carries its text now
 removed the SubagentStart hook · the lets mod carries its text now

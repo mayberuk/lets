@@ -399,16 +399,19 @@ pub fn install(format: Format, dir: &Path, path_var: &str, runtime: &Path) -> Ou
     let start_command = codex_start_command();
     let entries = entries(&start_command);
     let hooks_path = dir.join("hooks.json");
-    let merged = settings::merge_hook_entries(&hooks_path, &entries, runtime);
-    let statuses: [InstallStatus; 3] = match merged {
-        Ok(statuses) => statuses
-            .try_into()
-            .unwrap_or_else(|_| unreachable!("three entries were passed")),
-        Err(error) => return Outcome::failed("hooks install", error),
-    };
-    let retired = settings::remove_hook_entries(&hooks_path, &[RETIRED_CHECK_ENTRY], runtime);
-    let removed = match retired {
-        Ok(removed) => removed[0],
+    let merged = settings::merge_and_retire_hook_entries(
+        &hooks_path,
+        &entries,
+        &[RETIRED_CHECK_ENTRY],
+        runtime,
+    );
+    let (statuses, removed): ([InstallStatus; 3], bool) = match merged {
+        Ok((statuses, removed)) => (
+            statuses
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("three entries were passed")),
+            removed[0],
+        ),
         Err(error) => return Outcome::failed("hooks install", error),
     };
     let unapproved = unapproved(&dir.join("config.toml"), &entries);
@@ -585,6 +588,26 @@ mod tests {
     }
 
     #[test]
+    fn a_post_tool_use_that_is_not_an_array_fails_the_install_with_the_file_untouched() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        std::fs::create_dir_all(sandbox.codex_dir()).unwrap();
+        let existing = "{\"hooks\": {\"PostToolUse\": null}}\n";
+        std::fs::write(sandbox.codex_dir().join("hooks.json"), existing).unwrap();
+
+        let outcome = sandbox.install(Format::Text);
+
+        assert!(
+            matches!(outcome.error, Some(Error::Io { .. })),
+            "{:?}",
+            outcome.error
+        );
+        assert_eq!(
+            std::fs::read_to_string(sandbox.codex_dir().join("hooks.json")).unwrap(),
+            existing
+        );
+    }
+
+    #[test]
     fn a_second_install_reports_already_installed_with_identical_bytes() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
         sandbox.install(Format::Text);
@@ -668,27 +691,36 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_classify_entry_at_an_old_path_is_updated_in_place_not_duplicated() {
-        let sandbox = Sandbox::new().with_lets_on_path(true);
-        std::fs::create_dir_all(sandbox.codex_dir()).unwrap();
-        std::fs::write(
-            sandbox.codex_dir().join("hooks.json"),
-            serde_json::json!({"hooks": {"PreToolUse": [
-                {"matcher": "Bash", "hooks": [
-                    {"type": "command", "command": "/opt/old-release/bin/lets hook classify"}
-                ]}
-            ]}})
-            .to_string(),
-        )
-        .unwrap();
+    fn a_stale_classify_entry_at_an_old_path_or_0_0_4_s_guard_is_updated_in_place_not_duplicated() {
+        for existing in [
+            "/opt/old-release/bin/lets hook classify",
+            "if command -v lets >/dev/null 2>&1; then lets hook classify; fi",
+        ] {
+            let sandbox = Sandbox::new().with_lets_on_path(true);
+            std::fs::create_dir_all(sandbox.codex_dir()).unwrap();
+            std::fs::write(
+                sandbox.codex_dir().join("hooks.json"),
+                serde_json::json!({"hooks": {"PreToolUse": [
+                    {"matcher": "Bash", "hooks": [{"type": "command", "command": existing}]}
+                ]}})
+                .to_string(),
+            )
+            .unwrap();
 
-        let outcome = sandbox.install(Format::Text);
+            let outcome = sandbox.install(Format::Text);
 
-        assert!(outcome.error.is_none(), "{:?}", outcome.error);
-        let entries = sandbox.hooks_json()["hooks"]["PreToolUse"].clone();
-        assert_eq!(entries.as_array().map(Vec::len), Some(1));
-        assert_eq!(entries[0]["hooks"][0]["command"], GUARDED_CLASSIFY_COMMAND);
-        assert!(body_text(&outcome).starts_with("updated the PreToolUse hook\n"));
+            assert!(outcome.error.is_none(), "{existing}: {:?}", outcome.error);
+            let entries = sandbox.hooks_json()["hooks"]["PreToolUse"].clone();
+            assert_eq!(entries.as_array().map(Vec::len), Some(1), "{existing}");
+            assert_eq!(
+                entries[0]["hooks"][0]["command"], GUARDED_CLASSIFY_COMMAND,
+                "{existing}"
+            );
+            assert!(
+                body_text(&outcome).starts_with("updated the PreToolUse hook\n"),
+                "{existing}"
+            );
+        }
     }
 
     #[test]
@@ -864,7 +896,7 @@ mod tests {
     fn the_classify_hash_matches_an_independent_python_computation() {
         assert_eq!(
             entry_trust_hash(&CLASSIFY_ENTRY),
-            "sha256:afda628195f1844bb957a0a448ff08ad4694ad493b49729b977e94114e22db99"
+            "sha256:f371d6664e187e741d17c8c2e01e3f159b340bc993b006998bf3af551eb26706"
         );
     }
 
