@@ -3,9 +3,10 @@ use std::process::{Command, Stdio};
 
 use crate::Outcome;
 use crate::error::Error;
-use crate::install::claude_mod;
 use crate::install::release::{self, Version};
+use crate::install::{claude_mod, settings};
 use crate::output::{Body, Format, Response, UpdateCheck};
+use crate::verbs::hooks;
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
@@ -18,13 +19,15 @@ fn update_text(format: Format) -> String {
     }
 }
 
-fn mod_text(format: Format, refreshed: Result<(), String>) -> String {
+fn mod_text(format: Format, refreshed: Result<String, String>) -> String {
     match (format, refreshed) {
-        (Format::Text, Ok(())) => "refreshed the lets mod\n".to_owned(),
+        (Format::Text, Ok(relayed)) => format!("refreshed the lets mod\n{relayed}"),
         (Format::Text, Err(reason)) => format!(
             "the lets mod was not refreshed: {reason} \u{b7} run `{REFRESH_COMMAND}` to refresh it\n"
         ),
-        (Format::Json | Format::Jsonl, Ok(())) => "\nmod=refreshed".to_owned(),
+        (Format::Json | Format::Jsonl, Ok(relayed)) => {
+            format!("\nmod=refreshed\n{}", relayed.trim_end())
+        },
         (Format::Json | Format::Jsonl, Err(reason)) => {
             format!("\nmod=not_refreshed\nreason={reason}\nfix={REFRESH_COMMAND}")
         },
@@ -41,6 +44,7 @@ pub fn run(check_only: bool, force: bool, format: Format) -> Outcome {
             release::install_dir(&std::env::var("PATH").unwrap_or_default()),
             Path::new("curl"),
             &claude_mod::install_dir(),
+            &hooks::claude_dir().join("settings.json"),
         )
     }
 }
@@ -100,16 +104,39 @@ fn install_unless_current(
     Ok(Updated::Installed(install_dir.join("lets")))
 }
 
+/// Only a mod that settings still load is refreshed: a full install also writes the `PreToolUse`
+/// hook and the plugin directory entry, and would put back one the user removed on purpose.
+fn settings_load_mod(settings_path: &Path, mod_dir: &Path) -> Result<(), String> {
+    let mod_dir = mod_dir
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", mod_dir.display()))?;
+    match settings::loads_plugin_dir_and_hook(settings_path, mod_dir, &hooks::PRE_TOOL_USE) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("Claude Code settings no longer load it".to_owned()),
+        Err(error) => Err(format!("Claude Code settings could not be read: {error}")),
+    }
+}
+
 /// This process embeds the old mod files, so the new binary rewrites them itself through
 /// `hooks install`; writing them from here would leave the previous release's mod in place.
-fn refresh_mod(binary: &Path) -> Result<(), String> {
-    let output = Command::new(binary)
-        .args(["hooks", "install", "claude-code"])
+fn refresh_mod(
+    binary: &Path,
+    format: Format,
+    settings_path: &Path,
+    mod_dir: &Path,
+) -> Result<String, String> {
+    settings_load_mod(settings_path, mod_dir)?;
+    let mut command = Command::new(binary);
+    command.args(["hooks", "install", "claude-code"]);
+    if !matches!(format, Format::Text) {
+        command.arg("--json");
+    }
+    let output = command
         .stdin(Stdio::null())
         .output()
         .map_err(|error| format!("could not run {}: {error}", binary.display()))?;
     if output.status.success() {
-        return Ok(());
+        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     let first_line = stderr.lines().map(str::trim).find(|line| !line.is_empty());
@@ -125,13 +152,17 @@ fn update(
     install_dir: Result<PathBuf, Error>,
     curl: &Path,
     mod_dir: &Path,
+    settings_path: &Path,
 ) -> Outcome {
     match install_unless_current(force, install_dir, curl) {
         Ok(Updated::Current(check)) => reported(check),
         Ok(Updated::Installed(binary)) => {
             let mut text = update_text(format);
             if claude_mod::is_ours(mod_dir) {
-                text.push_str(&mod_text(format, refresh_mod(&binary)));
+                text.push_str(&mod_text(
+                    format,
+                    refresh_mod(&binary, format, settings_path, mod_dir),
+                ));
             }
             let mut response = Response::empty("update");
             response.body = Body::Raw {
@@ -207,8 +238,8 @@ mod tests {
             std::fs::write(
                 self.log.path().join("stub"),
                 format!(
-                    "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'boom: no settings\\n' >&2\n\
-                     exit {exit}\n",
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'removed the SessionStart \
+                     hook\\n'\nprintf 'boom: no settings\\n' >&2\nexit {exit}\n",
                     self.log.path().join("stub-argv").display()
                 ),
             )
@@ -263,6 +294,30 @@ mod tests {
             self
         }
 
+        fn settings_path(&self) -> PathBuf {
+            self.log.path().join("home/.claude/settings.json")
+        }
+
+        fn write_settings(&self, plugin_dirs: Option<&str>, hook: bool) {
+            let env = plugin_dirs.map_or_else(String::new, |dirs| {
+                format!(r#""env": {{"CLAUDE_CODE_PLUGIN_DIRS": "{dirs}"}},"#)
+            });
+            let hooks = if hook {
+                r#"{"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "lets hook classify"}]}]}"#
+            } else {
+                "{}"
+            };
+            let settings = self.settings_path();
+            std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+            std::fs::write(settings, format!("{{{env} \"hooks\": {hooks}}}")).unwrap();
+        }
+
+        fn with_loaded_mod(self) -> FakeCurl {
+            let fake = self.with_stale_mod();
+            fake.write_settings(Some(fake.mod_dir().to_str().unwrap()), true);
+            fake
+        }
+
         fn mod_bytes(&self) -> Vec<Option<Vec<u8>>> {
             MOD_FILES
                 .iter()
@@ -277,6 +332,7 @@ mod tests {
                 Ok(self.install_dir()),
                 &self.curl(),
                 &self.mod_dir(),
+                &self.settings_path(),
             )
         }
     }
@@ -401,6 +457,7 @@ mod tests {
             release::install_dir(fake.path_var()),
             &fake.curl(),
             &fake.mod_dir(),
+            &fake.settings_path(),
         );
 
         assert!(matches!(
@@ -425,7 +482,7 @@ mod tests {
 
     #[test]
     fn a_successful_update_runs_the_installed_binary_as_hooks_install_claude_code() {
-        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        let fake = FakeCurl::new(&newer_than_current()).with_loaded_mod();
 
         let outcome = fake.run(Format::Text, false);
 
@@ -437,13 +494,14 @@ mod tests {
         );
         assert_eq!(
             body_text(&outcome),
-            "replaced with the latest release\nrefreshed the lets mod\n"
+            "replaced with the latest release\nrefreshed the lets mod\nremoved the SessionStart \
+             hook\n"
         );
     }
 
     #[test]
     fn the_running_process_never_writes_the_mod_files_itself() {
-        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        let fake = FakeCurl::new(&newer_than_current()).with_loaded_mod();
         let before = fake.mod_bytes();
 
         fake.run(Format::Text, false);
@@ -457,26 +515,114 @@ mod tests {
 
     #[test]
     fn a_successful_update_touches_no_settings_file() {
-        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
-        let settings = fake.log.path().join("home/.claude/settings.json");
-        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
-        let planted = "{\n  // mine\n  \"model\": \"opus\"\n}\n";
-        std::fs::write(&settings, planted).unwrap();
+        let fake = FakeCurl::new(&newer_than_current()).with_loaded_mod();
+        let before = std::fs::read(fake.settings_path()).unwrap();
 
         let outcome = fake.run(Format::Text, false);
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
-        assert_eq!(std::fs::read_to_string(&settings).unwrap(), planted);
+        assert_eq!(std::fs::read(fake.settings_path()).unwrap(), before);
     }
 
     #[test]
     fn json_names_the_refresh_as_a_stable_token() {
-        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        let fake = FakeCurl::new(&newer_than_current()).with_loaded_mod();
 
         let outcome = fake.run(Format::Json, false);
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
-        assert_eq!(body_text(&outcome), "done\nmod=refreshed");
+        assert_eq!(
+            body_text(&outcome),
+            "done\nmod=refreshed\nremoved the SessionStart hook"
+        );
+        assert_eq!(
+            fake.stub_argv().as_deref(),
+            Some("hooks install claude-code --json\n")
+        );
+    }
+
+    const NOT_LOADED: &str = "the lets mod was not refreshed: Claude Code settings no longer load \
+                              it \u{b7} run `lets hooks install claude-code` to refresh it\n";
+
+    #[test]
+    fn a_plugin_dir_entry_the_user_removed_is_not_put_back() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        fake.write_settings(None, true);
+
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(fake.stub_argv().is_none());
+        assert_eq!(
+            body_text(&outcome),
+            format!("replaced with the latest release\n{NOT_LOADED}")
+        );
+    }
+
+    #[test]
+    fn a_plugin_dir_entry_for_another_directory_is_not_ours_to_refresh() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        fake.write_settings(Some("/elsewhere"), true);
+
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(fake.stub_argv().is_none());
+        assert!(body_text(&outcome).ends_with(NOT_LOADED));
+    }
+
+    #[test]
+    fn a_pre_tool_use_hook_the_user_removed_is_not_put_back() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        fake.write_settings(Some(fake.mod_dir().to_str().unwrap()), false);
+
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(fake.stub_argv().is_none());
+        assert_eq!(
+            body_text(&outcome),
+            format!("replaced with the latest release\n{NOT_LOADED}")
+        );
+    }
+
+    #[test]
+    fn a_missing_settings_file_runs_nothing_and_names_the_fix() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(fake.stub_argv().is_none());
+        assert!(body_text(&outcome).ends_with(NOT_LOADED));
+    }
+
+    #[test]
+    fn unparsable_settings_run_nothing_and_name_the_fix() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        std::fs::create_dir_all(fake.settings_path().parent().unwrap()).unwrap();
+        std::fs::write(fake.settings_path(), "{ not json").unwrap();
+
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(fake.stub_argv().is_none());
+        let text = body_text(&outcome);
+        assert!(text.contains("the lets mod was not refreshed"), "{text}");
+        assert!(text.contains("`lets hooks install claude-code`"), "{text}");
+    }
+
+    #[test]
+    fn a_settings_change_in_json_is_a_stable_not_refreshed_token() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        fake.write_settings(None, false);
+
+        let outcome = fake.run(Format::Json, false);
+
+        assert!(fake.stub_argv().is_none());
+        assert_eq!(
+            body_text(&outcome),
+            "done\nmod=not_refreshed\nreason=Claude Code settings no longer load it\nfix=lets \
+             hooks install claude-code"
+        );
     }
 
     #[test]
@@ -521,7 +667,7 @@ mod tests {
     #[test]
     fn a_failing_refresh_keeps_the_update_successful_and_names_the_fix() {
         let fake = FakeCurl::new(&newer_than_current())
-            .with_stale_mod()
+            .with_loaded_mod()
             .failing_stub();
 
         let outcome = fake.run(Format::Text, false);
@@ -545,7 +691,7 @@ mod tests {
     #[test]
     fn a_failing_refresh_in_json_carries_the_fix_token() {
         let fake = FakeCurl::new(&newer_than_current())
-            .with_stale_mod()
+            .with_loaded_mod()
             .failing_stub();
 
         let outcome = fake.run(Format::Json, false);

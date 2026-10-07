@@ -305,6 +305,32 @@ pub fn check_shape(settings_path: &Path) -> Result<(), Error> {
     }
 }
 
+/// Read-only. A missing or empty file loads nothing.
+pub fn loads_plugin_dir_and_hook(
+    settings_path: &Path,
+    dir: &str,
+    entry: &HookEntry,
+) -> Result<bool, Error> {
+    let text = read_text(settings_path)?;
+    let root = CstRootNode::parse(&text, &parse_options())
+        .map_err(|err| invalid_data(settings_path, err))?;
+    let Some(top) = root.value().and_then(|value| value.as_object()) else {
+        return Ok(false);
+    };
+    let names_dir = top
+        .get("env")
+        .and_then(|prop| prop.object_value())
+        .and_then(|env| env.get(PLUGIN_DIRS))
+        .and_then(|prop| string_value(&prop))
+        .is_some_and(|dirs| dirs.split(':').any(|item| same_dir(item, dir)));
+    let has_hook = top
+        .get("hooks")
+        .and_then(|prop| prop.object_value())
+        .and_then(|hooks| hooks.array_value(entry.event))
+        .is_some_and(|array| our_command_prop(&array, entry).is_some());
+    Ok(names_dir && has_hook)
+}
+
 /// `CLAUDE_CODE_PLUGIN_DIRS` is a `:`-separated list; other entries keep their order and bytes.
 pub fn merge_plugin_dir(settings_path: &Path, dir: &str, runtime: &Path) -> Result<bool, Error> {
     let _lock = lock::Lock::acquire(settings_path, runtime)?;

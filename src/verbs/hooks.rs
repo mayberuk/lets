@@ -144,7 +144,7 @@ const SESSION_START_MATCHER: &str = "startup|resume|clear|compact|fork";
 const SUBAGENT_START_PREFIX: &str =
     r#"printf '%s' '{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"#;
 
-fn claude_dir() -> PathBuf {
+pub(crate) fn claude_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".claude")
 }
 
@@ -329,7 +329,7 @@ pub(crate) fn raw(text: String) -> Response {
     response
 }
 
-const PRE_TOOL_USE: HookEntry<'static> = HookEntry {
+pub(crate) const PRE_TOOL_USE: HookEntry<'static> = HookEntry {
     event: "PreToolUse",
     matcher: Some("Bash"),
     command: GUARDED_CLASSIFY_COMMAND,
