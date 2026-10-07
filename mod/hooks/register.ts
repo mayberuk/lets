@@ -5,6 +5,8 @@ import { decide, dropPreferDedicatedTools, rewriteBashDescription, singleRun, VE
 const CLASSIFY_TIMEOUT_MS = 5000;
 const VERSION_TIMEOUT_MS = 2000;
 const PASS: Decision = { kind: 'pass' };
+// The full prompt carries the prefer-dedicated-tools line in `tools`; the lean prompt carries its sentence in `lean_body`.
+const STEERED_SECTIONS = new Set(['tools', 'lean_body']);
 
 async function classify($: Pick<EngineInterface, 'session' | 'process'>, command: string): Promise<Decision> {
   try {
@@ -42,7 +44,7 @@ export const register: Register = (on) => {
     const r = await next(e);
     let changed = false;
     const sections = r.sections.map((section) => {
-      if (section.id !== 'tools') return section;
+      if (!STEERED_SECTIONS.has(section.id)) return section;
       const text = dropPreferDedicatedTools(section.text);
       if (text === section.text) return section;
       changed = true;

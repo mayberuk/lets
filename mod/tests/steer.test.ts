@@ -9,6 +9,14 @@ const STEER =
 const AFTER = '# Instructions\n - If your command will create new directories or files, first verify the parent directory exists.\n';
 const BASH_DESCRIPTION = BEFORE + STEER + AFTER;
 
+const LEAN_FIRST = 'Executes a bash command and returns its output.\n\n';
+const LEAN_REST =
+  "- Working directory persists between calls, but prefer absolute paths — `cd` in a compound command can trigger a permission prompt. Shell state (env vars, functions) does not persist; the shell is initialized from the user's profile.\n- Command output is displayed to you, not reliably to the user.\n";
+const LEAN_BASH_DESCRIPTION = LEAN_FIRST + LEAN_REST;
+
+const LEAN_PREFER = ' - Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.\n';
+const LEAN_HARNESS = `# Harness\n - Text you output outside of tool use is displayed to the user.\n${LEAN_PREFER} - Reference code as \`file_path:line_number\`.`;
+
 const TOOLS_SECTION =
   '# Using your tools\n - Prefer dedicated tools over Bash when one fits (Read, Edit, Write) — reserve Bash for shell-only operations.\n - You can call multiple tools in a single response.';
 
@@ -23,16 +31,26 @@ describe('rewriteBashDescription', () => {
     expect(rewritten).not.toContain('IMPORTANT: Avoid');
   });
 
-  test('returns a description without the paragraph byte-identical', () => {
-    const without = BEFORE + AFTER;
-
-    expect(rewriteBashDescription(without)).toBe(without);
+  test('puts the table after the first paragraph of the lean description, which has no steer paragraph', () => {
+    expect(rewriteBashDescription(LEAN_BASH_DESCRIPTION)).toBe(LEAN_FIRST + LETS_TABLE + '\n\n' + LEAN_REST);
   });
 
-  test('returns a description whose paragraph lost its closing sentence unchanged', () => {
+  test('keeps a steer paragraph that lost its closing sentence and still adds the table once', () => {
     const cut = BEFORE + STEER.slice(0, STEER.indexOf('While the Bash tool')) + AFTER;
+    const rewritten = rewriteBashDescription(cut);
 
-    expect(rewriteBashDescription(cut)).toBe(cut);
+    expect(rewritten).toBe('Executes a given bash command and returns its output.\n\n' + LETS_TABLE + '\n\n' + cut.slice(cut.indexOf('\n\n') + 2));
+    expect(rewritten.split(LETS_TABLE)).toHaveLength(2);
+  });
+
+  test('appends the table to a one-paragraph description', () => {
+    expect(rewriteBashDescription('Runs a command.')).toBe('Runs a command.\n\n' + LETS_TABLE);
+  });
+
+  test('leaves a description that already carries the table as it is', () => {
+    const once = rewriteBashDescription(LEAN_BASH_DESCRIPTION);
+
+    expect(rewriteBashDescription(once)).toBe(once);
   });
 
   test('answers the same input with the same bytes, so the prompt cache holds', () => {
@@ -59,6 +77,18 @@ describe('dropPreferDedicatedTools', () => {
     const without = '# Using your tools\n - You can call multiple tools in a single response.';
 
     expect(dropPreferDedicatedTools(without)).toBe(without);
+  });
+
+  test('drops the lean sentence and keeps the rest of its line', () => {
+    expect(dropPreferDedicatedTools(LEAN_HARNESS)).toBe(
+      '# Harness\n - Text you output outside of tool use is displayed to the user.\n - Independent tool calls can run in parallel in one response.\n - Reference code as `file_path:line_number`.',
+    );
+  });
+
+  test('drops a lean line that holds only the sentence', () => {
+    const alone = '# Harness\n - Prefer the dedicated file/search tools over shell commands when one fits.\n - Next.';
+
+    expect(dropPreferDedicatedTools(alone)).toBe('# Harness\n - Next.');
   });
 
   test('keeps a line that only mentions the phrase mid-line', () => {

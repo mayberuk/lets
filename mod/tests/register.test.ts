@@ -336,6 +336,17 @@ describe('tool.describe', () => {
     );
   });
 
+  test('the lean Bash description, which has no steer paragraph, gets the table after its first paragraph', async ($, on) => {
+    on('tool.describe', ($, e) => ({ description: e.description }));
+    const lean = 'Executes a bash command and returns its output.\n\n- Command output is displayed to you, not reliably to the user.\n';
+
+    const r = await $.tool.describe({ tool: 'Bash', description: lean, provider: ENGINE });
+
+    expect(r.description).toBe(
+      `Executes a bash command and returns its output.\n\n${LETS_TABLE}\n\n- Command output is displayed to you, not reliably to the user.\n`,
+    );
+  });
+
   test('another tool keeps its description', async ($, on) => {
     on('tool.describe', ($, e) => ({ description: e.description }));
 
@@ -367,6 +378,21 @@ describe('prompt.compose', () => {
     const r = await $.prompt.compose(COMPOSE);
 
     expect(r.sections).toEqual([intro, { id: 'tools', text: `# Using your tools\n${PARALLEL}`, scope: 'shared' }]);
+  });
+
+  test('the lean body loses the prefer sentence, keeps the rest of the line, and keeps its id and scope', async ($, on) => {
+    const lean = ' - Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.\n';
+    const other = { id: 'memory', text: lean, scope: 'session' } as const;
+    on('prompt.compose', () => ({
+      sections: [{ id: 'lean_body', text: `# Harness\n${lean} - Reference code.`, scope: 'shared' }, other],
+    }));
+
+    const r = await $.prompt.compose({ ...COMPOSE, traits: ['lean'] });
+
+    expect(r.sections).toEqual([
+      { id: 'lean_body', text: '# Harness\n - Independent tool calls can run in parallel in one response.\n - Reference code.', scope: 'shared' },
+      other,
+    ]);
   });
 
   test('a tools section without the line is sent as it was', async ($, on) => {
