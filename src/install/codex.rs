@@ -868,6 +868,65 @@ mod tests {
         );
     }
 
+    /// Codex 0.160.0 wrote this `trusted_hash` itself when the bare entry was approved in its TUI.
+    const CODEX_TRUSTED_BARE_CLASSIFY: &str =
+        "sha256:7425e07473191c219b2ba935bec503c52ec031221f0590f51694f7023056750b";
+
+    const BARE_CLASSIFY_ENTRY: HookEntry<'static> = HookEntry {
+        command: "lets hook classify",
+        ..CLASSIFY_ENTRY
+    };
+
+    #[test]
+    fn the_hash_of_the_bare_entry_is_the_one_codex_itself_recorded_on_approval() {
+        assert_eq!(
+            entry_trust_hash(&BARE_CLASSIFY_ENTRY),
+            CODEX_TRUSTED_BARE_CLASSIFY
+        );
+    }
+
+    /// Codex 0.160 runs `PreToolUse` for each nested `tools.exec_command` of a code-mode `exec`
+    /// script with `tool_name: "Bash"`. Rewriting an approved entry drops its approval, and Codex
+    /// skips an unapproved hook until someone approves it again.
+    #[test]
+    fn an_approved_bare_bash_entry_upgrades_in_place_keeps_a_teammates_hook_and_needs_reapproval() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        let teammate = serde_json::json!(
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": "teammate-guard"}]}
+        );
+        std::fs::create_dir_all(sandbox.codex_dir()).unwrap();
+        std::fs::write(
+            sandbox.codex_dir().join("hooks.json"),
+            serde_json::json!({"hooks": {"PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "lets hook classify"}]},
+                teammate.clone(),
+            ]}})
+            .to_string(),
+        )
+        .unwrap();
+        sandbox.write_config_toml(&format!(
+            "[hooks.state.\"live:pre_tool_use:0:0\"]\ntrusted_hash = \
+             \"{CODEX_TRUSTED_BARE_CLASSIFY}\"\n"
+        ));
+
+        let outcome = sandbox.install(Format::Text);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(
+            sandbox.hooks_json()["hooks"]["PreToolUse"],
+            serde_json::json!([
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": GUARDED_CLASSIFY_COMMAND}]},
+                teammate,
+            ])
+        );
+        let text = body_text(&outcome);
+        assert!(text.starts_with("updated the PreToolUse hook\n"), "{text}");
+        assert!(
+            text.contains("\nhook: installed, not yet approved \u{b7} "),
+            "{text}"
+        );
+    }
+
     #[test]
     fn codex_session_start_paragraph_is_agents_md_s_own_words() {
         let agents = include_str!("../../docs/agents.md");

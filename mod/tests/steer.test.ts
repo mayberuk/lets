@@ -1,0 +1,135 @@
+import { describe, expect, test } from 'claude-code/testing';
+
+import { decide, dropPreferDedicatedTools, LETS_TABLE, rewriteBashDescription } from '../hooks/steer';
+
+const BEFORE =
+  'Executes a given bash command and returns its output.\n\nThe working directory persists between commands, but shell state does not. The shell environment is initialized from the user\'s profile (bash or zsh).\n\n';
+const STEER =
+  'IMPORTANT: Avoid using this tool to run `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or after you have verified that a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool as this will provide a much better experience for the user:\n\n - Read files: Use Read (NOT cat/head/tail)\n - Edit files: Use Edit (NOT sed/awk)\n - Write files: Use Write (NOT echo >/cat <<EOF)\n - Communication: Output text directly (NOT echo/printf)\nWhile the Bash tool can do similar things, it’s better to use the built-in tools as they provide a better user experience and make it easier to review tool calls and give permission.\n';
+const AFTER = '# Instructions\n - If your command will create new directories or files, first verify the parent directory exists.\n';
+const BASH_DESCRIPTION = BEFORE + STEER + AFTER;
+
+const TOOLS_SECTION =
+  '# Using your tools\n - Prefer dedicated tools over Bash when one fits (Read, Edit, Write) — reserve Bash for shell-only operations.\n - You can call multiple tools in a single response.';
+
+describe('rewriteBashDescription', () => {
+  test('replaces the steer paragraph with the lets table and keeps every other byte', () => {
+    const rewritten = rewriteBashDescription(BASH_DESCRIPTION);
+
+    expect(rewritten).toBe(BEFORE + LETS_TABLE + '\n\n' + AFTER);
+    expect(rewritten).toContain(LETS_TABLE);
+    expect(rewritten).toContain('# Instructions');
+    expect(rewritten).not.toContain('Use Read (NOT cat/head/tail)');
+    expect(rewritten).not.toContain('IMPORTANT: Avoid');
+  });
+
+  test('returns a description without the paragraph byte-identical', () => {
+    const without = BEFORE + AFTER;
+
+    expect(rewriteBashDescription(without)).toBe(without);
+  });
+
+  test('returns a description whose paragraph lost its closing sentence unchanged', () => {
+    const cut = BEFORE + STEER.slice(0, STEER.indexOf('While the Bash tool')) + AFTER;
+
+    expect(rewriteBashDescription(cut)).toBe(cut);
+  });
+
+  test('answers the same input with the same bytes, so the prompt cache holds', () => {
+    expect(rewriteBashDescription(BASH_DESCRIPTION)).toBe(rewriteBashDescription(BASH_DESCRIPTION));
+  });
+});
+
+describe('LETS_TABLE', () => {
+  test('tells the model to use --head N rather than pipe lets to head', () => {
+    expect(LETS_TABLE.startsWith('# File work: use `lets` through Bash\n')).toBe(true);
+    expect(LETS_TABLE).toContain('pass `--head N` to `lets show` or `lets find`');
+    expect(LETS_TABLE).not.toContain('Do not pipe');
+  });
+});
+
+describe('dropPreferDedicatedTools', () => {
+  test('drops the prefer-dedicated-tools line and keeps the others', () => {
+    expect(dropPreferDedicatedTools(TOOLS_SECTION)).toBe(
+      '# Using your tools\n - You can call multiple tools in a single response.',
+    );
+  });
+
+  test('returns text without the line unchanged', () => {
+    const without = '# Using your tools\n - You can call multiple tools in a single response.';
+
+    expect(dropPreferDedicatedTools(without)).toBe(without);
+  });
+
+  test('keeps a line that only mentions the phrase mid-line', () => {
+    const quoted = '# Notes\n - Someone wrote " - Prefer dedicated tools over Bash" here.\n';
+
+    expect(dropPreferDedicatedTools(quoted)).toBe(quoted);
+  });
+});
+
+const deny = (reason: string) =>
+  JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: reason,
+    },
+  });
+
+describe('decide', () => {
+  test('empty or whitespace-only stdout is a pass', () => {
+    expect(decide('')).toEqual({ kind: 'pass' });
+    expect(decide(' \n')).toEqual({ kind: 'pass' });
+  });
+
+  test('a rewrite returns the new command', () => {
+    const stdout = JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        updatedInput: { command: 'lets show src/a.ts --all', description: 'Read a', timeout: 5000 },
+      },
+    });
+
+    expect(decide(stdout)).toEqual({ kind: 'rewrite', command: 'lets show src/a.ts --all' });
+  });
+
+  test('a rewrite to an empty command is a pass', () => {
+    const stdout = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { command: '' } } });
+
+    expect(decide(stdout)).toEqual({ kind: 'pass' });
+  });
+
+  test('a deny with one run line is a replacement whose note names the command and the first reason line', () => {
+    const stdout = deny(
+      "lets edit replaces exact text and checks the result.\nrun: lets edit README.md --old 'cap' --new 'limit' --all",
+    );
+
+    expect(decide(stdout)).toEqual({
+      kind: 'replace',
+      command: "lets edit README.md --old 'cap' --new 'limit' --all",
+      note: "lets ran `lets edit README.md --old 'cap' --new 'limit' --all` in place of the command you wrote: lets edit replaces exact text and checks the result.",
+    });
+  });
+
+  test('a deny with two run lines is a pass', () => {
+    const stdout = deny('lets show reads several files and ranges in one call.\nrun: lets show a.ts\nrun: lets show b.ts');
+
+    expect(decide(stdout)).toEqual({ kind: 'pass' });
+  });
+
+  test('a deny with no run line is a pass', () => {
+    expect(decide(deny('lets show reads several files and ranges in one call.'))).toEqual({ kind: 'pass' });
+  });
+
+  test('output that is not JSON is a pass', () => {
+    expect(decide('not json')).toEqual({ kind: 'pass' });
+  });
+
+  test('JSON that is neither a rewrite nor a deny is a pass', () => {
+    expect(decide('{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}')).toEqual({
+      kind: 'pass',
+    });
+    expect(decide('null')).toEqual({ kind: 'pass' });
+  });
+});
