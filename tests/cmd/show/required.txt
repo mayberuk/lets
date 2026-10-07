@@ -29,3 +29,14 @@ no-header.trycmd
 outline.trycmd
 outline-size-bound.trycmd
 outline-refusals.trycmd
+head-cuts-window.toml
+head-no-cut.toml
+head-two-targets.toml
+head-two-targets-no-cut.toml
+head-zero-refused.toml
+head-json-refused.toml
+head-outline.toml
+head-outline-no-cut.toml
+head-missing-target.toml
+head-negative-refused.toml
+head-not-a-number-refused.toml

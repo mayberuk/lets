@@ -361,6 +361,89 @@ $ lets find needle
 ```
 
 ```console
+$ lets find filler . --count --head 3
+── 393 hits in 2 files · ignored 3 (gitignore 1 · hidden 2) · skipped 1 (binary 1)
+185  big.ts
+208  store.go
+
+```
+
+```console
+$ lets find filler . --count --head 2
+── 393 hits in 2 files · ignored 3 (gitignore 1 · hidden 2) · skipped 1 (binary 1)
+185  big.ts
+── output lines 3-3 not shown (--head 2)
+
+```
+
+```console
+$ lets find 'Bottom line|Next' small.md --head 5
+── small.md
+ 5:	## «Bottom line»
+ 6-	
+ 7-	Lines locate, content confirms.
+ 8-	
+── 2 hits in 1 file · searched 1 file · expanded 2 hits to enclosing symbols · output lines 6-13 not shown (--head 5)
+
+```
+
+```console
+$ lets find filler . --files --head 1
+big.ts
+── 2 files · searched 5 files · ignored 3 (gitignore 1 · hidden 2) · skipped 1 (binary 1) · output lines 2-3 not shown (--head 1)
+
+```
+
+```console
+$ lets find 'Bottom line|Next' small.md --head 13
+── small.md
+ 5:	## «Bottom line»
+ 6-	
+ 7-	Lines locate, content confirms.
+ 8-	
+ 9-	```sh
+10-	# not a heading
+11-	```
+12-	
+13:	## «Next»
+14-	
+15-	Something else.
+── 2 hits in 1 file · searched 1 file · expanded 2 hits to enclosing symbols
+
+```
+
+```console
+$ lets find zzz_never_appears_zzz small.md --head 1
+? 1
+── 0 hits in 0 files · searched 1 file
+no hits for «zzz_never_appears_zzz»
+ERROR_CODE=not_found
+
+```
+
+```console
+$ lets find needle many-hits.txt --head 5
+? 1
+── many-hits.txt
+ 1:	line 01 contains the «needle» for lets find's over-cap fixture
+ 2:	line 02 contains the «needle» for lets find's over-cap fixture
+ 3:	line 03 contains the «needle» for lets find's over-cap fixture
+ 4:	line 04 contains the «needle» for lets find's over-cap fixture
+── 64 hits in 1 file · searched 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files · first 10 of 64 hits in the busiest file shown · top 1 file shown · output lines 6-13 not shown (--head 5)
+64 hits in 1 file · over the 50-hit cap · narrow the pattern or the paths, or --files
+ERROR_CODE=over_cap
+
+```
+
+```console
+$ lets find needle small.md --head 0
+? 64
+...
+ERROR_CODE=usage
+
+```
+
+```console
 $ lets find 'excluded from a default find' .
 ? 1
 ── 0 hits in 0 files · searched 5 files · ignored 3 (gitignore 1 · hidden 2) · skipped 1 (binary 1)

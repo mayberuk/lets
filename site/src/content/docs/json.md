@@ -14,6 +14,8 @@ per target, hit, file, count row or edit, followed by one trailing object carryi
 three or in none. Shapes below are copied from real `lets` 0.0.1 output (`LETS_NO_STATS=1`, which
 is why `tokens_est` reads `null`).
 
+`--head` is text-only and is refused with `--json` or `--jsonl`.
+
 ## `show --json`
 
 ```json

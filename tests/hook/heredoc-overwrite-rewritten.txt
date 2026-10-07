@@ -1,0 +1,12 @@
+COMMAND
+cat > src/b.ts <<'EOF'
+export const b = 2;
+EOF
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets write --force src/b.ts <<'EOF'
+export const b = 2;
+EOF
+===END===
+COMPARE write

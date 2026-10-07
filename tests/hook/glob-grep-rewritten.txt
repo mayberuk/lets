@@ -1,0 +1,8 @@
+COMMAND
+grep -n foo src/*.ts
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find 'foo' src/*.ts
+===END===
+COMPARE search

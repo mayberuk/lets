@@ -1,0 +1,12 @@
+COMMAND
+cd src && cat > new.ts <<'EOF'
+export const n = 1;
+EOF
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: cd src && lets write --force new.ts <<'EOF'
+export const n = 1;
+EOF
+===END===
+COMPARE write

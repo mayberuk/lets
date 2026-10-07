@@ -1,0 +1,12 @@
+COMMAND
+cat > out.ts <<'EOF'
+x
+EOF
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets write --force out.ts <<'EOF'
+x
+EOF
+===END===
+COMPARE write

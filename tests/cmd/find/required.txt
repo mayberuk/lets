@@ -22,3 +22,11 @@ smart-case.trycmd
 exclude-prunes-nested-vendor.trycmd
 cap-exit-0.toml
 no-numbers.trycmd
+head-cuts-hits.toml
+head-over-cap.toml
+head-count.toml
+head-count-no-cut.toml
+head-no-cut.toml
+head-no-hits.toml
+head-zero-refused.toml
+head-files-cuts.toml

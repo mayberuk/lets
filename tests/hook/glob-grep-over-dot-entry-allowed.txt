@@ -1,0 +1,4 @@
+COMMAND
+grep -n visible globdot/*.md
+===END===
+VERDICT allow

@@ -1,0 +1,12 @@
+COMMAND
+cat > src/x.sh <<'EOF'
+echo hi
+EOF
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets write --force src/x.sh <<'EOF'
+echo hi
+EOF
+===END===
+COMPARE write

@@ -1,0 +1,4 @@
+COMMAND
+cd dashed && cat *.md
+===END===
+VERDICT allow

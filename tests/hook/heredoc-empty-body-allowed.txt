@@ -1,0 +1,5 @@
+COMMAND
+cat > out.ts <<'EOF'
+EOF
+===END===
+VERDICT allow

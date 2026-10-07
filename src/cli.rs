@@ -196,6 +196,9 @@ pub enum Verb {
 #[derive(Debug, Args)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct ShowArgs {
+    /// Print the first N output lines, target headers included; the footer names the cut
+    #[arg(long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    pub head: Option<usize>,
     // Unlike edit/transform, `show` has no `--from -` batch form to stand in for targets.
     #[arg(required = true)]
     pub targets: Vec<String>,
@@ -237,6 +240,9 @@ fn glob_order(sub: &ArgMatches, globs: Vec<String>, excludes: Vec<String>) -> Ve
 #[derive(Debug, Args, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct FindArgs {
+    /// Print the first N output lines of the search; the footer names the cut
+    #[arg(long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    pub head: Option<usize>,
     pub pattern: String,
     pub paths: Vec<String>,
     #[arg(short = 'F', long)]
@@ -720,6 +726,22 @@ mod tests {
             "allow[]=gh",
         ]);
         assert_eq!(order, [OpKind::Delete, OpKind::Append]);
+    }
+
+    #[test]
+    fn head_accepts_positive_counts_and_refuses_invalid_counts_on_both_verbs() {
+        for verb in ["show", "find"] {
+            for count in ["0", "-1", "nope"] {
+                assert!(Cli::try_parse_from(["lets", verb, "a", "--head", count]).is_err());
+            }
+            let cli = Cli::try_parse_from(["lets", verb, "a", "--head", "1"]).unwrap();
+            let head = match cli.verb {
+                Verb::Show(args) => args.head,
+                Verb::Find(args) => args.head,
+                _ => unreachable!(),
+            };
+            assert_eq!(head, Some(1));
+        }
     }
 
     fn find(words: &[&str]) -> FindArgs {

@@ -65,11 +65,11 @@ shell profile.
 ```
 lets — Locate · Edit · Transform · Show          one call, bounded output, post-state returned
 
-  show   <target>...            read files, ranges, anchors, symbols — several per call
+  show   <target>...            read files, ranges, anchors, symbols — several per call; --head N
   find   <pattern> [path]...    search; hits print as path:line; capped at 50, says so
                                 ≤10 hits in ≤3 files show enclosing function or ±5 lines,
                                 unless -A/-B/-C/--files/--count/--json/--jsonl/--no-expand
-                                -F/-i/-w · -A/-B/-C context · --files/-l · --count/-c
+                                -F/-i/-w · -A/-B/-C context · --files/-l · --count/-c · --head N
                                 grep's -n/--line-number -r -R -E -H are accepted as no-ops
   edit   <target> --old --new   exact-once replace; --all; --insert-after; --from - for batches
                                 batch: --from - <<'LETS' then @@ file, <<<<<<< old,

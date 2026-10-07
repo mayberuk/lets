@@ -1,0 +1,2 @@
+--head is text-only and cannot be combined with --json or --jsonl
+ERROR_CODE=usage
