@@ -1,0 +1,6 @@
+# The second install is the control: the XDG Base Directory spec says a relative value is ignored.
+bin.name = "sh"
+args = ["-c", "set -e; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; HOME=\"$(pwd)/home\" XDG_DATA_HOME=\"$(pwd)/data\" \"$CARGO_BIN_EXE_lets\" hooks install claude-code; HOME=\"$(pwd)/home2\" XDG_DATA_HOME=rel-data \"$CARGO_BIN_EXE_lets\" hooks install claude-code; find . -name plugin.json | LC_ALL=C sort; grep -h -F CLAUDE_CODE_PLUGIN_DIRS home/.claude/settings.json home2/.claude/settings.json | cut -d'\"' -f4"]
+
+[fs]
+sandbox = true

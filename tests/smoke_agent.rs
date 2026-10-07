@@ -106,6 +106,7 @@ impl Smoke {
             .env("PATH", self.path())
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", &self.home)
+            .env("XDG_DATA_HOME", self.data_home())
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("LETS_SMOKE_LOGS_DIR", &self.logs)
             .env("LETS_SMOKE_BIN_DIR", &self.bin)
@@ -116,6 +117,11 @@ impl Smoke {
             command.env(name, value);
         }
         command.output().expect("the smoke-agent script runs")
+    }
+
+    /// Pinned for the script and `installed_settings` alike: the settings name the mod directory.
+    fn data_home(&self) -> PathBuf {
+        self.home.join(".local/share")
     }
 
     fn path(&self) -> String {
@@ -371,6 +377,7 @@ fn installed_settings(smoke: &Smoke) -> Vec<u8> {
         .args(["hooks", "install", "claude-code"])
         .env("HOME", home.path())
         .env("XDG_RUNTIME_DIR", home.path())
+        .env("XDG_DATA_HOME", smoke.data_home())
         .env("PATH", format!("{}:{inherited}", smoke.bin.display()))
         .output()
         .expect("lets runs");
@@ -378,8 +385,8 @@ fn installed_settings(smoke: &Smoke) -> Vec<u8> {
     fs::read(home.path().join(".claude/settings.json")).expect("the installed settings")
 }
 
-// Discovery tier 1 is a SessionStart hook, so the arm loads what `hooks install` writes, not
-// `docs/agents.md`, which is a reference page.
+// Discovery tier 1 is the lets mod that `CLAUDE_CODE_PLUGIN_DIRS` names, so the arm loads what
+// `hooks install` writes, not `docs/agents.md`, which is a reference page.
 #[test]
 fn the_with_hooks_arm_loads_the_settings_hooks_install_writes() {
     let smoke = smoke();
@@ -387,16 +394,22 @@ fn the_with_hooks_arm_loads_the_settings_hooks_install_writes() {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
 
     let loaded = fs::read(smoke.run_dir().join("hooks-settings.json")).expect("the kept settings");
+    let mod_dir = smoke.data_home().join("lets/claude-code");
+    assert!(mod_dir.join("hooks/steer.ts").is_file());
 
     assert_eq!(loaded, installed_settings(&smoke));
     assert_ne!(loaded, include_bytes!("../docs/agents.md").to_vec());
     let text = String::from_utf8(loaded).expect("utf-8");
-    assert!(text.contains("SessionStart"), "{text}");
-    assert!(text.contains("SubagentStart"), "{text}");
+    assert!(text.contains("PreToolUse"), "{text}");
     assert!(
-        text.contains("# File work: use `lets` through Bash"),
+        text.contains(&format!(
+            "\"CLAUDE_CODE_PLUGIN_DIRS\": \"{}\"",
+            mod_dir.display()
+        )),
         "{text}"
     );
+    assert!(!text.contains("SessionStart"), "{text}");
+    assert!(!text.contains("SubagentStart"), "{text}");
 }
 
 #[test]

@@ -1,0 +1,10 @@
+# Negative control for plugin-dirs-kept: a value lets cannot append to is refused before any hook
+# or mod file lands. No `set -e`: the script captures `lets`'s exit code before checking.
+bin.name = "sh"
+args = ["-c", "export HOME=\"$(pwd)/home\"; unset XDG_DATA_HOME; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; cp \"$HOME/.claude/settings.json\" before; \"$CARGO_BIN_EXE_lets\" hooks install claude-code; status=$?; if cmp -s before \"$HOME/.claude/settings.json\"; then echo settings.json-untouched; else echo settings.json-changed; fi; if [ -e \"$HOME/.local/share/lets\" ]; then echo unexpected-mod-dir-exists; else echo no-mod-dir-created; fi; exit \"$status\""]
+
+[status]
+code = 7
+
+[fs]
+sandbox = true

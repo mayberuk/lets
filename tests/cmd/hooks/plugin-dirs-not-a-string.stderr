@@ -1,0 +1,2 @@
+[..]`env.CLAUDE_CODE_PLUGIN_DIRS` is not a string[..]
+ERROR_CODE=io_error

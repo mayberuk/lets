@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::Outcome;
 use crate::error::Error;
+use crate::install::claude_mod;
 use crate::install::release::{self, Version};
 use crate::output::{Body, Format, Response, UpdateCheck};
 
@@ -14,6 +15,15 @@ fn update_text(format: Format) -> String {
     }
 }
 
+fn mod_text(format: Format, changed: bool) -> &'static str {
+    match (format, changed) {
+        (Format::Text, true) => "rewrote the lets mod files\n",
+        (Format::Text, false) => "the lets mod files were unchanged\n",
+        (Format::Json | Format::Jsonl, true) => "\nmod=rewritten",
+        (Format::Json | Format::Jsonl, false) => "\nmod=unchanged",
+    }
+}
+
 pub fn run(check_only: bool, force: bool, format: Format) -> Outcome {
     if check_only {
         check(Path::new("curl"))
@@ -23,6 +33,7 @@ pub fn run(check_only: bool, force: bool, format: Format) -> Outcome {
             force,
             &std::env::var("PATH").unwrap_or_default(),
             Path::new("curl"),
+            &claude_mod::install_dir(),
         )
     }
 }
@@ -77,16 +88,27 @@ fn install_unless_current(
     Ok(None)
 }
 
-fn update(format: Format, force: bool, path_var: &str, curl: &Path) -> Outcome {
+/// Writes the mod files only, never `settings.json`: a settings change is left to an explicit
+/// `hooks install`.
+fn update(format: Format, force: bool, path_var: &str, curl: &Path, mod_dir: &Path) -> Outcome {
     match install_unless_current(force, path_var, curl) {
         Ok(Some(check)) => reported(check),
         Ok(None) => {
+            let mut text = update_text(format);
+            let rewritten = if mod_dir.exists() {
+                claude_mod::write(mod_dir).map(|changed| text.push_str(mod_text(format, changed)))
+            } else {
+                Ok(())
+            };
             let mut response = Response::empty("update");
             response.body = Body::Raw {
                 field: "update",
-                text: update_text(format),
+                text,
             };
-            Outcome::ok(response)
+            match rewritten {
+                Ok(()) => Outcome::ok(response),
+                Err(error) => Outcome::partial(response, error),
+            }
         },
         Err(error) => Outcome::failed("update", error),
     }
@@ -150,6 +172,20 @@ mod tests {
         fn installer_ran(&self) -> bool {
             self.log.path().join("installer-ran").exists()
         }
+
+        fn mod_dir(&self) -> PathBuf {
+            self.log.path().join("data/lets/claude-code")
+        }
+
+        fn with_stale_mod(self) -> FakeCurl {
+            claude_mod::write(&self.mod_dir()).unwrap();
+            std::fs::write(self.mod_dir().join("hooks/steer.ts"), "stale").unwrap();
+            self
+        }
+
+        fn steer_ts(&self) -> String {
+            std::fs::read_to_string(self.mod_dir().join("hooks/steer.ts")).unwrap()
+        }
     }
 
     fn newer_than_current() -> String {
@@ -201,7 +237,13 @@ mod tests {
     fn update_when_already_current_checks_and_does_not_download() {
         let fake = FakeCurl::new(&format!("v{}", env!("CARGO_PKG_VERSION")));
 
-        let outcome = update(Format::Text, false, fake.path_var(), &fake.curl());
+        let outcome = update(
+            Format::Text,
+            false,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert!(!body_check(&outcome).update_available);
@@ -215,7 +257,13 @@ mod tests {
     fn update_when_the_running_build_is_newer_than_the_latest_does_not_downgrade() {
         let fake = FakeCurl::new("v0.0.0");
 
-        let outcome = update(Format::Text, false, fake.path_var(), &fake.curl());
+        let outcome = update(
+            Format::Text,
+            false,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert_eq!(body_check(&outcome).latest, "0.0.0");
@@ -226,7 +274,13 @@ mod tests {
     fn update_when_a_newer_release_exists_downloads_and_runs_the_installer() {
         let fake = FakeCurl::new(&newer_than_current());
 
-        let outcome = update(Format::Text, false, fake.path_var(), &fake.curl());
+        let outcome = update(
+            Format::Text,
+            false,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert!(fake.installer_ran());
@@ -239,7 +293,13 @@ mod tests {
     fn force_skips_the_check_and_downloads_even_when_current() {
         let fake = FakeCurl::new(&format!("v{}", env!("CARGO_PKG_VERSION")));
 
-        let outcome = update(Format::Text, true, fake.path_var(), &fake.curl());
+        let outcome = update(
+            Format::Text,
+            true,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert!(fake.installer_ran());
@@ -255,7 +315,13 @@ mod tests {
         std::fs::write(&other, b"#!/bin/sh\n").unwrap();
         std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let outcome = update(Format::Text, false, fake.path_var(), &fake.curl());
+        let outcome = update(
+            Format::Text,
+            false,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
 
         assert!(matches!(
             outcome.error,
@@ -270,9 +336,98 @@ mod tests {
     fn a_malformed_latest_tag_fails_the_update_without_downloading() {
         let fake = FakeCurl::new("nightly");
 
-        let outcome = update(Format::Text, false, fake.path_var(), &fake.curl());
+        let outcome = update(
+            Format::Text,
+            false,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
 
         assert!(matches!(outcome.error, Some(Error::UpdateFailed { .. })));
         assert!(!fake.installer_ran());
+    }
+
+    fn body_text(outcome: &Outcome) -> &str {
+        match &outcome.response.body {
+            Body::Raw { text, .. } => text,
+            other => panic!("expected a raw body, got {other:?}"),
+        }
+    }
+
+    const EMBEDDED_STEER_TS: &str = include_str!("../../mod/hooks/steer.ts");
+
+    #[test]
+    fn a_successful_update_rewrites_an_installed_mod_and_says_so() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+
+        let outcome = update(
+            Format::Text,
+            false,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(fake.installer_ran());
+        assert_eq!(fake.steer_ts(), EMBEDDED_STEER_TS);
+        assert_eq!(
+            body_text(&outcome),
+            "replaced with the latest release\nrewrote the lets mod files\n"
+        );
+    }
+
+    #[test]
+    fn a_successful_update_with_no_mod_installed_creates_none() {
+        let fake = FakeCurl::new(&newer_than_current());
+
+        let outcome = update(
+            Format::Json,
+            false,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(fake.installer_ran());
+        assert!(!fake.mod_dir().exists());
+        assert!(!fake.log.path().join("data").exists());
+        assert_eq!(body_text(&outcome), "done");
+    }
+
+    #[test]
+    fn a_failed_update_leaves_the_mod_files_untouched() {
+        let fake = FakeCurl::new("nightly").with_stale_mod();
+
+        let outcome = update(
+            Format::Text,
+            false,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
+
+        assert!(matches!(outcome.error, Some(Error::UpdateFailed { .. })));
+        assert!(!fake.installer_ran());
+        assert_eq!(fake.steer_ts(), "stale");
+    }
+
+    #[test]
+    fn an_update_skipped_as_current_leaves_the_mod_files_untouched() {
+        let fake = FakeCurl::new(&format!("v{}", env!("CARGO_PKG_VERSION"))).with_stale_mod();
+
+        let outcome = update(
+            Format::Text,
+            false,
+            fake.path_var(),
+            &fake.curl(),
+            &fake.mod_dir(),
+        );
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(!fake.installer_ran());
+        assert_eq!(fake.steer_ts(), "stale");
     }
 }

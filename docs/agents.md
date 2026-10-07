@@ -118,7 +118,7 @@ system prompt any more.
 > LETS
 > ```
 >
-> Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.
+> For the first lines only, pass `--head N` to `lets show` or `lets find` instead of piping to `head`: the footer still names the cut. Do not add `2>/dev/null`: it hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.
 
 A 2026-09-26 trial found no session ever ran `--outline`, and cost 2.93% more [-3.45%, +8.48%]
 than not carrying the row, so it is no longer taught here; `--outline` still exists as a `show`
@@ -262,7 +262,7 @@ Discovery) arrives instead as SubagentStart `additionalContext`:
 > LETS
 > ```
 >
-> Do not pipe `lets` through `head`/`tail` or add `2>/dev/null`: it cuts the footer and hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.
+> For the first lines only, pass `--head N` to `lets show` or `lets find` instead of piping to `head`: the footer still names the cut. Do not add `2>/dev/null`: it hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.
 
 ## The Codex paragraph
 

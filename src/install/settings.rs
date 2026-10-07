@@ -260,6 +260,128 @@ pub fn remove_hook_entries(
     Ok(removed)
 }
 
+const PLUGIN_DIRS: &str = "CLAUDE_CODE_PLUGIN_DIRS";
+
+fn same_dir(entry: &str, dir: &str) -> bool {
+    entry.trim_end_matches('/') == dir.trim_end_matches('/')
+}
+
+fn plugin_dirs_value(prop: &CstObjectProp, settings_path: &Path) -> Result<String, Error> {
+    string_value(prop).ok_or_else(|| {
+        invalid_data(
+            settings_path,
+            format!("`env.{PLUGIN_DIRS}` is not a string"),
+        )
+    })
+}
+
+/// Read-only, so an install that writes `hooks` and then `env` in two locked steps can refuse a
+/// bad `env` before the first step lands. A deeper shape error is still caught by the step itself.
+pub fn check_shape(settings_path: &Path) -> Result<(), Error> {
+    let text = read_text(settings_path)?;
+    let root = CstRootNode::parse(&text, &parse_options())
+        .map_err(|err| invalid_data(settings_path, err))?;
+    let Some(value) = root.value() else {
+        return Ok(());
+    };
+    let top = value
+        .as_object()
+        .ok_or_else(|| invalid_data(settings_path, "the top-level value is not an object"))?;
+    if top
+        .get("hooks")
+        .is_some_and(|prop| prop.object_value().is_none())
+    {
+        return Err(invalid_data(settings_path, "`hooks` is not an object"));
+    }
+    let Some(env_prop) = top.get("env") else {
+        return Ok(());
+    };
+    let env = env_prop
+        .object_value()
+        .ok_or_else(|| invalid_data(settings_path, "`env` is not an object"))?;
+    match env.get(PLUGIN_DIRS) {
+        Some(prop) => plugin_dirs_value(&prop, settings_path).map(drop),
+        None => Ok(()),
+    }
+}
+
+/// `CLAUDE_CODE_PLUGIN_DIRS` is a `:`-separated list; other entries keep their order and bytes.
+pub fn merge_plugin_dir(settings_path: &Path, dir: &str, runtime: &Path) -> Result<bool, Error> {
+    let _lock = lock::Lock::acquire(settings_path, runtime)?;
+    let text = read_text(settings_path)?;
+    let root = CstRootNode::parse(&text, &parse_options())
+        .map_err(|err| invalid_data(settings_path, err))?;
+    let top = root
+        .object_value_or_create()
+        .ok_or_else(|| invalid_data(settings_path, "the top-level value is not an object"))?;
+    let env = top
+        .object_value_or_create("env")
+        .ok_or_else(|| invalid_data(settings_path, "`env` is not an object"))?;
+    match env.get(PLUGIN_DIRS) {
+        None => {
+            env.append(PLUGIN_DIRS, CstInputValue::from(dir));
+        },
+        Some(prop) => {
+            let existing = plugin_dirs_value(&prop, settings_path)?;
+            if existing.split(':').any(|entry| same_dir(entry, dir)) {
+                return Ok(false);
+            }
+            let joined = if existing.is_empty() {
+                dir.to_owned()
+            } else {
+                format!("{existing}:{dir}")
+            };
+            prop.set_value(CstInputValue::from(joined.as_str()));
+        },
+    }
+    atomic::write_atomic(settings_path, root.to_string().as_bytes(), None)?;
+    Ok(true)
+}
+
+/// An emptied key goes, then an emptied `env`, by the same rule as an emptied `hooks`.
+pub fn remove_plugin_dir(settings_path: &Path, dir: &str, runtime: &Path) -> Result<bool, Error> {
+    if !settings_path.exists() {
+        return Ok(false);
+    }
+    let _lock = lock::Lock::acquire(settings_path, runtime)?;
+    let text = read_text(settings_path)?;
+    if text.trim().is_empty() {
+        return Ok(false);
+    }
+    let root = CstRootNode::parse(&text, &parse_options())
+        .map_err(|err| invalid_data(settings_path, err))?;
+    let top = root
+        .object_value()
+        .ok_or_else(|| invalid_data(settings_path, "the top-level value is not an object"))?;
+    let Some(env_prop) = top.get("env") else {
+        return Ok(false);
+    };
+    let env = env_prop
+        .object_value()
+        .ok_or_else(|| invalid_data(settings_path, "`env` is not an object"))?;
+    let Some(prop) = env.get(PLUGIN_DIRS) else {
+        return Ok(false);
+    };
+    let existing = plugin_dirs_value(&prop, settings_path)?;
+    if !existing.split(':').any(|entry| same_dir(entry, dir)) {
+        return Ok(false);
+    }
+    let kept: Vec<&str> = existing
+        .split(':')
+        .filter(|entry| !same_dir(entry, dir))
+        .collect();
+    if kept.iter().all(|entry| entry.is_empty()) {
+        prop.remove();
+        if env.properties().is_empty() {
+            env_prop.remove();
+        }
+    } else {
+        prop.set_value(CstInputValue::from(kept.join(":").as_str()));
+    }
+    atomic::write_atomic(settings_path, root.to_string().as_bytes(), None)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -752,5 +874,202 @@ mod tests {
 
         assert!(matches!(err, Error::Io { .. }));
         assert_eq!(sandbox.text(), existing);
+    }
+
+    const MOD_DIR: &str = "/home/u/.local/share/lets/claude-code";
+
+    fn merge_dir(sandbox: &Sandbox) -> Result<bool, Error> {
+        merge_plugin_dir(&sandbox.path(), MOD_DIR, sandbox.runtime.path())
+    }
+
+    fn remove_dir(sandbox: &Sandbox) -> Result<bool, Error> {
+        remove_plugin_dir(&sandbox.path(), MOD_DIR, sandbox.runtime.path())
+    }
+
+    #[test]
+    fn plugin_dir_merge_keeps_unrelated_keys_and_a_comment_byte_identical() {
+        let sandbox = Sandbox::new(Some(
+            "{\n  // keep me\n  \"model\": \"opus\",\n  \"env\": {\"FOO\": \"bar\"}\n}\n",
+        ));
+
+        assert!(merge_dir(&sandbox).unwrap());
+
+        assert!(
+            sandbox
+                .text()
+                .starts_with("{\n  // keep me\n  \"model\": \"opus\",\n")
+        );
+        let uncommented: serde_json::Value =
+            serde_json::from_str(&sandbox.text().replace("  // keep me\n", "")).unwrap();
+        assert_eq!(
+            uncommented["env"],
+            serde_json::json!({"FOO": "bar", "CLAUDE_CODE_PLUGIN_DIRS": MOD_DIR})
+        );
+    }
+
+    #[test]
+    fn plugin_dir_merge_appends_after_other_entries_in_their_order() {
+        let sandbox = Sandbox::new(Some(
+            "{\"env\": {\"CLAUDE_CODE_PLUGIN_DIRS\": \"/opt/b:/opt/a\"}}\n",
+        ));
+
+        assert!(merge_dir(&sandbox).unwrap());
+
+        assert_eq!(
+            sandbox.json()["env"]["CLAUDE_CODE_PLUGIN_DIRS"],
+            format!("/opt/b:/opt/a:{MOD_DIR}")
+        );
+    }
+
+    #[test]
+    fn plugin_dir_merged_twice_writes_nothing_the_second_time() {
+        let sandbox = Sandbox::new(Some("{}\n"));
+        assert!(merge_dir(&sandbox).unwrap());
+        let bytes = std::fs::read(sandbox.path()).unwrap();
+        let before = inode(&sandbox.path());
+
+        assert!(!merge_dir(&sandbox).unwrap());
+
+        assert_eq!(std::fs::read(sandbox.path()).unwrap(), bytes);
+        assert_eq!(inode(&sandbox.path()), before);
+    }
+
+    #[test]
+    fn plugin_dir_with_a_trailing_slash_counts_as_already_merged() {
+        let existing = format!("{{\"env\": {{\"CLAUDE_CODE_PLUGIN_DIRS\": \"{MOD_DIR}/\"}}}}\n");
+        let sandbox = Sandbox::new(Some(&existing));
+
+        assert!(!merge_dir(&sandbox).unwrap());
+
+        assert_eq!(sandbox.text(), existing);
+    }
+
+    #[test]
+    fn plugin_dir_merge_then_remove_restores_the_file_when_env_was_created() {
+        for existing in [
+            "{}\n",
+            "{\n  \"model\": \"opus\"\n}\n",
+            "{\n  // keep me\n  \"model\": \"opus\",\n  \"hooks\": {}\n}\n",
+        ] {
+            let sandbox = Sandbox::new(Some(existing));
+            assert!(merge_dir(&sandbox).unwrap());
+            assert_ne!(sandbox.text(), existing);
+
+            assert!(remove_dir(&sandbox).unwrap());
+
+            assert_eq!(sandbox.text(), existing);
+        }
+    }
+
+    #[test]
+    fn plugin_dir_remove_keeps_the_other_entries_and_the_key() {
+        let sandbox = Sandbox::new(Some(&format!(
+            "{{\"env\": {{\"CLAUDE_CODE_PLUGIN_DIRS\": \"/opt/b:{MOD_DIR}:/opt/a\"}}}}\n"
+        )));
+
+        assert!(remove_dir(&sandbox).unwrap());
+
+        assert_eq!(
+            sandbox.json(),
+            serde_json::json!({"env": {"CLAUDE_CODE_PLUGIN_DIRS": "/opt/b:/opt/a"}})
+        );
+    }
+
+    #[test]
+    fn plugin_dir_remove_keeps_an_env_that_holds_other_keys() {
+        let sandbox = Sandbox::new(Some(&format!(
+            "{{\"env\": {{\"FOO\": \"bar\", \"CLAUDE_CODE_PLUGIN_DIRS\": \"{MOD_DIR}\"}}}}\n"
+        )));
+
+        assert!(remove_dir(&sandbox).unwrap());
+
+        assert_eq!(sandbox.json(), serde_json::json!({"env": {"FOO": "bar"}}));
+    }
+
+    #[test]
+    fn plugin_dir_remove_without_our_entry_writes_nothing() {
+        let existing = "{\"env\": {\"CLAUDE_CODE_PLUGIN_DIRS\": \"/opt/other-mod\"}}\n";
+        let sandbox = Sandbox::new(Some(existing));
+
+        assert!(!remove_dir(&sandbox).unwrap());
+
+        assert_eq!(sandbox.text(), existing);
+    }
+
+    #[test]
+    fn plugin_dir_remove_on_a_missing_file_takes_no_lock() {
+        let sandbox = Sandbox::new(None);
+
+        assert!(!remove_dir(&sandbox).unwrap());
+
+        assert!(!sandbox.path().exists());
+        assert!(!sandbox.runtime.path().join("lets").exists());
+    }
+
+    #[test]
+    fn an_env_that_is_not_an_object_is_a_hard_error_and_nothing_is_written() {
+        let existing = "{\"env\": [\"FOO=bar\"]}\n";
+        for run in [merge_dir, remove_dir] {
+            let sandbox = Sandbox::new(Some(existing));
+
+            let err = run(&sandbox).unwrap_err();
+
+            let Error::Io { source, .. } = &err else {
+                panic!("expected Io, got {err:?}");
+            };
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidData);
+            assert_eq!(sandbox.text(), existing);
+        }
+    }
+
+    #[test]
+    fn check_shape_accepts_what_both_merges_accept() {
+        for existing in [
+            None,
+            Some(""),
+            Some("{}"),
+            Some("{\"hooks\": {}, \"env\": {\"CLAUDE_CODE_PLUGIN_DIRS\": \"/opt/a\"}}"),
+            Some("{\n  // a comment\n  \"env\": {\"FOO\": \"bar\"},\n}"),
+        ] {
+            let sandbox = Sandbox::new(existing);
+
+            assert!(check_shape(&sandbox.path()).is_ok(), "{existing:?}");
+        }
+    }
+
+    #[test]
+    fn check_shape_refuses_what_either_merge_refuses() {
+        for existing in [
+            "{ not json",
+            "[]",
+            "{\"hooks\": null}",
+            "{\"env\": [\"FOO=bar\"]}",
+            "{\"env\": {\"CLAUDE_CODE_PLUGIN_DIRS\": 1}}",
+        ] {
+            let sandbox = Sandbox::new(Some(existing));
+
+            let err = check_shape(&sandbox.path()).unwrap_err();
+
+            let Error::Io { source, .. } = &err else {
+                panic!("{existing}: expected Io, got {err:?}");
+            };
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidData, "{existing}");
+        }
+    }
+
+    #[test]
+    fn a_plugin_dirs_value_that_is_not_a_string_is_a_hard_error_and_nothing_is_written() {
+        let existing = "{\"env\": {\"CLAUDE_CODE_PLUGIN_DIRS\": 1}}\n";
+        for run in [merge_dir, remove_dir] {
+            let sandbox = Sandbox::new(Some(existing));
+
+            let err = run(&sandbox).unwrap_err();
+
+            let Error::Io { source, .. } = &err else {
+                panic!("expected Io, got {err:?}");
+            };
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidData);
+            assert_eq!(sandbox.text(), existing);
+        }
     }
 }

@@ -1,4 +1,3 @@
 removed the PreToolUse hook
-removed the SubagentStart hook
-removed the SessionStart hook
+removed the lets mod
 settings.json byte-identical after install then uninstall
