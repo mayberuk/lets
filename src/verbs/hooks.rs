@@ -419,6 +419,36 @@ fn mod_dir_text(mod_dir: &Path) -> Result<&str, Error> {
     })
 }
 
+fn mod_partial(format: Format, written: Vec<PathBuf>, failed: PathBuf, detail: String) -> Outcome {
+    let mut lines: Vec<String> = written
+        .iter()
+        .map(|path| match format {
+            Format::Text => format!("wrote the lets mod file {}", path.display()),
+            Format::Json | Format::Jsonl => format!("mod_file_written={}", path.display()),
+        })
+        .collect();
+    match format {
+        Format::Text => {
+            lines.push(format!(
+                "could not write the lets mod file {} \u{b7} {detail}",
+                failed.display()
+            ));
+            lines.push("settings.json was left untouched".to_owned());
+        },
+        Format::Json | Format::Jsonl => {
+            lines.push(format!("mod_file_failed={}", failed.display()));
+            lines.push(format!("mod_file_error={detail}"));
+            lines.push("settings=untouched".to_owned());
+        },
+    }
+    let error = Error::PartialBatch {
+        written,
+        failed,
+        detail,
+    };
+    Outcome::partial(raw(lines.join("\n") + "\n"), error)
+}
+
 /// The settings shape is checked before the mod files are written, so a settings file the install
 /// would refuse leaves both untouched.
 fn install(format: Format, dir: &Path, mod_dir: &Path, path_var: &str, runtime: &Path) -> Outcome {
@@ -444,6 +474,11 @@ fn install(format: Format, dir: &Path, mod_dir: &Path, path_var: &str, runtime: 
     let files_before = claude_mod::any_file_present(mod_dir);
     let files_changed = match claude_mod::write(mod_dir) {
         Ok(changed) => changed,
+        Err(Error::PartialBatch {
+            written,
+            failed,
+            detail,
+        }) => return mod_partial(format, written, failed, detail),
         Err(error) => return Outcome::failed("hooks install", error),
     };
     let mut landed = Landed {
@@ -1842,6 +1877,48 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
                 None => assert!(!sandbox.claude("settings.json").exists()),
             }
             assert!(!sandbox.mod_dir().exists());
+        }
+    }
+
+    #[test]
+    fn a_mod_write_failure_after_a_file_landed_is_partial_and_names_both_sides() {
+        let existing = "{\n  // mine\n  \"model\": \"opus\"\n}\n";
+        for (format, expected) in [
+            (
+                Format::Text,
+                "wrote the lets mod file .claude-plugin/plugin.json\ncould not write the lets mod \
+                 file hooks/hooks.json \u{b7} entity already exists\nsettings.json was left untouched\n",
+            ),
+            (
+                Format::Json,
+                "mod_file_written=.claude-plugin/plugin.json\nmod_file_failed=hooks/hooks.json\n\
+                 mod_file_error=entity already exists\nsettings=untouched\n",
+            ),
+        ] {
+            let sandbox = Sandbox::new().with_lets_on_path(true);
+            std::fs::create_dir_all(sandbox.claude("")).unwrap();
+            std::fs::write(sandbox.claude("settings.json"), existing).unwrap();
+            std::fs::create_dir_all(sandbox.mod_dir()).unwrap();
+            std::fs::write(sandbox.mod_dir().join("hooks"), "a file where hooks/ goes").unwrap();
+
+            let outcome = sandbox.install(format);
+
+            assert!(
+                matches!(&outcome.error, Some(Error::PartialBatch { .. })),
+                "{:?}",
+                outcome.error
+            );
+            assert_eq!(body_text(&outcome), expected);
+            assert_eq!(
+                std::fs::read_to_string(sandbox.claude("settings.json")).unwrap(),
+                existing
+            );
+            assert!(
+                sandbox
+                    .mod_dir()
+                    .join(".claude-plugin/plugin.json")
+                    .is_file()
+            );
         }
     }
 

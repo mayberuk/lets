@@ -46,23 +46,41 @@ pub fn any_file_present(dir: &Path) -> bool {
         .any(|(relative, _)| dir.join(relative).exists())
 }
 
-/// Returns whether any file changed; a file already holding its bytes is not rewritten.
+/// Returns whether any file changed; a file already holding its bytes is not rewritten. A failure
+/// after a file landed is `PartialBatch` with `dir`-relative paths, so the caller can name them.
 pub fn write(dir: &Path) -> Result<bool, Error> {
-    let mut changed = false;
+    let mut written = Vec::new();
     for (relative, contents) in FILES {
         let path = dir.join(relative);
         if std::fs::read(&path).is_ok_and(|bytes| bytes == contents.as_bytes()) {
             continue;
         }
-        let parent = path.parent().unwrap_or(dir);
-        std::fs::create_dir_all(parent).map_err(|source| Error::Io {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-        atomic::write_atomic(&path, contents.as_bytes(), None)?;
-        changed = true;
+        if let Err(error) = write_file(&path, dir, contents) {
+            if written.is_empty() {
+                return Err(error);
+            }
+            let detail = match error {
+                Error::Io { source, .. } => source.kind().to_string(),
+                other => other.to_string(),
+            };
+            return Err(Error::PartialBatch {
+                written,
+                failed: PathBuf::from(relative),
+                detail,
+            });
+        }
+        written.push(PathBuf::from(relative));
     }
-    Ok(changed)
+    Ok(!written.is_empty())
+}
+
+fn write_file(path: &Path, dir: &Path, contents: &str) -> Result<(), Error> {
+    let parent = path.parent().unwrap_or(dir);
+    std::fs::create_dir_all(parent).map_err(|source| Error::Io {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    atomic::write_atomic(path, contents.as_bytes(), None)
 }
 
 /// The shape `install_dir` gives under any data dir; a checkout's `mod/` never has it.
