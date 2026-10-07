@@ -42,15 +42,18 @@ export function decide(stdout: string): Decision {
   if (typeof command === 'string' && command !== '') return { kind: 'rewrite', command };
   const reason = field(output, 'permissionDecisionReason');
   if (field(output, 'permissionDecision') !== 'deny' || typeof reason !== 'string') return PASS;
-  const lines = reason.split('\n');
-  const runs = lines.filter((line) => line.startsWith(RUN_PREFIX));
-  if (runs.length !== 1) return PASS;
-  const replacement = runs[0]!.slice(RUN_PREFIX.length);
+  const replacement = singleRun(reason);
+  if (replacement === undefined) return PASS;
   return {
     kind: 'replace',
     command: replacement,
-    note: `lets ran \`${replacement}\` in place of the command you wrote: ${lines[0]}`,
+    note: `lets ran \`${replacement}\` in place of the command you wrote: ${reason.split('\n')[0]}`,
   };
+}
+
+export function singleRun(reason: string): string | undefined {
+  const runs = reason.split('\n').filter((line) => line.startsWith(RUN_PREFIX));
+  return runs.length === 1 ? runs[0]!.slice(RUN_PREFIX.length) : undefined;
 }
 
 function field(value: unknown, key: string): unknown {

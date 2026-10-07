@@ -161,7 +161,8 @@ The mod fails open: a hook that errors, a `lets` that is missing, exits non-zero
 than the mod will read, passes the event on unchanged. The description and prompt changes depend only
 on their input, so the prompt cache holds for the session. When auto mode or the person refuses a
 changed Bash call, the mod remembers that command and stops classifying it for the rest of the
-session. The `PreToolUse` hook still classifies it, so a retry can be changed again.
+session, and the retry runs as typed: the mod also drops the settings `PreToolUse` hook's change
+for that command and leaves any other hook's answer alone.
 
 `lets update` refreshes the mod files, through the new binary's own `hooks install claude-code`,
 only while the Claude Code settings still load the mod; a mod someone removed is not put back, and

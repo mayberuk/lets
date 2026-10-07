@@ -1,4 +1,4 @@
-import type { On, ProcessRunInit } from 'claude-code';
+import type { On, PreToolUseResult, ProcessRunInit } from 'claude-code';
 import { describe, expect, test } from 'claude-code/testing';
 
 import { LETS_TABLE, VERSION } from '../hooks/steer';
@@ -43,6 +43,11 @@ function world(
     return { result: { stdout: 'ok\n', stderr: '', interrupted: false } };
   });
   return seen;
+}
+
+// Stands in for the installed settings hook, which runs the same classifier beneath the plugin.
+function settingsHook(on: On, verdict: (command: string) => PreToolUseResult): void {
+  on('classic.PreToolUse', ($, e) => (e.tool === 'Bash' ? verdict(e.command) : {}));
 }
 
 const classifyAnswers = (stdout: string, exitCode = 0) => (): Answer => ({ exitCode, stdout });
@@ -192,6 +197,88 @@ describe('tool.call on Bash', () => {
 
     expect(seen.ran).toEqual([REPLACEMENT, REPLACEMENT]);
     expect(second.context).toEqual([NOTE]);
+  });
+});
+
+describe('classic.PreToolUse on Bash after a refusal', () => {
+  const OTHER = 'lets show README.md --all';
+  const rewriteTo = (command: string) => (typed: string) => (typed === ORIGINAL_EDIT ? { updatedInput: { command } } : {});
+  const denyAs = (reason: string) => (typed: string) => (typed === ORIGINAL_EDIT ? { deny: reason } : {});
+  const refusedReplacement = (command: string) => command === REPLACEMENT;
+
+  test('the retry reaches the tool as typed although the settings hook rewrites it to the tried replacement', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), refusedReplacement);
+    settingsHook(on, rewriteTo(REPLACEMENT));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    const retry = await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT, ORIGINAL_EDIT]);
+    expect(retry.isError).toBe(undefined);
+  });
+
+  test('the retry reaches the tool as typed although the settings hook denies it with the tried replacement', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), refusedReplacement);
+    settingsHook(on, denyAs(`${TEACHING}\nrun: ${REPLACEMENT}`));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    const retry = await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT, ORIGINAL_EDIT]);
+    expect(retry.isError).toBe(undefined);
+  });
+
+  test('a settings hook rewriting the retry to a different command keeps its rewrite', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), refusedReplacement);
+    settingsHook(on, rewriteTo(OTHER));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT, OTHER]);
+  });
+
+  test('a settings hook denying the retry with a different run line keeps its deny', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), refusedReplacement);
+    settingsHook(on, denyAs(`${TEACHING}\nrun: ${OTHER}`));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    const retry = await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT]);
+    expect(retry.isError).toBe(true);
+    expect(retry.text).toContain(OTHER);
+  });
+
+  test('a settings hook denying the retry with other text keeps its deny', async ($, on) => {
+    const seen = world(on, classifyAnswers(ONE_RUN), refusedReplacement);
+    settingsHook(on, denyAs('blocked by team policy'));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+    const retry = await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT]);
+    expect(retry.isError).toBe(true);
+    expect(retry.text).toContain('blocked by team policy');
+  });
+
+  test('a command that was never refused keeps the settings hook rewrite', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    settingsHook(on, rewriteTo(REPLACEMENT));
+
+    await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([REPLACEMENT]);
+  });
+
+  test('a command that was never refused keeps the settings hook deny', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    settingsHook(on, denyAs(`${TEACHING}\nrun: ${REPLACEMENT}`));
+
+    const r = await $.tool.call({ tool: 'Bash', command: ORIGINAL_EDIT });
+
+    expect(seen.ran).toEqual([]);
+    expect(r.isError).toBe(true);
   });
 });
 

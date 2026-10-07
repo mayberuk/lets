@@ -1,6 +1,6 @@
 import type { EngineInterface, Register, ToolCallResult } from 'claude-code';
 
-import { decide, dropPreferDedicatedTools, rewriteBashDescription, VERSION, type Decision } from './steer';
+import { decide, dropPreferDedicatedTools, rewriteBashDescription, singleRun, VERSION, type Decision } from './steer';
 
 const CLASSIFY_TIMEOUT_MS = 5000;
 const VERSION_TIMEOUT_MS = 2000;
@@ -30,7 +30,8 @@ function refusedChangedInput(result: ToolCallResult): boolean {
 
 export const register: Register = (on) => {
   // Without it, a refused change would be retried as recorded and changed again, every time.
-  const refused = new Set<string>();
+  // Maps each refused original command to the replacement that was tried.
+  const refused = new Map<string, string>();
 
   on('tool.describe', { tool: 'Bash' }, async ($, e, next) => {
     const r = await next(e);
@@ -56,11 +57,27 @@ export const register: Register = (on) => {
     if (decision.kind === 'pass') return next(e);
     const r = await next({ ...e, command: decision.command });
     if (r.deny !== undefined || refusedChangedInput(r)) {
-      refused.add(e.command);
+      refused.set(e.command, decision.command);
       return r;
     }
     if (decision.kind === 'rewrite') return r;
     return { ...r, context: [...(r.context ?? []), decision.note] };
+  }).catch(($, e, next) => next(e));
+
+  // Always calls next: answering in its place would skip the user's other settings hooks.
+  on('classic.PreToolUse', { tool: 'Bash' }, async ($, e, next) => {
+    const r = await next(e);
+    const tried = e.tool === 'Bash' ? refused.get(e.command) : undefined;
+    if (tried === undefined) return r;
+    if (r.updatedInput?.command === tried) {
+      const { updatedInput, ...rest } = r;
+      return rest;
+    }
+    if (r.deny !== undefined && singleRun(r.deny) === tried) {
+      const { deny, ...rest } = r;
+      return rest;
+    }
+    return r;
   }).catch(($, e, next) => next(e));
 
   on('session.start', async ($, e, next) => {
