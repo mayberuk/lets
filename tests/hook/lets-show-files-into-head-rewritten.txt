@@ -1,0 +1,8 @@
+COMMAND
+lets show src/a.ts src/b.ts | head -n 4
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets show src/a.ts src/b.ts --head 4
+===END===
+COMPARE head

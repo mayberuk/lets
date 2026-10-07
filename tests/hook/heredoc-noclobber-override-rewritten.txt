@@ -1,0 +1,12 @@
+COMMAND
+set -C; cat >| src/b.ts <<'EOF'
+export const b = 3;
+EOF
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: set -C; lets write --force src/b.ts <<'EOF'
+export const b = 3;
+EOF
+===END===
+COMPARE write

@@ -196,8 +196,8 @@ pub enum Verb {
 #[derive(Debug, Args)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct ShowArgs {
-    /// Print the first N lines of the shown files; the footer names the cut
-    #[arg(long, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    /// Print the first N output lines, target headers included; the footer names the cut
+    #[arg(long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     pub head: Option<usize>,
     // Unlike edit/transform, `show` has no `--from -` batch form to stand in for targets.
     #[arg(required = true)]
@@ -240,8 +240,8 @@ fn glob_order(sub: &ArgMatches, globs: Vec<String>, excludes: Vec<String>) -> Ve
 #[derive(Debug, Args, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct FindArgs {
-    /// Print the first N lines of hits; the footer names the cut
-    #[arg(long, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    /// Print the first N output lines of the search; the footer names the cut
+    #[arg(long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     pub head: Option<usize>,
     pub pattern: String,
     pub paths: Vec<String>,

@@ -1,0 +1,4 @@
+COMMAND
+lets show src/a.ts | head -c 5
+===END===
+VERDICT allow

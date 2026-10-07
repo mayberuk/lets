@@ -107,6 +107,8 @@ enum Compare {
     Write,
     /// A command whose other statements run beside the reads a rewrite put `lets show` in for.
     Chain,
+    /// `lets … | head` against `lets … --head N`: the same lines, plus at most a `── ` footer.
+    Head,
 }
 
 /// `reason` is a block's first reason line; a rewrite carries none, since it runs silently.
@@ -213,12 +215,21 @@ fn parse_replacement<'a, I: Iterator<Item = &'a str>>(
     if lines.next() != Some("REPLACEMENT") {
         return Err(format!("a {verdict} case names its REPLACEMENT"));
     }
-    let runs: Vec<String> = read_block(lines, "REPLACEMENT")?
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    if runs.is_empty() || !runs.iter().all(|line| line.starts_with("run: ")) {
-        return Err("REPLACEMENT holds one or more `run: ` lines and nothing else".to_owned());
+    // A rewrite that keeps a heredoc spans several lines; only its first starts with `run: `.
+    let malformed = "REPLACEMENT holds one or more `run: ` lines and their continuations";
+    let mut runs: Vec<String> = Vec::new();
+    for line in read_block(lines, "REPLACEMENT")? {
+        if line.starts_with("run: ") {
+            runs.push(line.to_owned());
+        } else if let Some(run) = runs.last_mut() {
+            run.push('\n');
+            run.push_str(line);
+        } else {
+            return Err(malformed.to_owned());
+        }
+    }
+    if runs.is_empty() {
+        return Err(malformed.to_owned());
     }
     let compare = match lines.next().and_then(|line| line.strip_prefix("COMPARE ")) {
         Some("read") => Compare::Read,
@@ -228,6 +239,7 @@ fn parse_replacement<'a, I: Iterator<Item = &'a str>>(
         Some("search-count") => Compare::SearchCount,
         Some("write") => Compare::Write,
         Some("chain") => Compare::Chain,
+        Some("head") => Compare::Head,
         other => return Err(format!("unknown COMPARE {other:?}")),
     };
     let oracle = match lines.next_if_eq(&"ORACLE") {
@@ -480,6 +492,7 @@ fn execute(
         Compare::SearchCount => compare_search_count(&expected.out, &numbered),
         Compare::Write => compare_write(&tree_bytes(original.path()), &tree_bytes(replaced.path())),
         Compare::Chain => compare_chain(&expected.out, &answer),
+        Compare::Head => compare_head(&expected.out, &answer),
     };
     failures.extend(mismatch.err());
     if runs.iter().any(|run| run.contains(NO_NUMBERS)) {
@@ -567,9 +580,28 @@ fn compare_numbered_read(oracle: &str, replacement: &str) -> Result<(), String> 
     ))
 }
 
-/// A heredoc write's replacement means the same only when handed the same heredoc.
+/// `head` prints the first N lines; `--head N` prints those same lines, then one `── ` footer
+/// line when it left any out.
+fn compare_head(oracle: &str, replacement: &str) -> Result<(), String> {
+    let printed: Vec<&str> = oracle.lines().collect();
+    let shown: Vec<&str> = replacement.lines().collect();
+    let footed = shown.len() == printed.len() + 1
+        && shown.starts_with(&printed)
+        && shown.last().is_some_and(|line| line.starts_with("── "));
+    if printed == shown || footed {
+        return Ok(());
+    }
+    Err(format!(
+        "head mismatch\n--- the original printed\n{}\n--- the replacement printed\n{}",
+        printed.join("\n"),
+        shown.join("\n")
+    ))
+}
+
+/// A heredoc write's replacement means the same only when handed the same heredoc, which a
+/// rewrite that kept the heredoc already holds.
 fn with_heredoc(line: &str, command: &str) -> String {
-    if !line.contains("lets write") {
+    if !line.contains("lets write") || line.contains("<<") {
         return line.to_owned();
     }
     let mut lines = command.lines();
@@ -1002,6 +1034,91 @@ fn a_rewrite_case_with_two_run_lines_fails_by_name() {
     ]);
 }
 
+const WRITE_OUT: &str = "COMMAND\ncat > out.ts <<'EOF'\nexport const o = 1;\nEOF\n===END===\nVERDICT \
+                         rewrite\nREPLACEMENT\nrun: lets write --force out.ts <<'EOF'\nexport \
+                         const o = 1;\nEOF\n===END===\nCOMPARE write\n";
+
+#[test]
+fn a_rewrite_that_keeps_a_heredoc_continues_its_one_run_line() {
+    let case = parse_case(WRITE_OUT).expect("a rewrite spanning lines parses");
+    let Expected::Rewrite(replacement) = case.expected else {
+        panic!("WRITE_OUT is a rewrite case");
+    };
+    assert_eq!(replacement.runs, vec![
+        "run: lets write --force out.ts <<'EOF'\nexport const o = 1;\nEOF".to_owned()
+    ]);
+    let root = case_root_holding("write-out", WRITE_OUT);
+    assert_eq!(corpus_failures(root.path()), Vec::<String>::new());
+
+    let continued_first = WRITE_OUT.replace("REPLACEMENT\nrun: ", "REPLACEMENT\n");
+    assert_ne!(continued_first, WRITE_OUT);
+    let root = case_root_holding("no-run", &continued_first);
+    assert_eq!(corpus_failures(root.path()), vec![
+        "no-run: REPLACEMENT holds one or more `run: ` lines and their continuations".to_owned()
+    ]);
+}
+
+#[test]
+fn a_heredoc_rewrite_that_writes_other_bytes_is_a_write_mismatch() {
+    let command = "cat > out.ts <<'EOF'\nexport const o = 1;\nEOF";
+    let failures = execute(
+        Compare::Write,
+        command,
+        command,
+        &hook_tree(),
+        &["run: lets write --force out.ts <<'EOF'\nexport const o = 2;\nEOF"],
+        Status::Same,
+    );
+    assert_eq!(failures, vec![
+        "write mismatch: these files differ between the original and the replacement: out.ts"
+            .to_owned()
+    ]);
+
+    let failures = execute(
+        Compare::Write,
+        command,
+        command,
+        &hook_tree(),
+        &["run: lets write --force out.ts <<'EOF'\nexport const o = 1;\nEOF"],
+        Status::Same,
+    );
+    assert_eq!(failures, Vec::<String>::new());
+}
+
+#[test]
+fn a_head_replacement_is_the_same_lines_plus_at_most_one_footer() {
+    let printed = "a\nb\nc\n";
+    assert_eq!(compare_head(printed, printed), Ok(()));
+    assert_eq!(
+        compare_head(
+            printed,
+            "a\nb\nc\n── output lines 4-9 not shown (--head 3)\n"
+        ),
+        Ok(())
+    );
+
+    for (shown, wrong) in [
+        (
+            "a\nb\n── output lines 3-9 not shown (--head 3)\n",
+            "drops a line",
+        ),
+        (
+            "a\nb\nc\nd\n── output lines 5-9 not shown (--head 3)\n",
+            "adds two lines",
+        ),
+        ("a\nb\nc\nd\n", "adds a line that is not a footer"),
+        (
+            "a\nB\nc\n── output lines 4-9 not shown (--head 3)\n",
+            "changes a line",
+        ),
+    ] {
+        assert!(
+            compare_head(printed, shown).is_err_and(|failure| failure.starts_with("head mismatch")),
+            "a replacement that {wrong} must fail"
+        );
+    }
+}
+
 /// A rewrite runs unseen, so the window a bare `lets show` applies would silently drop lines.
 #[test]
 fn a_windowed_show_of_a_file_over_the_window_is_a_read_mismatch() {
@@ -1401,6 +1518,13 @@ fn a_lets_write_replacement_is_handed_the_commands_first_heredoc() {
     assert_eq!(
         with_heredoc("lets show src/a.ts", "cat > out.ts <<'EOF'\nx\nEOF"),
         "lets show src/a.ts"
+    );
+    assert_eq!(
+        with_heredoc(
+            "lets write --force out.ts <<'EOF'\nx\nEOF",
+            "cat > out.ts <<'EOF'\nx\nEOF"
+        ),
+        "lets write --force out.ts <<'EOF'\nx\nEOF"
     );
 }
 
