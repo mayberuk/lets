@@ -6,6 +6,42 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-10-06
+
+### Added
+
+- A Claude Code mod, shipped inside the binary. `lets hooks install claude-code` writes it to
+  `$XDG_DATA_HOME/lets/claude-code` and adds that directory to `CLAUDE_CODE_PLUGIN_DIRS` in
+  `~/.claude/settings.json`. The mod:
+  - replaces the Bash tool description's "avoid `cat`/`head`/`tail`, use Read" paragraph with the
+    lets table, and drops "prefer dedicated tools over Bash" from the system prompt;
+  - sends each Bash call through `lets hook classify`, runs a rewrite as the new command, and runs
+    a deny's single `run:` line in place of the original, with a note to the model saying what ran;
+  - passes the call through unchanged on any error.
+- `show --head N` and `find --head N` cut the rendered output to N lines and name the cut in the
+  footer. Refused with `--json`/`--jsonl` and for 0.
+
+### Changed
+
+- The `PreToolUse` hook no longer denies a command because one part of it reads a dot path, a key,
+  a credential or a path outside the tree. That part runs as typed and the rest is still
+  rewritten.
+- A glob operand is expanded the way bash expands it, and the command is rewritten when every
+  match is a plain in-tree file.
+- `cat > f <<'EOF'` is rewritten to `lets write --force f` with the heredoc kept byte for byte,
+  and `lets show|find … | head -N` to `--head N`, so the footer survives.
+- On Claude Code, the install removes the `SessionStart` and `SubagentStart` lets hooks; the mod
+  carries that text. Codex keeps both.
+- `lets update` refreshes the installed mod through the new binary, but only while Claude Code
+  settings still load it. It names every settings change the refresh made.
+- `lets hooks uninstall claude-code` removes the mod and its `CLAUDE_CODE_PLUGIN_DIRS` entry. It
+  deletes mod files only from the installer's own directory and names any it left.
+
+### Upgrading
+
+- Run `lets hooks install claude-code` once after updating to 0.0.4: a 0.0.3 binary's
+  `lets update` does not know about the mod.
+
 ## [0.0.3] - 2026-09-28
 
 ### Added
