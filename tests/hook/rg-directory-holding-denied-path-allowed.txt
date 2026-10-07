@@ -1,0 +1,4 @@
+COMMAND
+rg HELLO_MARKER .
+===END===
+VERDICT allow

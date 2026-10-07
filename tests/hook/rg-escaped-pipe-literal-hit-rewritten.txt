@@ -1,0 +1,8 @@
+COMMAND
+rg -n 'left \| right' src/grep.txt
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find 'left [|] right' src/grep.txt
+===END===
+COMPARE search

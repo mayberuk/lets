@@ -1,0 +1,4 @@
+COMMAND
+tail src/a.ts
+===END===
+VERDICT allow

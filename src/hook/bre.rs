@@ -54,6 +54,34 @@ pub(crate) fn grep_reading(pattern: &str) -> Option<String> {
     translate(pattern).filter(|reading| reading != pattern)
 }
 
+/// An rg pattern `lets find` would retry in grep's reading, rewritten so it never is: each `\|`,
+/// `\(` and the like becomes the one-character class it already means. `None` when the pattern
+/// also holds a class, where the escape would need a class-aware rewrite.
+pub(super) fn bracket_operator_escapes(pattern: &str) -> Option<String> {
+    if grep_reading(pattern).is_none() {
+        return Some(pattern.to_owned());
+    }
+    if pattern.contains('[') {
+        return None;
+    }
+    let mut out = String::with_capacity(pattern.len() + 8);
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next()? {
+            operator @ ('|' | '(' | ')' | '{' | '}' | '+' | '?') => bracketed(operator, &mut out),
+            escaped => {
+                out.push('\\');
+                out.push(escaped);
+            },
+        }
+    }
+    Some(out)
+}
+
 pub(super) fn translate(pattern: &str) -> Option<String> {
     if pattern.is_empty() {
         return None;
@@ -362,7 +390,37 @@ fn bracket(chars: &mut std::iter::Peekable<std::str::CharIndices>, out: &mut Str
 
 #[cfg(test)]
 mod tests {
-    use super::{grep_reading, translate, translate_extended};
+    use super::{bracket_operator_escapes, grep_reading, translate, translate_extended};
+
+    #[test]
+    fn an_operator_escape_becomes_a_class_that_grep_reading_leaves_alone() {
+        for (pattern, bracketed) in [
+            (r"Foo\|Bar", "Foo[|]Bar"),
+            (r"f\(x\)\+", "f[(]x[)][+]"),
+            (r"x\{2\}", "x[{]2[}]"),
+            (r"colou\?r", "colou[?]r"),
+            (r"a\.\|b", r"a\.[|]b"),
+        ] {
+            assert_eq!(
+                bracket_operator_escapes(pattern).as_deref(),
+                Some(bracketed),
+                "{pattern:?}"
+            );
+            assert_eq!(grep_reading(bracketed), None, "{bracketed:?}");
+        }
+    }
+
+    #[test]
+    fn a_pattern_grep_reading_ignores_is_kept_and_one_with_a_class_is_refused() {
+        for pattern in ["Foo|Bar", r"a\\|b", r"\(a", r"[|]x"] {
+            assert_eq!(
+                bracket_operator_escapes(pattern).as_deref(),
+                Some(pattern),
+                "{pattern:?}"
+            );
+        }
+        assert_eq!(bracket_operator_escapes(r"[a]\|b"), None);
+    }
 
     #[test]
     fn grep_reading_translates_a_pattern_holding_a_bre_operator_escape() {

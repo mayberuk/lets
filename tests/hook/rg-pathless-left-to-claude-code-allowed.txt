@@ -1,0 +1,4 @@
+COMMAND
+rg -l foo
+===END===
+VERDICT allow

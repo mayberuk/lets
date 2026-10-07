@@ -6,6 +6,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use jsonc_parser::{JsonValue, ParseOptions};
 
 /// Hand-written settings run to a few KiB; parsing a file this size would cost the hook more than
 /// its whole `hook classify` gate.
@@ -51,6 +52,8 @@ pub enum Access {
 pub struct Rules {
     whole: Vec<Access>,
     matchers: Vec<(Access, Gitignore)>,
+    /// Per rule line, the directory everything it can match lies under.
+    scopes: Vec<(Access, PathBuf)>,
 }
 
 impl Rules {
@@ -95,8 +98,9 @@ impl Rules {
     }
 
     /// Checks the path as named and as it resolves: a deny binds a symlink when either matches.
-    /// A directory is covered when a rule matches it or a file directly inside it, as
-    /// `private/**` matches what a search of `private` reads but not `private` itself.
+    /// A directory is covered when a rule could match it or anything under it, since a search of
+    /// it reads every descendant: `src` is covered by `/src/private/**`, and by any rule with no
+    /// leading `/`, which matches at any depth.
     pub fn cover(&self, path: &Path, access: Access) -> bool {
         let binds = |rule: Access| rule == Access::Read || rule == access;
         if self.whole.iter().any(|rule| binds(*rule)) {
@@ -106,12 +110,14 @@ impl Rules {
         let is_dir = path.is_dir();
         let mut candidates = vec![(path.to_path_buf(), is_dir)];
         candidates.extend(real.map(|real| (real, is_dir)));
-        if is_dir {
-            let inside: Vec<_> = candidates
-                .iter()
-                .map(|(dir, _)| (dir.join("_"), false))
-                .collect();
-            candidates.extend(inside);
+        if is_dir
+            && candidates.iter().any(|(dir, _)| {
+                self.scopes.iter().any(|(rule, scope)| {
+                    binds(*rule) && (dir.starts_with(scope) || scope.starts_with(dir))
+                })
+            })
+        {
+            return true;
         }
         candidates.iter().any(|(candidate, is_dir)| {
             self.matchers.iter().any(|(rule, matcher)| {
@@ -138,17 +144,28 @@ struct Parsed<'a> {
 impl Parsed<'_> {
     /// `slash` is where this file's `/path` rules anchor; `None` where the docs do not say.
     fn file(&mut self, path: &Path, slash: Option<&[PathBuf]>) -> Option<()> {
-        let settings = read_settings(path)?;
-        let Some(permissions) = settings.as_object()?.get("permissions") else {
+        let text = read_settings(path)?;
+        let JsonValue::Object(settings) = jsonc_parser::parse_to_value(&text, &JSONC).ok()?? else {
+            return None;
+        };
+        let Some(permissions) = settings.get("permissions") else {
             return Some(());
         };
-        let permissions = permissions.as_object()?;
+        let JsonValue::Object(permissions) = permissions else {
+            return None;
+        };
         for list in ["deny", "ask"] {
             let Some(rules) = permissions.get(list) else {
                 continue;
             };
-            for rule in rules.as_array()? {
-                self.rule(rule.as_str()?, slash)?;
+            let JsonValue::Array(rules) = rules else {
+                return None;
+            };
+            for rule in rules.iter() {
+                let JsonValue::String(rule) = rule else {
+                    return None;
+                };
+                self.rule(rule, slash)?;
             }
         }
         Some(())
@@ -225,6 +242,11 @@ impl Parsed<'_> {
     }
 
     fn build(self) -> Option<Rules> {
+        let scopes = self
+            .lines
+            .iter()
+            .map(|(access, root, line)| (*access, scope(root, line)))
+            .collect();
         let mut groups: Vec<(Access, PathBuf, GitignoreBuilder)> = Vec::new();
         for (access, root, line) in self.lines {
             let at = if let Some(at) = groups
@@ -246,8 +268,25 @@ impl Parsed<'_> {
         Some(Rules {
             whole: self.whole,
             matchers,
+            scopes,
         })
     }
+}
+
+/// A line with a leading `/` matches only under its literal leading segments; any other line
+/// here matches at any depth below its root.
+fn scope(root: &Path, line: &str) -> PathBuf {
+    let mut scope = root.to_path_buf();
+    let Some(rooted) = line.strip_prefix('/') else {
+        return scope;
+    };
+    for segment in rooted.split('/') {
+        if segment.is_empty() || segment.contains(['*', '?', '[', '{', '\\']) {
+            break;
+        }
+        scope.push(segment);
+    }
+    scope
 }
 
 fn rooted(rest: &str) -> String {
@@ -286,21 +325,29 @@ fn absent(error: &std::io::Error) -> bool {
     )
 }
 
-/// A file that is not there reads as empty settings; `None` for one that cannot be read or parsed.
-fn read_settings(path: &Path) -> Option<serde_json::Value> {
+/// A file that is not there reads as empty settings; `None` for one that cannot be read.
+fn read_settings(path: &Path) -> Option<String> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
-        Err(error) if absent(&error) => {
-            return Some(serde_json::Value::Object(serde_json::Map::default()));
-        },
+        Err(error) if absent(&error) => return Some("{}".to_owned()),
         Err(_) => return None,
     };
     if !metadata.is_file() || metadata.len() > MAX_SETTINGS_BYTES {
         return None;
     }
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    std::fs::read_to_string(path).ok()
 }
+
+/// The JSONC extensions Claude Code's settings.json accepts, as the installer reads it.
+const JSONC: ParseOptions = ParseOptions {
+    allow_comments: true,
+    allow_trailing_commas: true,
+    allow_loose_object_property_names: false,
+    allow_missing_commas: false,
+    allow_single_quoted_strings: false,
+    allow_hexadecimal_numbers: false,
+    allow_unary_plus_numbers: false,
+};
 
 /// `managed-settings.d/*.json` merges with `managed-settings.json` in the same directory.
 fn managed_files(dir: &Path) -> Option<Vec<PathBuf>> {

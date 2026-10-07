@@ -252,3 +252,17 @@ lets-into-head-status-read-allowed
 lets-into-tail-allowed
 lets-show-files-into-head-rewritten
 lets-show-into-head-rewritten
+rg-operator-escape-no-hits-then-and-rewritten
+rg-escaped-pipe-literal-hit-rewritten
+grep-bre-literal-pipe-no-hits-then-or-rewritten
+rg-operator-escape-beside-class-allowed
+rg-missing-file-beside-hits-allowed
+rg-two-files-rewritten
+head-bare-rewritten
+head-bare-short-file-rewritten
+tail-bare-allowed
+rg-after-context-rewritten
+rg-context-with-after-override-rewritten
+grep-before-and-after-context-rewritten
+rg-pathless-left-to-claude-code-allowed
+rg-directory-holding-denied-path-allowed

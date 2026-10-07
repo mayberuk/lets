@@ -1,0 +1,8 @@
+COMMAND
+grep 'zzz|alpha' src/grep.txt || echo MISSING
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find 'zzz[|]alpha' src/grep.txt --no-numbers -s --cap-exit-0 || echo MISSING
+===END===
+COMPARE chain

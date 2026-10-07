@@ -1,0 +1,8 @@
+COMMAND
+rg -n 'zzz\|alpha' src/grep.txt && echo FOUND
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets find 'zzz[|]alpha' src/grep.txt -s --cap-exit-0 && echo FOUND
+===END===
+COMPARE chain
