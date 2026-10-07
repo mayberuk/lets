@@ -665,12 +665,17 @@ fn live_arm(
 
     let mut command = Command::new("claude");
     command
-        .args(["-p", prompt, "--model", "haiku"])
+        .args(["-p", prompt])
         .args(["--output-format", "stream-json", "--verbose"])
-        .args(["--setting-sources", "project", "--settings", "{}"])
-        .arg("--strict-mcp-config")
+        .args(["--permission-mode", "acceptEdits"])
         .args(["--allowedTools", "Bash"])
+        .args(["--settings", r#"{"outputStyle":"default"}"#])
+        .args(["--setting-sources", "project"])
+        .arg("--strict-mcp-config")
+        .args(["--tools", "Bash"])
+        .arg("--disable-slash-commands")
         .args(["--max-turns", "6"])
+        .args(["--model", "haiku"])
         .current_dir(&fixture);
     for name in credential_variables() {
         command.env_remove(name);
