@@ -533,10 +533,19 @@ fn uninstall(format: Format, dir: &Path, mod_dir: &Path, runtime: &Path) -> Outc
     };
 
     let mut tree_removed = false;
-    let trees =
-        std::iter::once(mod_dir.to_path_buf()).chain(removed_entries.iter().map(PathBuf::from));
+    let mut left: Vec<&str> = Vec::new();
+    let trees = std::iter::once(mod_dir_entry)
+        .filter(|tree| !tree.is_empty())
+        .chain(removed_entries.iter().map(String::as_str));
     for tree in trees {
-        match claude_mod::remove(&tree) {
+        let tree_path = Path::new(tree);
+        let deletable = (!mod_dir_entry.is_empty() && settings::same_dir(tree, mod_dir_entry))
+            || claude_mod::in_installer_layout(tree_path);
+        if !deletable {
+            left.push(tree);
+            continue;
+        }
+        match claude_mod::remove(tree_path) {
             Ok(removed) => tree_removed |= removed,
             Err(error) => {
                 if !removed_entries.is_empty() {
@@ -555,8 +564,19 @@ fn uninstall(format: Format, dir: &Path, mod_dir: &Path, runtime: &Path) -> Outc
             },
         }
     }
-    if !removed_entries.is_empty() || tree_removed {
+    if tree_removed || removed_entries.len() > left.len() {
         lines.push(line("removed the lets mod", "mod=removed"));
+    } else if !removed_entries.is_empty() {
+        lines.push(line(
+            "removed the lets mod from CLAUDE_CODE_PLUGIN_DIRS",
+            "mod_entry=removed",
+        ));
+    }
+    for tree in left {
+        lines.push(line(
+            &format!("left the lets mod files at {tree}"),
+            &format!("mod_files_left={tree}"),
+        ));
     }
     Outcome::ok(raw(nothing_or(format, &lines)))
 }
@@ -1901,6 +1921,110 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         );
         assert!(!sandbox.mod_dir().exists());
         assert!(sandbox.data.path().join("lets").is_dir());
+    }
+
+    fn checkout_mod(
+        root: &Path,
+        relative: &str,
+        plugin_name: &str,
+    ) -> (PathBuf, Vec<(PathBuf, String)>) {
+        let dir = root.join(relative);
+        let mut files = Vec::new();
+        for file in MOD_FILES {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let text = if file == ".claude-plugin/plugin.json" {
+                format!(r#"{{"name": "{plugin_name}"}}"#)
+            } else {
+                format!("uncommitted edit in {file}\n")
+            };
+            std::fs::write(&path, &text).unwrap();
+            files.push((path, text));
+        }
+        (dir, files)
+    }
+
+    fn assert_files_untouched(files: &[(PathBuf, String)]) {
+        for (path, text) in files {
+            assert_eq!(&std::fs::read_to_string(path).unwrap(), text, "{path:?}");
+        }
+    }
+
+    #[test]
+    fn uninstall_drops_the_entry_of_a_checkout_mod_but_keeps_its_files_and_names_the_path() {
+        let sandbox = Sandbox::new();
+        let (checkout, files) = checkout_mod(sandbox.data.path(), "repo/mod", "lets");
+        sandbox.write_settings(&serde_json::json!({
+            "env": {"CLAUDE_CODE_PLUGIN_DIRS": checkout.to_str().unwrap()}
+        }));
+
+        let text = sandbox.uninstall(Format::Text);
+        let message = format!(
+            "removed the lets mod from CLAUDE_CODE_PLUGIN_DIRS\nleft the lets mod files at {}\n",
+            checkout.display()
+        );
+
+        assert!(text.error.is_none(), "{:?}", text.error);
+        assert_eq!(body_text(&text), message);
+        assert_eq!(sandbox.settings_json(), serde_json::json!({}));
+        assert_files_untouched(&files);
+    }
+
+    #[test]
+    fn a_json_uninstall_names_the_files_it_left_with_a_stable_token() {
+        let sandbox = Sandbox::new();
+        let (checkout, files) = checkout_mod(sandbox.data.path(), "repo/mod", "lets");
+        sandbox.write_settings(&serde_json::json!({
+            "env": {"CLAUDE_CODE_PLUGIN_DIRS": checkout.to_str().unwrap()}
+        }));
+
+        let json = sandbox.uninstall(Format::Json);
+
+        assert_eq!(
+            body_text(&json),
+            format!("mod_entry=removed\nmod_files_left={}\n", checkout.display())
+        );
+        assert_files_untouched(&files);
+    }
+
+    #[test]
+    fn uninstall_deletes_a_mod_in_the_installer_layout_and_keeps_one_that_is_not() {
+        let sandbox = Sandbox::new();
+        let (laid_out, _) = checkout_mod(sandbox.data.path(), "elsewhere/lets/claude-code", "lets");
+        let (checkout, files) = checkout_mod(sandbox.data.path(), "repo/mod", "lets");
+        let value = format!("{}:{}", checkout.display(), laid_out.display());
+        sandbox.write_settings(&serde_json::json!({"env": {"CLAUDE_CODE_PLUGIN_DIRS": value}}));
+
+        let text = sandbox.uninstall(Format::Text);
+
+        assert_eq!(
+            body_text(&text),
+            format!(
+                "removed the lets mod\nleft the lets mod files at {}\n",
+                checkout.display()
+            )
+        );
+        assert!(!laid_out.exists());
+        assert_files_untouched(&files);
+    }
+
+    #[test]
+    fn uninstall_keeps_the_entry_and_files_of_a_layout_dir_whose_plugin_json_names_another_plugin()
+    {
+        let sandbox = Sandbox::new();
+        let (foreign, files) =
+            checkout_mod(sandbox.data.path(), "theirs/lets/claude-code", "other");
+        let value = foreign.to_str().unwrap();
+        sandbox.write_settings(&serde_json::json!({"env": {"CLAUDE_CODE_PLUGIN_DIRS": value}}));
+
+        let text = sandbox.uninstall(Format::Text);
+
+        assert_eq!(body_text(&text), "nothing to remove\n");
+        assert_eq!(
+            sandbox.settings_json()["env"]["CLAUDE_CODE_PLUGIN_DIRS"],
+            value
+        );
+        assert_files_untouched(&files);
     }
 
     #[test]

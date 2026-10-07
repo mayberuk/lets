@@ -65,6 +65,17 @@ pub fn write(dir: &Path) -> Result<bool, Error> {
     Ok(changed)
 }
 
+/// The shape `install_dir` gives under any data dir; a checkout's `mod/` never has it.
+pub fn in_installer_layout(dir: &Path) -> bool {
+    let mut names = dir.components().rev();
+    names
+        .next()
+        .is_some_and(|last| last.as_os_str() == "claude-code")
+        && names
+            .next()
+            .is_some_and(|parent| parent.as_os_str() == "lets")
+}
+
 pub fn is_ours(dir: &Path) -> bool {
     std::fs::read(dir.join(".claude-plugin/plugin.json"))
         .ok()
