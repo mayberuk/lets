@@ -19,11 +19,15 @@ pull request with its consumer named, not a file.
 - Put language-specific tree-sitter queries and heuristics under `src/symbols/`, one file per
   language; `check.rs` and `hook/` reuse them.
 - Keep `docs/guide.md` as the one source of `lets guide` (`include_str!`). The Claude Code
-  paragraph and the SubagentStart line are excerpts kept in `docs/agents.md`.
+  paragraph is an excerpt kept in `docs/agents.md` and in `mod/hooks/steer.ts`; tests in
+  `src/verbs/hooks.rs` and `src/install/claude_mod.rs` fail when either drifts.
 - Treat these as generated and regenerate them with the named recipe: `docs/examples/`
   (`just docs`), `bench/baselines/*` (`just bench-baseline`), `tests/scenarios/*/expected/*` and
   trycmd snapshots (the overwrite env vars), `site/dist/` (`just site`). CI diffs each of them;
   none is committed.
+- Keep the Claude Code mod under `mod/`, the one TypeScript source. `src/install/claude_mod.rs`
+  embeds it with `include_str!`. `mod/.claude-plugin/types/` is written by Claude Code when it
+  loads the mod, and is never committed.
 - Name fixtures, cases and scenarios with stable ids in the filename; `required.txt` lists the
   ones that may not vanish.
 - Treat `site/` as the project website: an Astro static site built with Bun, deployed by

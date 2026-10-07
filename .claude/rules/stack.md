@@ -21,6 +21,9 @@ crates.io; a version here is a target to verify with ctx7, not a fact.
 | Bench | `divan` with `AllocProfiler` | `criterion` |
 | Release | `dist` on native runners per OS and arch; musl on Linux | cross-compilation |
 | Allocator, musl builds only | `mimalloc`, `default-features = false`, `features = ["override"]` so libc's own `malloc` (`opendir` in the parallel walk) skips musl's global lock, under `cfg(target_env = "musl")` | musl's own allocator (measured 1.3–1.8× slower on `find` and `show`), `jemalloc` |
+| Claude Code mod | TypeScript under `mod/`, no npm packages, typed by the declarations Claude Code writes beside a loaded mod; checked with `claude plugin validate` and `claude plugin test` | a bundler, an npm dependency, a second copy of the classifier |
+
+The mod adds no crate. The dependency count and gate 18 are unchanged.
 
 Not taken, and why: `anyhow` (closed error set), any colour crate (the contract has no colour),
 `similar` (edits render as marked lines, not diffs), `rayon` (the corpus median file is 87 lines;
