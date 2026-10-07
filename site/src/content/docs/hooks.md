@@ -20,22 +20,39 @@ lets hook classify
 
 ## What `hooks install` does
 
-**`claude-code`** merges three hooks into `~/.claude/settings.json`:
+**`claude-code`** installs the lets mod and one hook:
 
-- A `SessionStart` hook (matcher `startup|resume|clear|compact|fork`) that prints a short
-  paragraph explaining `lets` and its verbs at the start of every session — including after
-  compaction, since injected context does not survive compaction the way a system prompt does.
-- A `SubagentStart` hook that delivers the same paragraph as `additionalContext`, since
-  `--append-system-prompt` does not reach a non-fork subagent.
+- The mod: a few plain TypeScript files embedded in the binary, written to
+  `$XDG_DATA_HOME/lets/claude-code/` (`~/.local/share/lets/claude-code/` when `XDG_DATA_HOME` is
+  unset or relative) and added to `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`,
+  beside any entry already there. It replaces two passages Claude Code ships: the Bash tool's
+  paragraph telling the model to use Read, not `cat`, which now carries the `lets` table, and the
+  line "Prefer dedicated tools over Bash". Before a Bash call runs it asks `lets hook classify`
+  about it: a rewrite runs as the rewritten command, and a block naming one `lets` command runs
+  that command in place of the original, with a note telling the model so. At session start it
+  shows a toast when its version differs from the installed `lets`, naming `lets hooks install
+  claude-code` as the fix; it never reinstalls. Its files always match the binary that wrote them.
 - A `PreToolUse` hook on `Bash`, matcher covering every shell call, that pipes the command to
-  `lets hook classify`. A bare `cat`, `head -n` or `sed -n` read, or a `grep`/`rg` search, of a
-  repo file whose stdout goes to the tool result (not into a pipe or a subshell) is rewritten in
-  place — no permission prompt — when one `lets show` or `lets find` call reproduces it exactly,
-  alone or as a segment of a `&&`/`||`/`;` chain, with the rest of the command kept byte for byte.
-  A bare `sed -i 's/OLD/NEW/g'` substitution against an in-tree file is blocked and replaced with
-  `lets edit <path> --old '<OLD>' --new '<NEW>' --all`; a search whose exit status a later `&&`,
-  `||`, `$?`/`PIPESTATUS`, `set -e` or `ERR` trap reads is rewritten too, with `-s` and `--cap-exit-0` added so
-  its hits and exit code still match what `grep`/`rg` would have produced.
+  `lets hook classify`. It is the fallback for when mods are off. A bare `cat`, `head -n` or
+  `sed -n` read, or a `grep`/`rg` search, of a repo file whose stdout goes to the tool result is
+  rewritten in place — no permission prompt — when one `lets show` or `lets find` call reproduces
+  it exactly, alone or as a segment of a `&&`/`||`/`;` chain, with the rest of the command kept
+  byte for byte. A bare `sed -i 's/OLD/NEW/g'` substitution against an in-tree file is blocked
+  and replaced with `lets edit <path> --old '<OLD>' --new '<NEW>' --all`; a search whose exit
+  status a later `&&`, `||`, `$?`/`PIPESTATUS`, `set -e` or `ERR` trap reads is rewritten too,
+  with `-s` and `--cap-exit-0` added so its hits and exit code still match what `grep`/`rg` would
+  have produced.
+
+An install over an earlier one also removes its `SessionStart` and `SubagentStart` hooks, since the
+mod carries their text now. `lets update` refreshes the mod files, but only while Claude Code's
+settings still load the mod.
+
+### When mods are off
+
+If Claude Code is running with mods off, the mod does not load and nothing changes in the Bash
+description or the prompt. The `PreToolUse` hook still runs and still rewrites or blocks as above,
+so a typed `cat` or `grep` still reaches `lets`. Every part of the mod also fails open: an error
+in it, or a `lets` that is missing or crashing, passes the call on unchanged.
 
 A `PostToolUse` check hook (`Edit|Write` on Claude Code, `apply_patch` on Codex) is not installed
 by default any more: a 2026-09-26 trial found it cost 0.86% more with the model still running its
@@ -49,12 +66,19 @@ to trust a hook before it runs it, and trusts each entry separately: the install
 current trust status on every run — "installed and approved" only when all three are trusted,
 otherwise "not yet approved", naming the entries still untrusted when some already are — until you
 open Codex and choose "Trust all and continue" when prompted, press `t` in the hooks browser, or
-pass `--dangerously-bypass-hook-trust` for one run.
+pass `--dangerously-bypass-hook-trust` for one run. The `Bash` matcher is the right one: Codex 0.160
+runs `PreToolUse` with `tool_name: "Bash"` for each shell call, including the ones nested inside a
+code-mode `exec` script. What keeps the classifier from running is trust: Codex skips an
+unapproved hook entirely and runs the command unhooked, and rewriting an approved entry (an older
+bare `lets hook classify` becoming the guarded command) drops its approval until it is approved
+again. Codex has no mod; these three entries are its whole integration.
 
-Both installers only ever write into the agent's own settings; nothing modifies your shell
-profile. Installing twice is a no-op — the settings file is byte-identical across a reinstall.
-`hooks uninstall` removes exactly what `hooks install` added and leaves any of the user's own
-hooks in the same file untouched. Either installer also removes a `PostToolUse` check entry an
+Both installers only ever write into the agent's own settings, plus the mod files for Claude Code
+under your data directory; nothing modifies your shell profile. Installing twice is a no-op — the settings file and the mod files are byte-identical across a
+reinstall.
+`hooks uninstall` removes exactly what `hooks install` added — for Claude Code the hook, the
+`CLAUDE_CODE_PLUGIN_DIRS` entry and the mod files — and leaves any of the user's own hooks and any
+file of theirs in the mod directory untouched. Either installer also removes a `PostToolUse` check entry an
 earlier build installed, so upgrading drops it even if you never uninstall.
 
 ## What `lets hook classify` does
@@ -81,6 +105,17 @@ worse than none. Codex gets the identical classification Claude Code does, rende
 `permissionDecision: "allow"` for a rewrite and `"deny"` for a block. A `sed -i` substitution is
 always blocked, on both agents, never rewritten: no `lets edit` call reproduces an in-place edit
 exactly.
+
+Three more shapes are rewritten. A heredoc-fed `cat > f` onto an in-tree file becomes `lets write
+--force f` with the heredoc kept, unless the redirect is an append or `&>`, the target is a glob, a directory, a dangling symlink, a
+non-regular file or a file with more than one hard link, the heredoc is empty or over 8 MiB, or the
+command runs `set` or `shopt` anywhere, since either can turn on noclobber (`>|` is rewritten
+regardless). A glob is expanded as bash would and the read or search is rewritten,
+glob kept as typed (`cat src/*.ts` becomes `lets show src/*.ts --all --no-numbers`), only when
+every match is a file the rewrite may read; a glob matching nothing, a directory or a dot entry
+runs as typed. `lets show` or `lets find` piped into `head -N` becomes the same call with
+`--head N`, which prints the same first lines plus a footer naming the rest, unless the
+pipeline's exit status is read or the call already carries `--json`, `--jsonl` or `--head`.
 
 Case follows what the agent does with the result. A search whose hits it reads keeps `lets find`'s
 smart case — a pattern with no capital matches any case — since the agent sees every hit, and the
@@ -115,7 +150,9 @@ an unrecognized extension gets no answer at all.
 
 What passes unblocked, deliberately: output piped into another program (`cat f | jq`, `cat f |
 wc`), a command substitution or process substitution (`$(cat f)`, `<(cat f)`), a heredoc sent to
-another program's stdin, an unrecognized flag, and any path outside the working tree.
+another program's stdin, an unrecognized flag, and any path outside the working tree. A dotfile,
+key or credential is allowed as typed too, never blocked: in `cat src/a.ts && cat .env`, only the
+first segment is rewritten.
 
 A `sed -i` substitution is blocked only in its narrowest form: a bare `sed -i 's/OLD/NEW/g'`
 (the `g` flag is required), every target path in-tree, non-glob, resolvable, and neither a
@@ -141,22 +178,32 @@ flag.
 
 ## Examples
 
-Installing for Claude Code adds all three hooks in one call:
+Installing for Claude Code writes the mod, adds it to `CLAUDE_CODE_PLUGIN_DIRS`, and adds the
+fallback hook, in one call:
 
 ```console
 $ lets hooks install claude-code
 added the PreToolUse hook
-added the SubagentStart hook
-added the SessionStart hook
+added the lets mod
 ```
 
-A second install is a no-op, reported as such, and the settings file does not change:
+A second install is a no-op, reported as such, and neither the settings file nor the mod files
+change:
 
 ```console
 $ lets hooks install claude-code
 the PreToolUse hook was already installed
-the SubagentStart hook was already installed
-the SessionStart hook was already installed
+the lets mod was already installed
+```
+
+An install over one that still had the start hooks removes them and says why:
+
+```console
+$ lets hooks install claude-code
+the PreToolUse hook was already installed
+added the lets mod
+removed the SessionStart hook · the lets mod carries its text now
+removed the SubagentStart hook · the lets mod carries its text now
 ```
 
 Installing when a different `lets` shadows this one on `PATH` refuses and names it:

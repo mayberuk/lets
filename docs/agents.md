@@ -2,8 +2,8 @@
 
 What a program or an agent harness needs to read `lets` output: the exit codes and their slugs,
 the `--json` and `--jsonl` shapes, and the footer contract. `docs/guide.md` is the one source of
-the `lets guide` screen; the discovery text at the end of this file quotes spec.md's own words for
-the Claude Code and SubagentStart paragraphs, so those two and the spec cannot drift apart.
+the `lets guide` screen; the discovery text in this file quotes the Claude Code paragraph and the
+Codex paragraph word for word, and tests fail when either drifts from the code that ships it.
 
 ## Exit codes
 
@@ -86,10 +86,11 @@ carries no colour.
 
 ## The Claude Code paragraph
 
-Delivered by a `SessionStart` hook alone (spec.md § Discovery): a 2026-09-23 trial found
+Delivered by the Claude Code mod (below), which puts it in the Bash tool's description in place of
+the paragraph that tells the model to use Read, not `cat`. A 2026-09-23 trial found
 `--append-system-prompt-file` text held tool-call batching to 0 of 192 model requests, against
 roughly 26% for plain Claude Code, and cost the same or more, so nothing is appended to the
-system prompt any more.
+system prompt.
 
 > # File work: use `lets` through Bash
 >
@@ -124,25 +125,49 @@ A 2026-09-26 trial found no session ever ran `--outline`, and cost 2.93% more [-
 than not carrying the row, so it is no longer taught here; `--outline` still exists as a `show`
 flag for an agent that reaches for it on its own.
 
-A `cat`, `sed -n` or `grep` the agent types anyway is rewritten silently and faithfully by the
-`PreToolUse` hook below, so this table only needs to teach what a rewrite cannot do: combining
-several files, ranges or `#symbol` lookups into one call, and batching several edits (and the
-build that checks them) into one.
+A `cat`, `sed -n` or `grep` the agent types anyway is rewritten silently and faithfully, by the mod
+or by the `PreToolUse` hook below, so this table only needs to teach what a rewrite cannot do:
+combining several files, ranges or `#symbol` lookups into one call, and batching several edits
+(and the build that checks them) into one.
 
 `docs/design/system-append.md` holds a longer, alternative form, per verb, for a harness that can
 afford it.
 
-## The SessionStart hook
+## The Claude Code mod
 
-`lets hooks install claude-code` adds a SessionStart hook, matcher
-`startup|resume|clear|compact|fork` (compaction drops injected context, so the paragraph is
-re-printed on every way a session can begin, not just `startup`), whose command prints the
-paragraph above and nothing else — not `lets guide`, whose command table the paragraph now
-carries itself, so printing both would repeat about 1,000 tokens. The command first checks that
-`lets` is on PATH and otherwise exits 0 with no output, so a missing or mid-update binary adds no
-hook error to every session start. Nothing is written to `~/.claude/system-append.md` any more,
-and no alias is printed to add by hand; a file an earlier install left there is kept, and named as
-no longer used, on every following install.
+`lets hooks install claude-code` writes the mod, a few plain TypeScript files embedded in the
+binary, to `$XDG_DATA_HOME/lets/claude-code/` (`~/.local/share/lets/claude-code/` when
+`XDG_DATA_HOME` is unset or relative), and adds that directory to the `:`-joined
+`env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, keeping any entry already there. The
+files match the binary that wrote them byte for byte, and a reinstall that finds them unchanged
+rewrites nothing. The `PreToolUse` hook below stays installed as the fallback for when mods are
+off.
+
+The mod makes three changes and one check:
+
+- The Bash tool's description loses the paragraph that tells the model to use Read, not `cat`, and
+  carries the table above in its place.
+- The prompt loses the line "Prefer dedicated tools over Bash".
+- Before a Bash call runs, the mod asks `lets hook classify` about it. A rewrite runs as the
+  rewritten command. A deny that names exactly one `run:` line is answered instead: the mod runs
+  that command in place of the one the model wrote and adds a note saying so. A deny with several
+  `run:` lines names separate commands, not one equivalent, so the original runs as typed. The mod
+  keeps no classification of its own; the classifier is the one source of verdicts.
+- At session start the mod compares `lets version --json` with its own version and, when they
+  differ, shows a toast naming both and `lets hooks install claude-code`. It never reinstalls.
+
+The mod fails open: a hook that errors, a `lets` that is missing, exits non-zero or prints more
+than the mod will read, passes the event on unchanged. The description and prompt changes depend only
+on their input, so the prompt cache holds for the session. When auto mode or the person refuses a
+changed Bash call, the mod remembers that command and lets it run as typed for the rest of the
+session, so a retry is not changed again.
+
+`lets update` refreshes the mod files, through the new binary's own `hooks install claude-code`,
+only while the Claude Code settings still load the mod; a mod someone removed is not put back, and
+the output says why the refresh was skipped. An install over an earlier one that used `SessionStart`
+and `SubagentStart` hooks removes both and names them, since the mod carries their text now.
+`hooks uninstall claude-code` removes the settings entry and the mod files, and keeps a file in
+that directory that lets did not write.
 
 ## Rewrite versus deny
 
@@ -158,6 +183,19 @@ rewrite. A read `lets show` would not print exactly (a budget cut, a normalized 
 named twice, which one `lets show` prints once) is allowed through unmodified rather than
 rewritten or denied — a wrong rewrite is worse than none.
 
+A path that is a dotfile, a key or a credential, or lies outside the working tree, is allowed as
+typed, never denied: in `cat src/a.ts && cat .env`, only the first segment is rewritten. A glob is
+expanded as bash would, and the read or search is rewritten with the glob kept as typed
+(`cat src/*.ts` becomes `lets show src/*.ts --all --no-numbers`) only when every match is a file
+the rewrite may read; a glob matching nothing, a directory or a dot entry runs as typed. A
+heredoc-fed `cat > f` onto an in-tree file becomes `lets write --force f` with the heredoc kept,
+unless the redirect is an append or `&>`, the target is a glob, a directory, a dangling symlink, a
+non-regular file or a file with more than one hard link, the heredoc is empty or over 8 MiB, or
+the command runs `set` or `shopt` anywhere, since either can turn on noclobber (`>|` is rewritten
+regardless). `lets show` or `lets find` piped into `head -N` becomes the same call with `--head N`, which prints the same
+first lines and a footer naming the rest; it runs as typed when the pipeline's exit status is read
+or the call also carries `--json`, `--jsonl` or `--head`.
+
 Case follows what the agent does with the result. A search whose hits it reads keeps `lets find`'s
 smart case — a pattern with no capital matches any case — since the agent sees every hit, and the
 footer names how many hits match only ignoring case. A search whose exit status is read, and a
@@ -167,12 +205,16 @@ Faithful exit status and counts outrank smart case. An `rg` that set its own cas
 last of `-i`, `-s` (`--case-sensitive`) and `-S` (`--smart-case`) winning as it does in `rg`;
 `grep`'s `-s` is `--no-messages`, not a case flag.
 
-A `sed -i 's/…/…/g'` global substitution, a heredoc-fed `cat > file`, and a sensitive path (a
-dotfile, key or credential) keep the deny, which always names a runnable `lets` command and keeps
-every other segment of the chain. Everything the classifier does not recognize — an `awk`, `less`,
-`nl` or `tee` read, `tail -n`, `echo >`, an unrecognized `grep`/`rg` flag, or a `sed -i`
-substitution missing its trailing `g` — is not classified at all and runs exactly as typed, neither
-rewritten nor denied. Codex gets the identical classification Claude Code does, rendered with
+A `sed -i 's/…/…/g'` global substitution is always denied, since no `lets edit` call reproduces
+an in-place edit exactly. So are a few reads whose `lets show` equivalent runs differently: a
+backgrounded `cat`, a `sed -n '/start/,/end/p'` symbol range and an `xargs cat` of a listing. A deny
+names a runnable `lets` command in a `run:` line, one line per command when the chain needs several,
+and keeps every other segment of the chain; when there is exactly one line, the mod runs it (see
+above).
+Everything the classifier does not recognize — an `awk`, `less` or `tee` read, an `nl` without
+`-ba`, `tail -n`, `echo >`, an unrecognized `grep`/`rg` flag, or a `sed -i` substitution missing
+its trailing `g` — is not classified at all and runs exactly as typed, neither rewritten nor
+denied. Codex gets the identical classification Claude Code does, rendered with
 `hookSpecificOutput.permissionDecision: "allow"` alongside `updatedInput` for a rewrite (Codex
 requires the field; Claude Code's own rewrite carries none) and `"deny"` for a block. Before a
 rewrite, or before naming a path in a deny, the hook reads the `Read` and `Edit` deny and ask rules
@@ -230,47 +272,23 @@ when all three entries (`PreToolUse`, `SessionStart`, `SubagentStart`) are trust
 names the ones still waiting. A `PostToolUse` entry added by hand is trusted and reported
 separately, the same way.
 
-## The SubagentStart line
-
-`--append-system-prompt` does not reach a non-fork subagent, so the same paragraph (spec.md §
-Discovery) arrives instead as SubagentStart `additionalContext`:
-
-> # File work: use `lets` through Bash
->
-> | Instead of | Run |
-> |---|---|
-> | several `cat`/`sed -n`/`grep` calls, Read | `lets show a.ts b.ts:10-40 c.ts#computeFee` |
-> | `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |
-> | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
-> | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
->
-> Several edits and the build in one call; each `old` is exact text that occurs once:
->
-> ```
-> lets edit --from - --check @auto <<'LETS'
-> @@ a.ts
-> <<<<<<< old
-> cap = 10
-> ======= new
-> cap = 20
-> >>>>>>>
-> <<<<<<< old
-> floor = 1
-> ======= new
-> floor = 2
-> >>>>>>>
-> LETS
-> ```
->
-> For the first lines only, pass `--head N` to `lets show` or `lets find` instead of piping to `head`: the footer still names the cut. Do not add `2>/dev/null`: it hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.
-
 ## The Codex paragraph
 
 Codex has no Read or Edit tool to name, so `lets hooks install codex` delivers the same table with
 those two mentions dropped, as `SessionStart` and `SubagentStart` plain-text stdout (Codex treats
-non-JSON-looking stdout on exit 0 as `additionalContext` directly for both events — no
-`hookSpecificOutput` wrapper needed the way Claude Code's `SubagentStart` requires). This is the
-one place `src/install/codex.rs`'s `CODEX_SESSION_START_PARAGRAPH` constant quotes:
+non-JSON-looking stdout on exit 0 as `additionalContext` directly for both events, with no
+`hookSpecificOutput` wrapper). This is the
+one place `src/install/codex.rs`'s `CODEX_SESSION_START_PARAGRAPH` constant quotes, below. Codex
+has no mod; its integration is these three hook entries and nothing else.
+
+The `PreToolUse` entry's `Bash` matcher is the right one: Codex 0.160 runs `PreToolUse` with
+`tool_name: "Bash"` for each shell call, including the ones nested inside a code-mode `exec`
+script. The install changed nothing for Codex. What keeps the classifier from running is trust:
+Codex skips an unapproved hook entirely and runs the command unhooked, and rewriting an approved
+entry (an older bare `lets hook classify` becoming the guarded command) drops its approval until it
+is approved again. The install report says so on every run.
+
+The paragraph:
 
 > # File work: use `lets` through Bash
 >

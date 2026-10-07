@@ -20,6 +20,8 @@ arch, no index, no daemon, no config file.
 | `just bench-baseline` | regenerate `bench/baselines/`; the diff is reviewed |
 | `just smoke-agent` | real `claude -p`, two arms, on demand; never CI |
 | `just release-check` | musl static build, binary size, `dist plan` |
+| `command claude plugin validate mod` / `command claude plugin test mod` | the mod's own checks; local, needs `claude` |
+| `LETS_LIVE_SMOKE=1 cargo nextest run --test smoke_agent --test smoke --run-ignored only` | live Haiku smoke of the mod; on demand, never CI |
 
 Harness detail and the sandbox contract: `CONTRIBUTING.md`.
 
@@ -45,9 +47,14 @@ Harness detail and the sandbox contract: `CONTRIBUTING.md`.
 - A blocked heredoc-to-stdin, or an edit that changes bytes outside the matched span.
 
 ## Hard constraints
-- Rust. `lets hooks install claude-code` and `lets hooks install codex` merge every discovery
-  tier they support into that agent's own user-level settings; nothing is appended to the system
-  prompt and no shell alias is needed.
+- Rust is the product language. The one TypeScript surface is the Claude Code mod under `mod/`.
+  It is embedded in the binary, and `lets hooks install claude-code` writes it out, so its
+  version always matches the binary. `lets hooks install claude-code` writes the mod, adds its
+  directory to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, and keeps the PreToolUse
+  hook as the fallback when mods are off. `lets hooks install codex` merges every tier Codex
+  supports into its user-level hooks. Two built-in passages are replaced (the Bash tool's
+  avoid-cat paragraph and the prefer-dedicated-tools line), nothing is appended to the system
+  prompt, and no shell alias is needed.
 - Never published to crates.io. The installer refuses when a different `lets` is already on
   `PATH`, naming it.
 - stdout is the answer, stderr is diagnostics plus `ERROR_CODE`, stdin is accepted wherever
