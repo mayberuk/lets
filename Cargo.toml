@@ -100,3 +100,5 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 # The library's only consumer is this crate's own binary.
 must_use_candidate = "allow"
+# Its fix for an empty collection is `assert_eq!(v, [] as [T; 0])`, a type annotation per assert.
+assert_is_empty = "allow"
