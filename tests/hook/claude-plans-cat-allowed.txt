@@ -1,0 +1,4 @@
+COMMAND
+cat .claude/plans/p.md
+===END===
+VERDICT allow

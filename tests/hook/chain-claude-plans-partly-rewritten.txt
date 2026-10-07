@@ -1,0 +1,8 @@
+COMMAND
+cat src/b.ts && cat .claude/plans/p.md
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets show src/b.ts --all --no-header --no-numbers && cat .claude/plans/p.md
+===END===
+COMPARE chain

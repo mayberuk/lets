@@ -1,0 +1,5 @@
+bin.name = "lets"
+args = ["find", "filler", ".", "--count", "--head", "2"]
+
+[fs]
+base = "../../../target/cmd-fixtures/read"

@@ -1,0 +1,4 @@
+COMMAND
+cd .git && cat HEAD
+===END===
+VERDICT allow

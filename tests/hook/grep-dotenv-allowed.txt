@@ -1,0 +1,4 @@
+COMMAND
+grep -n API .env
+===END===
+VERDICT allow

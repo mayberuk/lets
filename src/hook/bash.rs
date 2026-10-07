@@ -138,7 +138,7 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
             },
             None => classify_displayed(*node, command, dirs, None, &mut findings),
         };
-        if unreproducible(&findings[before..], dirs) {
+        if left_as_typed(&findings[before..], dirs) {
             findings.truncate(before);
         }
         segments.push(Segment {
@@ -193,30 +193,33 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
 }
 
 /// Leaves every statement that reads a file some read in the command also names as typed: one
-/// `lets show` prints a file once, however many times it is named.
+/// `lets show` prints a file once, however many times it is named, directly or through a glob.
 fn without_repeated_reads(
     findings: Vec<Finding>,
     segments: Vec<Segment>,
     dirs: Dirs,
 ) -> (Vec<Finding>, Vec<Segment>) {
-    let files: Vec<Option<PathBuf>> = findings
+    let files: Vec<Vec<PathBuf>> = findings
         .iter()
         .map(|finding| match finding {
             Finding::Show {
                 extent: Some(_),
                 source: Some(source),
                 ..
-            } => std::fs::canonicalize(dirs.base.join(&source.text)).ok(),
-            _ => None,
+            } => expand(source, dirs.base)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|path| std::fs::canonicalize(dirs.base.join(path)).ok())
+                .collect(),
+            _ => Vec::new(),
         })
         .collect();
     let repeated = |at: usize| {
-        files[at].as_ref().is_some_and(|file| {
+        files[at].iter().any(|file| {
             files
                 .iter()
-                .filter(|other| other.as_ref() == Some(file))
-                .count()
-                > 1
+                .enumerate()
+                .any(|(other, named)| other != at && named.contains(file))
         })
     };
     if !(0..findings.len()).any(repeated) {
@@ -401,21 +404,14 @@ fn replacements(
 /// Every path a search names, or the directory it searches when it names none, is inside the tree
 /// and not a dotfile, key or credential, judged as `fit` judges a read's.
 fn searches_in_tree(operands: &[Word], dirs: Dirs) -> bool {
-    let Ok(real_root) = std::fs::canonicalize(dirs.root) else {
-        return false;
-    };
-    let inside = |path: &Path| {
-        std::fs::canonicalize(path).is_ok_and(|real| {
-            real.strip_prefix(&real_root)
-                .is_ok_and(|inside| !is_sensitive(inside))
-        })
-    };
     if operands.is_empty() {
-        return inside(dirs.base);
+        return resolved_inside(dirs.base, dirs.root) == Some(true);
     }
-    operands
-        .iter()
-        .all(|operand| rewritable(operand, dirs) && inside(&dirs.base.join(&operand.text)))
+    operands.iter().all(|operand| {
+        rewritable(operand, dirs)
+            && (operand.glob
+                || resolved_inside(&dirs.base.join(&operand.text), dirs.root) == Some(true))
+    })
 }
 
 /// The spliced command only when every statement with findings is exact; the operators joining
@@ -572,7 +568,9 @@ fn rewrite(findings: &[Finding], prefix: &str, dirs: Dirs) -> Option<String> {
         all |= *extent == Extent::Whole;
         if !targets.contains(&target.as_str()) {
             targets.push(target);
-            reads.push((dirs.base.join(&source.text), *extent));
+            for path in expand(source, dirs.base)? {
+                reads.push((dirs.base.join(path), *extent));
+            }
         }
     }
     if targets.is_empty() || fit(&reads, dirs.root) != Fit::Exact {
@@ -582,7 +580,8 @@ fn rewrite(findings: &[Finding], prefix: &str, dirs: Dirs) -> Option<String> {
     if all {
         command.push_str(" --all");
     }
-    if targets.len() == 1 {
+    // Files, not targets: one glob can name several, and each of those needs its header.
+    if reads.len() == 1 {
         command.push_str(" --no-header");
     }
     if gutter == Some(false) {
@@ -596,8 +595,8 @@ enum Fit {
     Exact,
     /// Runs as typed: the original prints something one `lets show` cannot.
     Unreproducible,
-    /// Stays a deny: a dotfile, key or credential, or a file outside the tree, once symlinks
-    /// resolve.
+    /// Runs as typed even where a deny would otherwise follow: a dotfile, key or credential, or a
+    /// file outside the tree, once symlinks resolve.
     Refused,
 }
 
@@ -653,22 +652,179 @@ fn fit(reads: &[(PathBuf, Extent)], root: &Path) -> Fit {
     Fit::Exact
 }
 
-/// True when every read a statement adds could be rewritten but one `lets show` would print
-/// less than it: the statement is then left unclassified, like one this walk does not recognise.
-fn unreproducible(found: &[Finding], dirs: Dirs) -> bool {
-    let mut reads = Vec::with_capacity(found.len());
+/// True when a statement runs as typed, unclassified like one this walk does not recognise: one
+/// `lets show` would print less than its reads, or it names a dotfile, key or credential, or a
+/// path outside the tree, as typed or once a `cd`, a glob or a symlink resolves. `lets` refuses
+/// those paths, so a deny would name a replacement that cannot run.
+fn left_as_typed(found: &[Finding], dirs: Dirs) -> bool {
+    let mut reads = Vec::new();
+    let mut every_extent = true;
     for finding in found {
-        let Finding::Show {
-            extent: Some(extent),
-            source: Some(source),
-            ..
-        } = finding
-        else {
-            return false;
-        };
-        reads.push((dirs.base.join(&source.text), *extent));
+        match finding {
+            Finding::Show {
+                extent,
+                source: Some(source),
+                numbered,
+                ..
+            } => {
+                if sensitive_or_outside(&source.text, dirs) {
+                    return true;
+                }
+                let Some(paths) = expand(source, dirs.base) else {
+                    return true;
+                };
+                if source.glob && !paths.iter().all(|path| rewritable_match(path, dirs)) {
+                    return true;
+                }
+                // `cat -n` and `nl` count lines across every file they read; `lets show` per file.
+                if *numbered && paths.len() > 1 {
+                    return true;
+                }
+                every_extent &= extent.is_some();
+                let extent = extent.unwrap_or(Extent::Whole);
+                reads.extend(paths.into_iter().map(|path| (dirs.base.join(path), extent)));
+            },
+            Finding::Show { source: None, .. } => every_extent = false,
+            Finding::Find { operands, .. } => {
+                if operands.is_empty()
+                    && (sensitive_or_outside(".", dirs)
+                        || resolved_inside(dirs.base, dirs.root) == Some(false))
+                {
+                    return true;
+                }
+                for operand in operands {
+                    if sensitive_or_outside(&operand.text, dirs)
+                        || operand.glob && !glob_rewritable(operand, dirs)
+                        || !operand.glob
+                            && resolved_inside(&dirs.base.join(&operand.text), dirs.root)
+                                == Some(false)
+                    {
+                        return true;
+                    }
+                }
+            },
+            Finding::Edit { operands, .. } => {
+                if operands
+                    .iter()
+                    .any(|operand| written_outside(operand, dirs))
+                {
+                    return true;
+                }
+            },
+            Finding::Write { operand, .. } => {
+                if written_outside(operand, dirs) {
+                    return true;
+                }
+            },
+        }
     }
-    !reads.is_empty() && fit(&reads, dirs.root) == Fit::Unreproducible
+    if reads.is_empty() {
+        return false;
+    }
+    match fit(&reads, dirs.root) {
+        Fit::Exact => false,
+        Fit::Unreproducible => every_extent,
+        Fit::Refused => true,
+    }
+}
+
+/// A dotfile, key or credential, or a path outside the tree, as typed or once it is joined to the
+/// directory a `cd` moved to.
+fn sensitive_or_outside(typed: &str, dirs: Dirs) -> bool {
+    if typed.starts_with('~') || is_sensitive(Path::new(typed)) {
+        return true;
+    }
+    normalize(&dirs.base.join(typed))
+        .strip_prefix(dirs.root)
+        .ok()
+        .is_none_or(is_sensitive)
+}
+
+/// `Some(true)` when `path` resolves inside the real root and is not a dotfile, key or credential
+/// there; `None` when it does not resolve.
+fn resolved_inside(path: &Path, root: &Path) -> Option<bool> {
+    let real = std::fs::canonicalize(path).ok()?;
+    Some(std::fs::canonicalize(root).is_ok_and(|real_root| {
+        real.strip_prefix(real_root)
+            .is_ok_and(|inside| !is_sensitive(inside))
+    }))
+}
+
+/// A write destination resolves through the file, or through its directory when the file is new.
+/// Neither resolving keeps the deny: `lets edit` reports the missing file itself.
+fn written_outside(word: &Word, dirs: Dirs) -> bool {
+    if sensitive_or_outside(&word.text, dirs) {
+        return true;
+    }
+    let path = dirs.base.join(&word.text);
+    resolved_inside(&path, dirs.root).or_else(|| resolved_inside(path.parent()?, dirs.root))
+        == Some(false)
+}
+
+/// The paths `word` names, relative to `base` as typed, as bash expands them with nullglob,
+/// dotglob and failglob off; a word with no glob names itself. `None` for a glob this cannot
+/// reproduce exactly, which then runs as typed.
+fn expand(word: &Word, base: &Path) -> Option<Vec<PathBuf>> {
+    if !word.glob {
+        return Some(vec![PathBuf::from(&word.text)]);
+    }
+    // A trailing `/` matches directories only.
+    if word.text.ends_with('/') {
+        return None;
+    }
+    let path = Path::new(&word.text);
+    let parent = path.parent()?;
+    let name = path.file_name()?.to_str()?;
+    // The globs `glob_covered` refuses, for the reasons it gives.
+    if name.contains(['[', '{', '('])
+        || name.contains("**")
+        || name.starts_with('.')
+        || parent.to_str()?.contains(GLOB_BYTES)
+    {
+        return None;
+    }
+    let mut matches = Vec::new();
+    for entry in std::fs::read_dir(base.join(parent)).ok()? {
+        let entry_name = entry.ok()?.file_name().into_string().ok()?;
+        // `?` is one character under a UTF-8 locale and one byte under C; the event names neither.
+        if name.contains('?') && !entry_name.is_ascii() {
+            return None;
+        }
+        if !wildcard_matches(name, &entry_name) {
+            continue;
+        }
+        // A dot entry is skipped only while dotglob is off, which the event cannot show; a `-`-led
+        // match with no directory before it becomes a flag.
+        if entry_name.starts_with('.')
+            || parent.as_os_str().is_empty() && entry_name.starts_with('-')
+        {
+            return None;
+        }
+        matches.push(parent.join(entry_name));
+    }
+    // With nullglob off, a glob matching nothing reaches the command as its own text.
+    if matches.is_empty() {
+        return None;
+    }
+    matches.sort();
+    Some(matches)
+}
+
+/// A plain word, or a glob whose every match a rewrite may read.
+fn glob_rewritable(word: &Word, dirs: Dirs) -> bool {
+    !word.glob
+        || expand(word, dirs.base)
+            .is_some_and(|paths| paths.iter().all(|path| rewritable_match(path, dirs)))
+}
+
+/// A regular file once symlinks resolve, and not a dotfile, key or credential, as typed or there.
+fn rewritable_match(path: &Path, dirs: Dirs) -> bool {
+    let joined = dirs.base.join(path);
+    joined.is_file()
+        && path
+            .to_str()
+            .is_some_and(|typed| !sensitive_or_outside(typed, dirs))
+        && resolved_inside(&joined, dirs.root) == Some(true)
 }
 
 /// True when a path a finding names is one Claude Code's own deny or ask rules cover, or when those
@@ -1156,11 +1312,7 @@ fn classify_find(
         return;
     };
     // grep -r walks hidden and ignored files that `lets find`'s default walk skips.
-    if recursive
-        && !candidates
-            .iter()
-            .any(|candidate| is_sensitive(Path::new(&candidate.text)))
-    {
+    if recursive {
         flags.extend(
             ["--hidden", "--no-ignore", "--exclude '.git/**'"]
                 .into_iter()
@@ -1584,36 +1736,53 @@ fn show(
     );
 }
 
-/// A named file inside the tree that is not a dotfile, key or credential. `fit`
-/// judges the path again after any kept `cd` and once symlinks resolve.
+/// A named file, or a glob of them, inside the tree and not a dotfile, key or credential. `fit`
+/// judges a named file again once symlinks resolve.
 fn rewritable(operand: &Word, dirs: Dirs) -> bool {
-    !operand.glob
-        && !operand.text.starts_with('-')
-        && in_tree(dirs, &operand.text).is_some()
-        && !is_sensitive(Path::new(&operand.text))
+    !operand.text.starts_with('-')
+        && !sensitive_or_outside(&operand.text, dirs)
+        && glob_rewritable(operand, dirs)
 }
 
 /// A dotfile, or a key, secret or credential by name: a backstop for reads no user rule names,
 /// kept a deny the agent sees.
 fn is_sensitive(path: &Path) -> bool {
-    let lowercase = |part: &std::ffi::OsStr| part.to_string_lossy().to_ascii_lowercase();
     let secret = path.components().any(|component| match component {
         Component::Normal(name) => {
-            let name = lowercase(name);
-            name.starts_with('.') || matches!(name.as_str(), "secret" | "secrets")
+            let name = name.as_encoded_bytes();
+            name.starts_with(b".")
+                || name.eq_ignore_ascii_case(b"secret")
+                || name.eq_ignore_ascii_case(b"secrets")
         },
         _ => false,
     });
-    let name = path.file_name().map(lowercase).unwrap_or_default();
-    let extension = path.extension().map(lowercase).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map_or(&[][..], std::ffi::OsStr::as_encoded_bytes);
+    let extension = path
+        .extension()
+        .map_or(&[][..], std::ffi::OsStr::as_encoded_bytes);
+    let holds = |needle: &[u8]| {
+        name.windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle))
+    };
     secret
-        || name.starts_with("id_")
-        || name.contains("credentials")
-        || name.contains(".tfstate")
-        || matches!(
-            extension.as_str(),
-            "env" | "pem" | "key" | "p12" | "pfx" | "jks" | "keystore"
-        )
+        || name
+            .get(..3)
+            .is_some_and(|start| start.eq_ignore_ascii_case(b"id_"))
+        || holds(b"credentials")
+        || holds(b".tfstate")
+        || [
+            &b"env"[..],
+            b"pem",
+            b"key",
+            b"p12",
+            b"pfx",
+            b"jks",
+            b"keystore",
+        ]
+        .iter()
+        .any(|sensitive| extension.eq_ignore_ascii_case(sensitive))
 }
 
 /// A glob stays unquoted to expand as the original did, but only a portable one with no suffix:
@@ -1745,40 +1914,8 @@ fn literal_substitution(script: &str, expected_flags: &str) -> Option<(String, S
     Some(((*old).to_owned(), (*new).to_owned()))
 }
 
-/// A glob expands in its last component only, and every match must be a regular file.
 fn names_only_files(operand: &Word, base: &Path) -> bool {
-    if !operand.glob {
-        return base.join(&operand.text).is_file();
-    }
-    let path = Path::new(&operand.text);
-    let (Some(parent), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
-    else {
-        return false;
-    };
-    // A `.`-led glob matches `.` and `..` in bash before 5.2, which `read_dir` never lists.
-    if name.starts_with('.') || parent.to_str().is_none_or(|p| p.contains(GLOB_BYTES)) {
-        return false;
-    }
-    let Ok(entries) = std::fs::read_dir(base.join(parent)) else {
-        return false;
-    };
-    let mut matched = false;
-    for entry in entries {
-        let Ok(entry) = entry else {
-            return false;
-        };
-        let Some(entry_name) = entry.file_name().to_str().map(str::to_owned) else {
-            return false;
-        };
-        if entry_name.starts_with('.') || !wildcard_matches(name, &entry_name) {
-            continue;
-        }
-        if !entry.path().is_file() {
-            return false;
-        }
-        matched = true;
-    }
-    matched
+    expand(operand, base).is_some_and(|paths| paths.iter().all(|path| base.join(path).is_file()))
 }
 
 fn wildcard_matches(pattern: &str, name: &str) -> bool {
@@ -2197,7 +2334,7 @@ fn in_tree(dirs: Dirs, candidate: &str) -> Option<String> {
 }
 
 fn normalize(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
+    let mut normalized = PathBuf::with_capacity(path.as_os_str().len());
     for component in path.components() {
         match component {
             Component::CurDir => {},
@@ -2549,14 +2686,41 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_holding_a_read_that_fails_a_check_is_a_deny_that_keeps_every_part() {
+    fn a_dotfile_read_in_a_chain_runs_as_typed_beside_the_rewritten_read() {
         let tree = tree();
         write(&tree, ".env", "K=v\n");
-        for (command, run) in [
+        write(&tree, ".claude/plans/p.md", "plan\n");
+        for (command, rewrite) in [
             (
                 "cat .env && cat src/a.ts && ls",
-                "lets show .env && lets show src/a.ts --all --no-header --no-numbers && ls",
+                "cat .env && lets show src/a.ts --all --no-header --no-numbers && ls",
             ),
+            (
+                "cat src/a.ts && cat .claude/plans/p.md",
+                "lets show src/a.ts --all --no-header --no-numbers && cat .claude/plans/p.md",
+            ),
+        ] {
+            assert_eq!(
+                classify_command(command, cwd(&tree), Some(&sources(&tree))),
+                Verdict::Rewrite {
+                    command: rewrite.to_owned()
+                },
+                "{command}"
+            );
+            assert_eq!(
+                classify_command(command, cwd(&tree), None),
+                Verdict::Rewrite {
+                    command: rewrite.to_owned()
+                },
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chain_a_rewrite_cannot_take_whole_is_a_deny_that_keeps_every_part() {
+        let tree = tree();
+        for (command, run) in [
             (
                 "cat src/a.ts & git status",
                 "lets show src/a.ts --all --no-header --no-numbers & git status",
@@ -2603,11 +2767,16 @@ mod tests {
             blocked("sed -i 's/x/y/g' src/a.ts; git status")
                 .ends_with("\nrun: lets edit src/a.ts --old 'x' --new 'y' --all; git status")
         );
-        let reason = blocked("cat .env && sed -i 's/x/y/g' src/b.ts");
+        let reason = blocked("head src/a.ts && sed -i 's/x/y/g' src/b.ts");
         assert!(
             reason.ends_with(
-                "\nrun: lets show .env\nrun: lets edit src/b.ts --old 'x' --new 'y' --all"
+                "\nrun: lets show src/a.ts\nrun: lets edit src/b.ts --old 'x' --new 'y' --all"
             ),
+            "{reason}"
+        );
+        let reason = blocked("cat .env && sed -i 's/x/y/g' src/b.ts");
+        assert!(
+            reason.ends_with("\nrun: cat .env && lets edit src/b.ts --old 'x' --new 'y' --all"),
             "{reason}"
         );
     }
@@ -2865,7 +3034,7 @@ mod tests {
     }
 
     #[test]
-    fn a_search_of_a_dotfile_a_glob_or_a_path_leaving_the_tree_stays_a_deny() {
+    fn a_search_of_a_dotfile_or_a_path_leaving_the_tree_runs_as_typed() {
         let tree = tree();
         write(&tree, ".env", "x\n");
         write(&tree, "config/.secrets/k.txt", "x\n");
@@ -2877,23 +3046,25 @@ mod tests {
             "grep -n x .env",
             "grep -rn x config/.secrets",
             "grep -rn x .git",
-            "grep -n x src/*.ts",
             "grep -rn x out",
+            "grep -rn x src out",
+            "rg x src ../elsewhere",
             "cd config/.secrets && rg x",
         ] {
-            let verdict = rewrite_in(&tree, command);
-            assert!(
-                matches!(verdict, Verdict::Block { .. }),
-                "{command:?} must stay a deny: {verdict:?}"
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+            assert_eq!(
+                classify_command(command, cwd(&tree), None),
+                Verdict::Allow,
+                "{command}"
             );
         }
         assert_eq!(
             command_of(rewrite_in(&tree, "grep -rn x src")),
             "lets find --hidden --no-ignore --exclude '.git/**' 'x' src"
         );
-        assert!(
-            reason_of(rewrite_in(&tree, "grep -rn x config/.secrets"))
-                .ends_with("\nrun: lets find 'x' config/.secrets")
+        assert_eq!(
+            command_of(rewrite_in(&tree, "grep -n x .env; grep -rn x src")),
+            "grep -n x .env; lets find --hidden --no-ignore --exclude '.git/**' 'x' src"
         );
     }
 
@@ -2914,13 +3085,11 @@ mod tests {
         assert_still_blocked("LC_ALL=C cat src/a.ts");
         assert_still_blocked("cat src/a.ts 2>err.txt");
         assert_still_blocked("cat src/a.ts < in.txt");
-        assert_still_blocked("cat src/*.ts");
-        assert_still_blocked("cat src/a.ts /etc/hosts");
         assert_still_blocked("head -n 3 -- -x");
     }
 
     #[test]
-    fn a_dotfile_key_or_credential_read_stays_a_deny() {
+    fn a_dotfile_key_or_credential_read_runs_as_typed() {
         for command in [
             "cat .env",
             "cat config/.env.local",
@@ -2930,9 +3099,27 @@ mod tests {
             "cat aws/Credentials",
             "cat tls.key",
             "head -n 3 .env",
+            "head .env",
+            "sed -n '5p' .env",
             "cat src/a.ts .env",
+            "cat .claude/plans/p.md",
+            "cat .claude-plugin/plugin.json",
         ] {
-            assert_still_blocked(command);
+            assert_eq!(claude_code(command), Verdict::Allow, "{command}");
+            assert_allowed(command);
+        }
+    }
+
+    #[test]
+    fn a_read_with_operands_on_both_sides_of_the_tree_runs_as_typed() {
+        for command in [
+            "cat src/a.ts /etc/hosts",
+            "cat src/a.ts ../other/a.ts",
+            "head src/a.ts /etc/hosts",
+            "grep 'cap' src/a.ts /etc/hosts",
+        ] {
+            assert_eq!(claude_code(command), Verdict::Allow, "{command}");
+            assert_allowed(command);
         }
     }
 
@@ -3004,7 +3191,10 @@ mod tests {
         assert_eq!(rewrite_in(&tree, "grep -rn HELLO private"), Verdict::Allow);
         assert_eq!(rewrite_in(&tree, "cat private/*.txt"), Verdict::Allow);
         assert_eq!(rewrite_in(&tree, "cat */notes.txt"), Verdict::Allow);
-        assert!(reason_of(rewrite_in(&tree, "cat src/*.ts")).ends_with("run: lets show src/*.ts"));
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cat src/*.ts")),
+            "lets show src/*.ts --all --no-numbers"
+        );
         assert!(matches!(
             rewrite_in(&tree, "find private | xargs cat"),
             Verdict::Block { .. }
@@ -3112,13 +3302,31 @@ mod tests {
             command_of(rewrite_in(&user, "cat private/notes.txt")),
             "lets show private/notes.txt --all --no-header --no-numbers"
         );
-        write(&user, ".home/.claude/private/notes.txt", "x\n");
-        assert!(matches!(
-            classify_command("cat .home/.claude/private/notes.txt", cwd(&user), None),
-            Verdict::Block { .. }
-        ));
+        let configured = tree();
+        write(
+            &configured,
+            "cfg/settings.json",
+            &deny(&["Read(/private/**)"]),
+        );
+        write(&configured, "cfg/private/notes.txt", "x\n");
+        let sources = Sources {
+            config: Some(configured.path().join("cfg")),
+            ..sources(&configured)
+        };
         assert_eq!(
-            rewrite_in(&user, "cat .home/.claude/private/notes.txt"),
+            command_of(classify_command(
+                "cat cfg/private/notes.txt",
+                cwd(&configured),
+                None
+            )),
+            "lets show cfg/private/notes.txt --all --no-header --no-numbers"
+        );
+        assert_eq!(
+            classify_command(
+                "cat cfg/private/notes.txt",
+                cwd(&configured),
+                Some(&sources)
+            ),
             Verdict::Allow
         );
     }
@@ -3504,7 +3712,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dotfile_or_secret_named_through_a_kept_cd_stays_a_deny() {
+    fn a_dotfile_or_secret_named_through_a_kept_cd_runs_as_typed() {
         let tree = tree();
         write(&tree, ".ssh/config", "Host x\n");
         write(&tree, ".git/config", "[core]\n");
@@ -3514,6 +3722,10 @@ mod tests {
         for command in [
             "cd .ssh && cat config",
             "cd .git && cat config",
+            "cd .git && head -n 1 config",
+            "cd .git && grep -n core config",
+            "cd .git && rg core",
+            "cd .git && sed -i 's/core/x/g' config",
             "cd secrets && cat prod.txt",
             "cat secrets/prod.txt",
             "cd deploy && cat prod.env",
@@ -3522,8 +3734,10 @@ mod tests {
             "cat infra/terraform.tfstate",
             "cat keys/release.jks",
         ] {
-            assert!(
-                matches!(rewrite_in(&tree, command), Verdict::Block { .. }),
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+            assert_eq!(
+                classify_command(command, cwd(&tree), None),
+                Verdict::Allow,
                 "{command}"
             );
         }
@@ -3531,10 +3745,14 @@ mod tests {
             command_of(rewrite_in(&tree, "cd src && cat a.ts")),
             "cd src && lets show a.ts --all --no-header --no-numbers"
         );
+        assert!(
+            reason_of(rewrite_in(&tree, "cd src && sed -i 's/x/y/g' a.ts"))
+                .contains("run: cd src && lets edit a.ts --old 'x' --new 'y' --all")
+        );
     }
 
     #[test]
-    fn a_symlink_out_of_the_tree_or_onto_a_dotfile_is_never_rewritten() {
+    fn a_symlink_out_of_the_tree_or_onto_a_dotfile_runs_as_typed() {
         let tree = tree();
         let outside = TempDir::new().expect("a directory outside the tree");
         std::fs::write(outside.path().join("hostname"), "host\n").expect("an outside file");
@@ -3554,17 +3772,51 @@ mod tests {
             classify_command("cd etclink && cat hostname", cwd(&tree), None),
             Verdict::Allow
         );
-        assert!(matches!(
-            rewrite_in(&tree, "cat etclink/hostname"),
-            Verdict::Block { .. }
-        ));
-        assert!(matches!(
-            rewrite_in(&tree, "cat src/cfg"),
-            Verdict::Block { .. }
-        ));
+        for command in [
+            "cat etclink/hostname",
+            "cat src/cfg",
+            "grep -n host etclink/hostname",
+            "grep -rn host etclink",
+            "cat etclink/*",
+            "sed -i 's/host/x/g' etclink/hostname",
+            "sed -i 's/Host/x/g' src/cfg",
+            "cat > etclink/new.txt <<'EOF'\nx\nEOF",
+        ] {
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+            assert_eq!(
+                classify_command(command, cwd(&tree), None),
+                Verdict::Allow,
+                "{command}"
+            );
+        }
         assert_eq!(
             command_of(rewrite_in(&tree, "cat src/alias.ts")),
             "lets show src/alias.ts --all --no-header --no-numbers"
+        );
+        assert!(
+            reason_of(rewrite_in(&tree, "sed -i 's/x/y/g' src/alias.ts"))
+                .contains("run: lets edit src/alias.ts --old 'x' --new 'y' --all")
+        );
+    }
+
+    #[test]
+    fn a_read_through_a_bun_link_into_a_dot_directory_runs_as_typed() {
+        let tree = tree();
+        write(&tree, "node_modules/.bun/pkg@1/package.json", "{}\n");
+        std::os::unix::fs::symlink(".bun/pkg@1", tree.path().join("node_modules/pkg"))
+            .expect("a bun package link");
+        write(&tree, "node_modules/plain/package.json", "{}\n");
+
+        for command in [
+            "cat node_modules/pkg/package.json",
+            "grep -n name node_modules/pkg/package.json",
+            "cat node_modules/pkg/*.json",
+        ] {
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+        }
+        assert_eq!(
+            command_of(rewrite_in(&tree, "cat node_modules/plain/package.json")),
+            "lets show node_modules/plain/package.json --all --no-header --no-numbers"
         );
     }
 
@@ -3582,9 +3834,9 @@ mod tests {
         assert_eq!(verdict("cat src/a.ts && cat src/b.ts"), Verdict::Rewrite {
             command: "lets show src/a.ts src/b.ts --all --no-numbers".to_owned()
         });
-        let reason = blocked("cat src/a.ts && cat .env");
+        let reason = blocked("cat src/a.ts && head src/b.ts");
         assert!(
-            reason.ends_with("\nrun: lets show src/a.ts .env"),
+            reason.ends_with("\nrun: lets show src/a.ts src/b.ts"),
             "{reason}"
         );
     }
@@ -3606,9 +3858,17 @@ mod tests {
             "cat src/a.ts src/a.ts",
             "cat -n src/a.ts ./src/a.ts",
             "head -n 3 src/n.txt; sed -n '2,5p' src/n.txt",
+            "cat .env && cat .env",
+            "cat src/a.ts src/*.ts",
+            "cat src/a.ts && cat src/*.ts",
+            "cat src/*.ts && cat src/?.ts",
         ] {
             assert_allowed(command);
         }
+        assert_eq!(
+            rewritten("cat src/*.ts && cat src/n.txt"),
+            "lets show src/*.ts src/n.txt --all --no-numbers"
+        );
         assert_eq!(
             rewritten("cat src/a.ts && cat src/b.ts"),
             "lets show src/a.ts src/b.ts --all --no-numbers"
@@ -3624,8 +3884,6 @@ mod tests {
             ),
             "{reason}"
         );
-        let reason = blocked("cat .env && cat .env");
-        assert!(reason.ends_with("\nrun: lets show .env"), "{reason}");
     }
 
     #[test]
@@ -3634,9 +3892,9 @@ mod tests {
             rewritten("lets show a.ts && cat src/b.ts"),
             "lets show a.ts && lets show src/b.ts --all --no-header --no-numbers"
         );
-        let reason = blocked("lets show a.ts && cat .env");
+        let reason = blocked("lets show a.ts && head src/b.ts");
         assert!(
-            reason.ends_with("\nrun: lets show a.ts && lets show .env"),
+            reason.ends_with("\nrun: lets show a.ts && lets show src/b.ts"),
             "{reason}"
         );
     }
@@ -3675,7 +3933,7 @@ mod tests {
                 "{command}"
             );
         }
-        assert!(blocked("cat .env | head -5").contains("run: lets show .env:1-5"));
+        assert_allowed("cat .env | head -5");
     }
 
     #[test]
@@ -3862,7 +4120,6 @@ mod tests {
             rewritten("sed -n '5,9p' src/n.txt"),
             "lets show src/n.txt:5-9 --no-header --no-numbers"
         );
-        assert!(blocked("head -n 20 .env").contains("run: lets show .env:1-20"));
     }
 
     #[test]
@@ -3871,9 +4128,9 @@ mod tests {
             rewritten("cat src/b.ts && head -n 20 src/a.ts"),
             "lets show src/b.ts src/a.ts:1-20 --all --no-numbers"
         );
-        let reason = blocked("cat .env && head -n 20 src/a.ts");
+        let reason = blocked("head src/b.ts && head -n 20 src/a.ts");
         assert!(
-            reason.ends_with("\nrun: lets show .env src/a.ts:1-20"),
+            reason.ends_with("\nrun: lets show src/b.ts src/a.ts:1-20"),
             "{reason}"
         );
     }
@@ -3950,7 +4207,6 @@ mod tests {
             rewritten("sed -n '5p' src/n.txt"),
             "lets show src/n.txt:5 --no-header --no-numbers"
         );
-        assert!(blocked("sed -n '5p' .env").contains("run: lets show .env:5"));
     }
 
     #[test]
@@ -4030,7 +4286,6 @@ mod tests {
             rewritten("rg 'cap' src/"),
             "lets find 'cap' src/ --no-numbers"
         );
-        assert!(blocked("grep -rn 'cap' .claude").ends_with("\nrun: lets find 'cap' .claude"));
     }
 
     #[test]
@@ -4098,10 +4353,17 @@ mod tests {
             "lets find 'a' src/a.ts --no-numbers -s --cap-exit-0 && lets find 'b' src/b.ts \
              --no-numbers"
         );
-        let reason = blocked("grep -r 'a' .claude && grep 'b' src/b.ts");
+        let reason = blocked("grep -r 'a' gone && grep 'b' src/b.ts");
         assert!(
-            reason.ends_with("\nrun: lets find 'a' .claude\nrun: lets find 'b' src/b.ts"),
+            reason.ends_with(
+                "\nrun: lets find --hidden --no-ignore --exclude '.git/**' 'a' gone\nrun: lets \
+                 find 'b' src/b.ts"
+            ),
             "{reason}"
+        );
+        assert_eq!(
+            rewritten("grep -r 'a' .claude && grep 'b' src/b.ts"),
+            "grep -r 'a' .claude && lets find 'b' src/b.ts --no-numbers"
         );
     }
 
@@ -4119,15 +4381,10 @@ mod tests {
     fn a_path_inside_the_working_tree_is_replaced() {
         let tree = tree();
         let absolute = format!("{}/src/a.ts", cwd(&tree));
-        // The temp tree's own `.tmp…` name reads as a dotfile component, so this is a deny.
-        let Verdict::Block { reason } =
-            classify_command(&format!("cat {absolute}"), cwd(&tree), None)
-        else {
-            panic!("an absolute in-tree read was allowed");
-        };
-        assert!(
-            reason.ends_with(&format!("\nrun: lets show {absolute}")),
-            "{reason}"
+        // The temp tree's own `.tmp…` name reads as a dotfile component as typed.
+        assert_eq!(
+            classify_command(&format!("cat {absolute}"), cwd(&tree), None),
+            Verdict::Allow
         );
         assert_eq!(
             rewritten("cat ./src/a.ts"),
@@ -4138,15 +4395,6 @@ mod tests {
             "lets show src/../src/a.ts --all --no-header --no-numbers"
         );
         assert!(blocked("cat src/a.ts < in.txt").contains("run: lets show src/a.ts"));
-    }
-
-    #[test]
-    fn a_read_with_operands_on_both_sides_of_the_tree_names_every_one() {
-        assert!(blocked("cat src/a.ts /etc/hosts").contains("run: lets show src/a.ts /etc/hosts"));
-        assert!(
-            blocked("grep 'cap' src/a.ts /etc/hosts")
-                .contains("run: lets find 'cap' src/a.ts /etc/hosts")
-        );
     }
 
     #[test]
@@ -4226,16 +4474,15 @@ mod tests {
     fn every_block_and_every_rewrite_carries_a_runnable_lets_command() {
         let replaced = [
             "cat src/a.ts",
-            "cat .env",
             "cat src/a.ts && cat src/b.ts",
-            "cat src/a.ts /etc/hosts",
+            "cat src/*.ts",
             "head -n 20 src/a.ts",
-            "head -n 20 .env",
             "tail src/a.ts",
             "sed -n '1,10p' src/a.ts",
             "sed -i 's/a/b/g' src/a.ts",
             "grep -n 'cap' src/a.ts",
-            "grep -rn 'cap' .claude && ls",
+            "grep -n 'cap' src/*.ts",
+            "grep -rn 'cap' gone && ls",
             "grep -F 'a.b' -i src/a.ts",
             "rg 'cap'",
             "nl -ba src/n.txt | sed -n '2,3p'",
@@ -4271,6 +4518,38 @@ mod tests {
             "cat a | jq",
         ] {
             assert_eq!(verdict(command), verdict(command), "{command:?}");
+        }
+    }
+
+    #[test]
+    fn a_dotfile_key_or_credential_is_sensitive_in_any_ascii_case() {
+        for path in [
+            ".env",
+            "a/.Git/x",
+            "SECRETS/x",
+            "a/Secret",
+            "ID_rsa",
+            "my-Credentials.json",
+            "prod.TFSTATE.backup",
+            "cert.PEM",
+            "a.Env",
+            "x.KeyStore",
+            "b.p12",
+        ] {
+            assert!(super::is_sensitive(Path::new(path)), "{path}");
+        }
+        for path in [
+            "src/a.ts",
+            "secretary/x",
+            "ids.txt",
+            "credential.txt",
+            "key",
+            "env",
+            "a.keys",
+            "tfstate",
+            "../a.ts",
+        ] {
+            assert!(!super::is_sensitive(Path::new(path)), "{path}");
         }
     }
 
@@ -4440,11 +4719,147 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_unquoted_glob_passes_into_the_replacement_unquoted() {
-        assert!(blocked("cat src/*.ts").contains("run: lets show src/*.ts"));
-        assert!(blocked("cat src/?.ts").contains("run: lets show src/?.ts"));
-        assert!(blocked("grep -n foo src/*.ts").contains("run: lets find 'foo' src/*.ts"));
-        assert!(blocked("cat \"src\"/*.ts").contains("run: lets show src/*.ts"));
+    fn a_glob_over_plain_files_is_rewritten_with_the_glob_unquoted() {
+        for (command, replacement) in [
+            ("cat src/*.ts", "lets show src/*.ts --all --no-numbers"),
+            ("cat src/?.ts", "lets show src/?.ts --all --no-numbers"),
+            ("cat \"src\"/*.ts", "lets show src/*.ts --all --no-numbers"),
+            (
+                "cat src/n.*",
+                "lets show src/n.* --all --no-header --no-numbers",
+            ),
+            ("cat -n src/n.*", "lets show src/n.* --all --no-header"),
+            ("grep -n foo src/*.ts", "lets find 'foo' src/*.ts"),
+            ("rg foo src/*.ts", "lets find 'foo' src/*.ts --no-numbers"),
+            (
+                "cat src/*.ts && cat notes.md",
+                "lets show src/*.ts notes.md --all --no-numbers",
+            ),
+        ] {
+            assert_eq!(rewritten(command), replacement, "{command}");
+            assert_eq!(
+                verdict(command),
+                Verdict::Rewrite {
+                    command: replacement.to_owned()
+                },
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_glob_bash_could_expand_differently_runs_as_typed() {
+        let tree = tree();
+        write(&tree, "dotted/a.ts", "x\n");
+        write(&tree, "dotted/.b.ts", "x\n");
+        write(&tree, "dashed/-x.md", "x\n");
+        write(&tree, "dashed/y.md", "x\n");
+        write(&tree, "deploy/prod.env", "x\n");
+        write(&tree, "deploy/notes.txt", "x\n");
+        for command in [
+            "cat src/*.rs",
+            "cat s*",
+            "cat src/*/",
+            "cat dotted/*.ts",
+            "grep -n x dotted/*.ts",
+            "cat deploy/*",
+            "cat src/[ab].ts",
+            "cat src/{a,b}.ts",
+            "cat src/**.ts",
+            "cat */a.ts",
+            "cat src/.*",
+            "cat -n src/*.ts",
+            "nl -ba src/*.ts",
+        ] {
+            assert_eq!(rewrite_in(&tree, command), Verdict::Allow, "{command}");
+            assert_eq!(
+                classify_command(command, cwd(&tree), None),
+                Verdict::Allow,
+                "{command}"
+            );
+        }
+        let dashed =
+            |command: &str| classify_command(command, &format!("{}/dashed", cwd(&tree)), None);
+        assert_eq!(dashed("cat *.md"), Verdict::Allow);
+        assert_eq!(dashed("cat ./*.md"), Verdict::Rewrite {
+            command: "lets show ./*.md --all --no-numbers".to_owned()
+        });
+    }
+
+    #[test]
+    fn a_glob_expands_to_what_bash_expands_it_to_or_not_at_all() {
+        let tree = TempDir::new().expect("a temp tree");
+        let root = tree.path();
+        for file in [
+            "a.txt",
+            "b.ts",
+            ".hidden.txt",
+            "sp ace.txt",
+            "-flag.txt",
+            "é.txt",
+            "sub/c.txt",
+            "sub/-d.txt",
+            "sub/.e.txt",
+            "dir.txt/f",
+        ] {
+            write(&tree, file, "x\n");
+        }
+        std::os::unix::fs::symlink(root.join("a.txt"), root.join("link.txt")).expect("a symlink");
+        std::os::unix::fs::symlink(root.join("gone"), root.join("dangling.ts")).expect("a symlink");
+        let patterns = [
+            "*",
+            "*.txt",
+            "?.txt",
+            "*.ts",
+            "b*",
+            "s*",
+            "l*",
+            "d*",
+            "*ace*",
+            "sub/*",
+            "sub/c*",
+            "sub/?.txt",
+            "sub/-*",
+            "./*.ts",
+            "./*",
+            "*.rs",
+            "sub/*.rs",
+            "dir.txt/*",
+            "dir.txt/?",
+        ];
+        let mut compared = 0;
+        for pattern in patterns {
+            let word = Word {
+                text: pattern.to_owned(),
+                glob: true,
+            };
+            let Some(expanded) = super::expand(&word, root) else {
+                continue;
+            };
+            let bash = std::process::Command::new("bash")
+                .env("LC_ALL", "C")
+                .args([
+                    "-c",
+                    &format!(
+                        "shopt -u nullglob dotglob failglob; cd \"$1\" && printf '%s\\0' {pattern}"
+                    ),
+                ])
+                .args(["_", cwd(&tree)])
+                .output();
+            let Ok(bash) = bash else {
+                eprintln!("skipped: bash absent");
+                return;
+            };
+            assert!(bash.status.success(), "{pattern}");
+            let by_bash: Vec<PathBuf> = String::from_utf8(bash.stdout)
+                .expect("utf-8 names")
+                .split_terminator('\0')
+                .map(PathBuf::from)
+                .collect();
+            assert_eq!(expanded, by_bash, "{pattern}");
+            compared += 1;
+        }
+        assert!(compared >= 8, "only {compared} patterns expanded");
     }
 
     #[test]
@@ -4540,8 +4955,14 @@ mod tests {
                 "{command}"
             );
         }
-        assert!(blocked("grep foo src/*.ts").contains("run: lets find 'foo' src/*.ts"));
-        assert!(blocked("grep foo src/?.ts").contains("run: lets find 'foo' src/?.ts"));
+        assert_eq!(
+            rewritten("grep foo src/*.ts"),
+            "lets find 'foo' src/*.ts --no-numbers"
+        );
+        assert_eq!(
+            rewritten("grep foo src/?.ts"),
+            "lets find 'foo' src/?.ts --no-numbers"
+        );
         assert_eq!(rewritten("rg foo src"), "lets find 'foo' src --no-numbers");
     }
 
@@ -4617,21 +5038,23 @@ mod tests {
 
     #[test]
     fn a_translated_plain_grep_pattern_is_named_after_the_cd_note() {
-        let reason = blocked(r"cd src && grep 'a\|b' *.txt");
+        let reason = blocked(r"cd src && grep -r 'a\|b' gone");
 
         assert!(
             reason.starts_with("`cd src` kept; grep pattern translated to lets regex; "),
             "{reason}"
         );
         assert!(
-            reason.contains("run: cd src && lets find 'a|b' *.txt"),
+            reason.contains(
+                "run: cd src && lets find --hidden --no-ignore --exclude '.git/**' 'a|b' gone"
+            ),
             "{reason}"
         );
     }
 
     #[test]
     fn a_plain_grep_pattern_the_translation_leaves_unchanged_carries_no_note() {
-        let reason = blocked("grep 'cap' src/*.ts");
+        let reason = blocked("grep -r 'cap' gone");
 
         assert!(!reason.contains("translated"), "{reason}");
     }
@@ -4653,18 +5076,28 @@ mod tests {
     #[test]
     fn extended_fixed_and_rg_patterns_pass_unchanged() {
         for (command, replacement) in [
-            ("grep -E 'a|b' src/*.ts", "run: lets find 'a|b' src/*.ts"),
+            (
+                "grep -E 'a|b' src/*.ts",
+                "lets find 'a|b' src/*.ts --no-numbers",
+            ),
             (
                 "grep --extended-regexp 'f(x)' src/*.ts",
-                "run: lets find 'f(x)' src/*.ts",
+                "lets find 'f(x)' src/*.ts --no-numbers",
             ),
-            ("grep -F 'a|b' src/*.ts", "run: lets find -F 'a|b' src/*.ts"),
-            (r"rg 'a\|b' src/*.ts", r"run: lets find 'a\|b' src/*.ts"),
+            (
+                "grep -F 'a|b' src/*.ts",
+                "lets find -F 'a|b' src/*.ts --no-numbers",
+            ),
+            (
+                r"rg 'a\|b' src/*.ts",
+                r"lets find 'a\|b' src/*.ts --no-numbers",
+            ),
         ] {
-            let reason = blocked(command);
-            assert!(reason.contains(replacement), "{command:?}: {reason}");
-            assert!(!reason.contains("translated"), "{command:?}: {reason}");
+            assert_eq!(rewritten(command), replacement, "{command:?}");
         }
+        let reason = blocked("grep -rE 'a|b' gone");
+        assert!(reason.contains("'a|b' gone"), "{reason}");
+        assert!(!reason.contains("translated"), "{reason}");
     }
 
     #[test]

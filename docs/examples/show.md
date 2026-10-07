@@ -77,6 +77,84 @@ $ lets show 'C#.md'
 ```
 
 ```console
+$ lets show big.ts --head 5
+── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
+  1 	// big.ts — padded fixture for lets show's window-truncation and #usage cases.
+  2 	// Total file length and the usage() span are pinned to spec.md's own worked
+  3 	// example (38-61 of 212) so a golden's numbers come from the spec, not a run.
+  4 	// filler 4
+── showed 1 target · 100 lines · :101-212 not shown · output lines 6-102 not shown (--head 5)
+
+```
+
+```console
+$ lets show small.md --head 5 --json
+? 64
+{"error":{"slug":"usage","message":"--head is text-only and cannot be combined with --json or --jsonl"},"omitted":[],"stats":{"lines":0,"bytes":0,"tokens_est":null}}
+--head is text-only and cannot be combined with --json or --jsonl
+ERROR_CODE=usage
+
+```
+
+```console
+$ lets show big.ts --head 102
+── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
+...
+── showed 1 target · 100 lines · :101-212 not shown
+
+```
+
+```console
+$ lets show store.go --outline --head 4
+── store.go
+44-46	func Open(path string) (*Store, error) {
+213-215	func (s *Store) Open(ctx context.Context) error {
+── showed 1 target · 2 definitions
+
+```
+
+```console
+$ lets show store.go --outline --head 1
+── store.go
+── showed 1 target · 2 definitions · output lines 2-4 not shown (--head 1)
+
+```
+
+```console
+$ lets show big.ts:10-12 big.ts:20-22 --head 9
+── big.ts:10-12  (10-12 of 212)
+10 	// filler 10
+11 	// filler 11
+12 	// filler 12
+── big.ts:20-22  (20-22 of 212)
+20 	// filler 20
+21 	// filler 21
+22 	// filler 22
+── showed 2 targets · 6 lines
+
+```
+
+```console
+$ lets show big.ts:10-12 big.ts:20-22 --head 6
+── big.ts:10-12  (10-12 of 212)
+10 	// filler 10
+11 	// filler 11
+12 	// filler 12
+── big.ts:20-22  (20-22 of 212)
+20 	// filler 20
+── showed 2 targets · 6 lines · output lines 7-9 not shown (--head 6)
+
+```
+
+```console
+$ lets show small.md --head 0
+? 64
+...
+ERROR_CODE=usage
+
+```
+
+```console
 $ lets show latin1.txt
 ── latin1.txt  (1-7 of 7) · non-UTF-8 lines 3, 7
 1 	one

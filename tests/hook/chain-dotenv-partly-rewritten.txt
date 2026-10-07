@@ -1,0 +1,8 @@
+COMMAND
+cat src/a.ts && cat .env && git status
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: lets show src/a.ts --all --no-header --no-numbers && cat .env && git status
+===END===
+COMPARE chain

@@ -1,0 +1,4 @@
+── store.go
+44-46	func Open(path string) (*Store, error) {
+213-215	func (s *Store) Open(ctx context.Context) error {
+── showed 1 target · 2 definitions

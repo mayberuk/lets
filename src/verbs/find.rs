@@ -22,8 +22,15 @@ use crate::output::{
 };
 use crate::{Outcome, fs, symbols, window};
 
-pub fn run(args: &FindArgs, global: &Global, _format: crate::output::Format) -> Outcome {
-    run_with(args, global, None)
+pub fn run(args: &FindArgs, global: &Global, format: crate::output::Format) -> Outcome {
+    if args.head.is_some() && format != crate::output::Format::Text {
+        return Outcome::failed("find", Error::Usage {
+            message: "--head is text-only and cannot be combined with --json or --jsonl".to_owned(),
+        });
+    }
+    let mut outcome = run_with(args, global, None);
+    outcome.response.head = args.head;
+    outcome
 }
 
 /// A grep habit like `a\|b` is a literal bar to `regex`, so a pattern with no hits is retried as
@@ -1980,6 +1987,7 @@ mod tests {
             no_expand: false,
             no_numbers: false,
             cap_exit_0: false,
+            head: None,
             grep: crate::cli::GrepCompat::default(),
         }
     }

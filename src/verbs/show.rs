@@ -14,12 +14,18 @@ use crate::output::{
 use crate::window::Bounds;
 use crate::{Outcome, fs, grammars, symbols, target, window};
 
-pub fn run(args: &ShowArgs, global: &Global, _format: Format) -> Outcome {
+pub fn run(args: &ShowArgs, global: &Global, format: Format) -> Outcome {
+    if args.head.is_some() && format != Format::Text {
+        return Outcome::failed("show", Error::Usage {
+            message: "--head is text-only and cannot be combined with --json or --jsonl".to_owned(),
+        });
+    }
     if args.outline {
         return outline(args, global);
     }
     let mut response = Response::empty("show");
     response.no_header = args.no_header;
+    response.head = args.head;
     let mut blocks = Vec::with_capacity(args.targets.len());
     let mut errors = Vec::new();
 
@@ -123,6 +129,7 @@ fn outline(args: &ShowArgs, global: &Global) -> Outcome {
     }
     let mut response = Response::empty("show");
     response.no_header = args.no_header;
+    response.head = args.head;
     let mut blocks = Vec::with_capacity(args.targets.len());
     let mut errors = Vec::new();
     for raw in &args.targets {
@@ -617,6 +624,7 @@ mod tests {
             no_numbers: false,
             no_header: false,
             outline: false,
+            head: None,
         }
     }
 
