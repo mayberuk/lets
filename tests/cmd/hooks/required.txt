@@ -23,3 +23,4 @@ plugin-dirs-kept.toml
 plugin-dirs-not-a-string.toml
 xdg-data-home.toml
 uninstall-removes-mod.toml
+uninstall-other-data-home.toml

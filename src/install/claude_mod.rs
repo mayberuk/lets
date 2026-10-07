@@ -65,7 +65,7 @@ pub fn write(dir: &Path) -> Result<bool, Error> {
     Ok(changed)
 }
 
-fn is_ours(dir: &Path) -> bool {
+pub fn is_ours(dir: &Path) -> bool {
     std::fs::read(dir.join(".claude-plugin/plugin.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
@@ -230,6 +230,24 @@ mod tests {
         );
         for (relative, _) in &FILES[1..] {
             assert!(dir.join(relative).exists(), "{relative}");
+        }
+    }
+
+    #[test]
+    fn remove_with_a_malformed_plugin_json_touches_nothing() {
+        let (_root, dir) = installed();
+        for malformed in ["{ not json", "", "[]", r#"{"name": "#] {
+            std::fs::write(dir.join(".claude-plugin/plugin.json"), malformed).unwrap();
+
+            assert!(!remove(&dir).unwrap(), "{malformed:?}");
+
+            assert_eq!(
+                std::fs::read_to_string(dir.join(".claude-plugin/plugin.json")).unwrap(),
+                malformed
+            );
+            for (relative, _) in &FILES[1..] {
+                assert!(dir.join(relative).exists(), "{malformed:?} {relative}");
+            }
         }
     }
 

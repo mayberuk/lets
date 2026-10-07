@@ -193,6 +193,16 @@ matchers: 1
 ```
 
 ```console
+$ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; XDG_DATA_HOME="$(pwd)/data" "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; echo files before: $(find data -type f | wc -l); (unset XDG_DATA_HOME; PATH=/nonexistent "$CARGO_BIN_EXE_lets" hooks uninstall claude-code); echo files after: $(find data -type f | wc -l); echo plugin dirs mentions: $(grep -c CLAUDE_CODE_PLUGIN_DIRS "$HOME/.claude/settings.json" || true)'
+files before: 5
+removed the PreToolUse hook
+removed the lets mod
+files after: 0
+plugin dirs mentions: 0
+
+```
+
+```console
 $ sh -c 'set -e; export HOME="$(pwd)/home"; unset XDG_DATA_HOME; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; echo theirs > "$HOME/.local/share/lets/claude-code/hooks/mine.ts"; PATH=/nonexistent "$CARGO_BIN_EXE_lets" hooks uninstall claude-code; find home/.local -type f | LC_ALL=C sort; echo plugin dirs: $(grep -F CLAUDE_CODE_PLUGIN_DIRS "$HOME/.claude/settings.json" | cut -d'\''"'\'' -f4)'
 removed the PreToolUse hook
 removed the lets mod

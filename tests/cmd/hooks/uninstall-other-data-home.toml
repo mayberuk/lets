@@ -1,0 +1,7 @@
+# Installed with XDG_DATA_HOME set, uninstalled with it unset: the env entry is found by its
+# plugin.json, not by the directory the current environment computes.
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; XDG_DATA_HOME=\"$(pwd)/data\" \"$CARGO_BIN_EXE_lets\" hooks install claude-code >/dev/null; echo files before: $(find data -type f | wc -l); (unset XDG_DATA_HOME; PATH=/nonexistent \"$CARGO_BIN_EXE_lets\" hooks uninstall claude-code); echo files after: $(find data -type f | wc -l); echo plugin dirs mentions: $(grep -c CLAUDE_CODE_PLUGIN_DIRS \"$HOME/.claude/settings.json\" || true)"]
+
+[fs]
+sandbox = true

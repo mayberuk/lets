@@ -512,33 +512,53 @@ fn uninstall(format: Format, dir: &Path, mod_dir: &Path, runtime: &Path) -> Outc
             Outcome::partial(raw(nothing_or(format, lines)), error)
         }
     };
-    let mod_removed_line = match format {
-        Format::Text => "removed the lets mod",
-        Format::Json | Format::Jsonl => "mod=removed",
+    let line = |text: &str, token: &str| match format {
+        Format::Text => text.to_owned(),
+        Format::Json | Format::Jsonl => token.to_owned(),
     };
 
-    let entry_removed = match mod_dir.to_str() {
-        Some(text) => settings::remove_plugin_dir(&settings_path, text, runtime),
-        None => Ok(false),
-    };
-    let entry_removed = match entry_removed {
+    let mod_dir_entry = mod_dir.to_str().unwrap_or_default();
+    let removed_entries = settings::remove_plugin_dirs_where(&settings_path, runtime, |entry| {
+        (!mod_dir_entry.is_empty() && settings::same_dir(entry, mod_dir_entry))
+            || (Path::new(entry).is_absolute() && claude_mod::is_ours(Path::new(entry)))
+    });
+    let removed_entries = match removed_entries {
         Ok(removed) => removed,
-        Err(error) => return failed(&lines, error),
-    };
-    match claude_mod::remove(mod_dir) {
-        Ok(tree_removed) => {
-            if entry_removed || tree_removed {
-                lines.push(mod_removed_line.to_owned());
-            }
-            Outcome::ok(raw(nothing_or(format, &lines)))
-        },
         Err(error) => {
-            if entry_removed {
-                lines.push(mod_removed_line.to_owned());
+            if !lines.is_empty() {
+                lines.push(line("the lets mod was not removed", "mod=remaining"));
             }
-            failed(&lines, error)
+            return failed(&lines, error);
         },
+    };
+
+    let mut tree_removed = false;
+    let trees =
+        std::iter::once(mod_dir.to_path_buf()).chain(removed_entries.iter().map(PathBuf::from));
+    for tree in trees {
+        match claude_mod::remove(&tree) {
+            Ok(removed) => tree_removed |= removed,
+            Err(error) => {
+                if !removed_entries.is_empty() {
+                    lines.push(line(
+                        "removed the lets mod from CLAUDE_CODE_PLUGIN_DIRS",
+                        "mod_entry=removed",
+                    ));
+                }
+                if !lines.is_empty() {
+                    lines.push(line(
+                        "the lets mod files were not removed",
+                        "mod_files=remaining",
+                    ));
+                }
+                return failed(&lines, error);
+            },
+        }
     }
+    if !removed_entries.is_empty() || tree_removed {
+        lines.push(line("removed the lets mod", "mod=removed"));
+    }
+    Outcome::ok(raw(nothing_or(format, &lines)))
 }
 
 pub fn run(cmd: &HooksCmd, format: Format) -> Outcome {
@@ -639,6 +659,15 @@ mod tests {
                 format,
                 &self.home.path().join(".claude"),
                 &self.mod_dir(),
+                self.runtime.path(),
+            )
+        }
+
+        fn uninstall_from(&self, mod_dir: &Path, format: Format) -> Outcome {
+            uninstall(
+                format,
+                &self.home.path().join(".claude"),
+                mod_dir,
                 self.runtime.path(),
             )
         }
@@ -1517,7 +1546,10 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         let outcome = sandbox.uninstall(Format::Text);
 
         assert!(matches!(outcome.error, Some(Error::Io { .. })));
-        assert_eq!(body_text(&outcome), "removed the PreToolUse hook\n");
+        assert_eq!(
+            body_text(&outcome),
+            "removed the PreToolUse hook\nthe lets mod was not removed\n"
+        );
     }
 
     #[test]
@@ -1693,5 +1725,267 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
     /// A blank blockquote line is a bare `>`, with no trailing space.
     fn strip_bare_quote(line: &str) -> &str {
         line.strip_prefix('>').unwrap_or(line)
+    }
+
+    const C6_LAST_LINE: &str = "For the first lines only, pass `--head N` to `lets show` or \
+        `lets find` instead of piping to `head`: the footer still names the cut. Do not add \
+        `2>/dev/null`: it hides the fix. Keep Read for images and PDFs; use plain Bash for \
+        anything else that is not reading, searching or editing files.";
+
+    #[test]
+    fn the_paragraph_ends_with_the_exact_head_n_line_and_nothing_after_it() {
+        assert_eq!(
+            CLAUDE_CODE_PARAGRAPH.lines().next_back(),
+            Some(C6_LAST_LINE)
+        );
+        assert!(CLAUDE_CODE_PARAGRAPH.ends_with(C6_LAST_LINE));
+        assert_eq!(CLAUDE_CODE_PARAGRAPH.matches("--head N").count(), 1);
+    }
+
+    #[test]
+    fn install_removes_every_retired_start_form_and_duplicates_but_keeps_a_foreign_hook() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        let foreign_session = serde_json::json!({"type": "command", "command": "echo mine"});
+        let foreign_subagent = serde_json::json!({"type": "command", "command": "echo theirs"});
+        let command = |text: String| serde_json::json!({"type": "command", "command": text});
+        sandbox.write_settings(&serde_json::json!({"hooks": {
+            "SessionStart": [
+                {"matcher": SESSION_START_MATCHER, "hooks": [
+                    command(session_start_command()),
+                    foreign_session.clone(),
+                    command(v0_0_1_session_start_command()),
+                    command("lets guide".to_owned()),
+                    command(session_start_command()),
+                ]},
+                {"matcher": SESSION_START_MATCHER, "hooks": [
+                    command(GUIDE_ONLY_COMMAND.to_owned()),
+                    command(legacy_env_guarded_guide_command()),
+                ]},
+            ],
+            "SubagentStart": [
+                {"hooks": [
+                    command(subagent_start_command()),
+                    command(v0_0_1_subagent_start_command()),
+                    foreign_subagent.clone(),
+                    command(subagent_start_command()),
+                ]},
+            ],
+        }}));
+
+        let outcome = sandbox.install(Format::Text);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(
+            body_text(&outcome),
+            "added the PreToolUse hook\nadded the lets mod\nremoved the SessionStart hook \
+             \u{b7} the lets mod carries its text now\nremoved the SubagentStart hook \u{b7} \
+             the lets mod carries its text now\n"
+        );
+        let hooks = &sandbox.settings_json()["hooks"];
+        assert_eq!(
+            hooks["SessionStart"],
+            serde_json::json!([{"matcher": SESSION_START_MATCHER, "hooks": [foreign_session]}])
+        );
+        assert_eq!(
+            hooks["SubagentStart"],
+            serde_json::json!([{"hooks": [foreign_subagent]}])
+        );
+        assert_eq!(hooks["PreToolUse"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_mod_write_failure_leaves_settings_untouched_and_reports_nothing_landed() {
+        for planted in [Some("{\n  // mine\n  \"model\": \"opus\"\n}\n"), None] {
+            let sandbox = Sandbox::new().with_lets_on_path(true);
+            std::fs::write(
+                sandbox.data.path().join("lets"),
+                "a file where the directory goes",
+            )
+            .unwrap();
+            if let Some(text) = planted {
+                std::fs::create_dir_all(sandbox.claude("")).unwrap();
+                std::fs::write(sandbox.claude("settings.json"), text).unwrap();
+            }
+
+            let outcome = sandbox.install(Format::Text);
+
+            assert!(
+                matches!(outcome.error, Some(Error::Io { .. })),
+                "{planted:?}"
+            );
+            assert!(matches!(&outcome.response.body, Body::Targets(targets) if targets.is_empty()));
+            match planted {
+                Some(text) => assert_eq!(
+                    std::fs::read_to_string(sandbox.claude("settings.json")).unwrap(),
+                    text
+                ),
+                None => assert!(!sandbox.claude("settings.json").exists()),
+            }
+            assert!(!sandbox.mod_dir().exists());
+        }
+    }
+
+    #[test]
+    fn a_retirement_failure_after_the_hook_landed_is_partial_and_names_what_landed() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        sandbox.write_settings(&serde_json::json!({"hooks": {"SessionStart": "oops"}}));
+
+        let outcome = sandbox.install(Format::Text);
+
+        assert!(matches!(outcome.error, Some(Error::Io { .. })));
+        assert_eq!(
+            body_text(&outcome),
+            "added the PreToolUse hook\nadded the lets mod\n"
+        );
+        let hooks = &sandbox.settings_json()["hooks"];
+        assert_eq!(hooks["SessionStart"], "oops");
+        assert_eq!(hooks["PreToolUse"].as_array().unwrap().len(), 1);
+        assert!(sandbox.settings_json().get("env").is_none());
+    }
+
+    #[test]
+    fn a_plugin_dir_failure_after_every_hook_step_names_each_line_that_landed() {
+        let landed = Landed {
+            pre_tool_use: Some(InstallStatus::Updated),
+            lets_mod: Some(InstallStatus::Installed),
+            session_start_removed: true,
+            subagent_start_removed: true,
+            post_tool_use_removed: true,
+        };
+        let failure = Error::Usage {
+            message: "boom".to_owned(),
+        };
+
+        let outcome = landed.failed(Format::Text, Path::new("/nonexistent"), failure);
+
+        assert!(matches!(outcome.error, Some(Error::Usage { .. })));
+        assert_eq!(
+            body_text(&outcome),
+            "updated the PreToolUse hook\nadded the lets mod\nremoved the SessionStart hook \
+             \u{b7} the lets mod carries its text now\nremoved the SubagentStart hook \u{b7} \
+             the lets mod carries its text now\nremoved the PostToolUse hook \u{b7} the check \
+             trial showed no benefit, so it is no longer installed by default\n"
+        );
+    }
+
+    #[test]
+    fn a_failure_with_nothing_landed_has_no_stdout() {
+        let outcome =
+            Landed::default().failed(Format::Text, Path::new("/nonexistent"), Error::Usage {
+                message: "boom".to_owned(),
+            });
+
+        assert!(matches!(&outcome.response.body, Body::Targets(targets) if targets.is_empty()));
+    }
+
+    #[test]
+    fn uninstall_removes_the_entry_and_tree_of_a_mod_installed_under_another_data_home() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        sandbox.write_settings(&serde_json::json!({
+            "env": {"CLAUDE_CODE_PLUGIN_DIRS": "/opt/other-mod"}
+        }));
+        sandbox.install(Format::Text);
+        let elsewhere = TempDir::new().unwrap();
+        let current_env_dir = elsewhere.path().join("lets/claude-code");
+
+        let outcome = sandbox.uninstall_from(&current_env_dir, Format::Text);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(
+            body_text(&outcome),
+            "removed the PreToolUse hook\nremoved the lets mod\n"
+        );
+        assert_eq!(
+            sandbox.settings_json(),
+            serde_json::json!({"env": {"CLAUDE_CODE_PLUGIN_DIRS": "/opt/other-mod"}})
+        );
+        assert!(!sandbox.mod_dir().exists());
+        assert!(sandbox.data.path().join("lets").is_dir());
+    }
+
+    #[test]
+    fn uninstall_keeps_an_entry_whose_plugin_json_names_another_plugin_or_is_relative() {
+        let sandbox = Sandbox::new();
+        let foreign = sandbox.data.path().join("theirs");
+        std::fs::create_dir_all(foreign.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            foreign.join(".claude-plugin/plugin.json"),
+            r#"{"name": "other"}"#,
+        )
+        .unwrap();
+        let value = format!("{}:relative/dir::", foreign.display());
+        sandbox.write_settings(&serde_json::json!({"env": {"CLAUDE_CODE_PLUGIN_DIRS": value}}));
+
+        let outcome = sandbox.uninstall(Format::Text);
+
+        assert_eq!(body_text(&outcome), "nothing to remove\n");
+        assert_eq!(
+            sandbox.settings_json()["env"]["CLAUDE_CODE_PLUGIN_DIRS"],
+            value
+        );
+        assert!(foreign.join(".claude-plugin/plugin.json").is_file());
+    }
+
+    #[test]
+    fn an_uninstall_that_cannot_remove_the_tree_is_partial_and_names_what_landed_and_what_remains()
+    {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        sandbox.install(Format::Text);
+        std::fs::write(
+            sandbox.mod_dir().join(".claude-plugin/types"),
+            "not a directory",
+        )
+        .unwrap();
+
+        let text = sandbox.uninstall(Format::Text);
+
+        assert!(
+            matches!(text.error, Some(Error::Io { .. })),
+            "{:?}",
+            text.error
+        );
+        assert_eq!(
+            body_text(&text),
+            "removed the PreToolUse hook\nremoved the lets mod from CLAUDE_CODE_PLUGIN_DIRS\nthe \
+             lets mod files were not removed\n"
+        );
+        assert_eq!(sandbox.settings_json(), serde_json::json!({}));
+        assert!(sandbox.mod_dir().join(".claude-plugin/types").exists());
+    }
+
+    #[test]
+    fn a_json_uninstall_that_cannot_remove_the_tree_reports_stable_tokens() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        sandbox.install(Format::Text);
+        std::fs::write(
+            sandbox.mod_dir().join(".claude-plugin/types"),
+            "not a directory",
+        )
+        .unwrap();
+
+        let json = sandbox.uninstall(Format::Json);
+
+        assert!(json.error.is_some());
+        assert_eq!(
+            body_text(&json),
+            "PreToolUse=removed\nmod_entry=removed\nmod_files=remaining\n"
+        );
+    }
+
+    #[test]
+    fn an_uninstall_tree_failure_with_nothing_else_landed_is_a_plain_failure() {
+        let sandbox = Sandbox::new();
+        sandbox.write_settings(&serde_json::json!({}));
+        claude_mod::write(&sandbox.mod_dir()).unwrap();
+        std::fs::write(
+            sandbox.mod_dir().join(".claude-plugin/types"),
+            "not a directory",
+        )
+        .unwrap();
+
+        let outcome = sandbox.uninstall(Format::Text);
+
+        assert!(matches!(outcome.error, Some(Error::Io { .. })));
+        assert!(matches!(&outcome.response.body, Body::Targets(targets) if targets.is_empty()));
     }
 }

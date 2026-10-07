@@ -262,7 +262,7 @@ pub fn remove_hook_entries(
 
 const PLUGIN_DIRS: &str = "CLAUDE_CODE_PLUGIN_DIRS";
 
-fn same_dir(entry: &str, dir: &str) -> bool {
+pub(crate) fn same_dir(entry: &str, dir: &str) -> bool {
     entry.trim_end_matches('/') == dir.trim_end_matches('/')
 }
 
@@ -340,13 +340,23 @@ pub fn merge_plugin_dir(settings_path: &Path, dir: &str, runtime: &Path) -> Resu
 
 /// An emptied key goes, then an emptied `env`, by the same rule as an emptied `hooks`.
 pub fn remove_plugin_dir(settings_path: &Path, dir: &str, runtime: &Path) -> Result<bool, Error> {
+    remove_plugin_dirs_where(settings_path, runtime, |entry| same_dir(entry, dir))
+        .map(|removed| !removed.is_empty())
+}
+
+/// Returns the entries dropped, in their order, so the caller can remove what they point at.
+pub fn remove_plugin_dirs_where(
+    settings_path: &Path,
+    runtime: &Path,
+    is_ours: impl Fn(&str) -> bool,
+) -> Result<Vec<String>, Error> {
     if !settings_path.exists() {
-        return Ok(false);
+        return Ok(Vec::new());
     }
     let _lock = lock::Lock::acquire(settings_path, runtime)?;
     let text = read_text(settings_path)?;
     if text.trim().is_empty() {
-        return Ok(false);
+        return Ok(Vec::new());
     }
     let root = CstRootNode::parse(&text, &parse_options())
         .map_err(|err| invalid_data(settings_path, err))?;
@@ -354,22 +364,21 @@ pub fn remove_plugin_dir(settings_path: &Path, dir: &str, runtime: &Path) -> Res
         .object_value()
         .ok_or_else(|| invalid_data(settings_path, "the top-level value is not an object"))?;
     let Some(env_prop) = top.get("env") else {
-        return Ok(false);
+        return Ok(Vec::new());
     };
     let env = env_prop
         .object_value()
         .ok_or_else(|| invalid_data(settings_path, "`env` is not an object"))?;
     let Some(prop) = env.get(PLUGIN_DIRS) else {
-        return Ok(false);
+        return Ok(Vec::new());
     };
     let existing = plugin_dirs_value(&prop, settings_path)?;
-    if !existing.split(':').any(|entry| same_dir(entry, dir)) {
-        return Ok(false);
-    }
-    let kept: Vec<&str> = existing
+    let (removed, kept): (Vec<&str>, Vec<&str>) = existing
         .split(':')
-        .filter(|entry| !same_dir(entry, dir))
-        .collect();
+        .partition(|entry| !entry.is_empty() && is_ours(entry));
+    if removed.is_empty() {
+        return Ok(Vec::new());
+    }
     if kept.iter().all(|entry| entry.is_empty()) {
         prop.remove();
         if env.properties().is_empty() {
@@ -379,7 +388,7 @@ pub fn remove_plugin_dir(settings_path: &Path, dir: &str, runtime: &Path) -> Res
         prop.set_value(CstInputValue::from(kept.join(":").as_str()));
     }
     atomic::write_atomic(settings_path, root.to_string().as_bytes(), None)?;
-    Ok(true)
+    Ok(removed.into_iter().map(str::to_owned).collect())
 }
 
 #[cfg(test)]
@@ -1071,5 +1080,88 @@ mod tests {
             assert_eq!(source.kind(), std::io::ErrorKind::InvalidData);
             assert_eq!(sandbox.text(), existing);
         }
+    }
+
+    #[test]
+    fn plugin_dir_merge_adds_the_key_when_env_exists_without_it() {
+        let sandbox = Sandbox::new(Some("{\"env\": {\"FOO\": \"bar\"}}\n"));
+
+        assert!(merge_dir(&sandbox).unwrap());
+
+        assert_eq!(
+            sandbox.json(),
+            serde_json::json!({"env": {"FOO": "bar", "CLAUDE_CODE_PLUGIN_DIRS": MOD_DIR}})
+        );
+    }
+
+    #[test]
+    fn plugin_dir_merge_over_an_empty_string_sets_the_dir_alone() {
+        let sandbox = Sandbox::new(Some("{\"env\": {\"CLAUDE_CODE_PLUGIN_DIRS\": \"\"}}\n"));
+
+        assert!(merge_dir(&sandbox).unwrap());
+
+        assert_eq!(
+            sandbox.json()["env"]["CLAUDE_CODE_PLUGIN_DIRS"],
+            MOD_DIR,
+            "an empty value must not become `:{MOD_DIR}`"
+        );
+    }
+
+    #[test]
+    fn plugin_dir_merge_with_our_entry_among_others_adds_nothing_and_keeps_the_order() {
+        let existing =
+            format!("{{\"env\": {{\"CLAUDE_CODE_PLUGIN_DIRS\": \"/opt/b:{MOD_DIR}:/opt/a\"}}}}\n");
+        let sandbox = Sandbox::new(Some(&existing));
+        let before = inode(&sandbox.path());
+
+        assert!(!merge_dir(&sandbox).unwrap());
+
+        assert_eq!(sandbox.text(), existing);
+        assert_eq!(inode(&sandbox.path()), before);
+    }
+
+    #[test]
+    fn plugin_dirs_removal_by_predicate_drops_every_matching_entry_and_reports_them() {
+        let sandbox = Sandbox::new(Some(
+            "{\"env\": {\"CLAUDE_CODE_PLUGIN_DIRS\": \"/opt/a:/mine/one:/opt/b:/mine/two\"}}\n",
+        ));
+
+        let removed = remove_plugin_dirs_where(&sandbox.path(), sandbox.runtime.path(), |entry| {
+            entry.starts_with("/mine/")
+        })
+        .unwrap();
+
+        assert_eq!(removed, ["/mine/one", "/mine/two"]);
+        assert_eq!(
+            sandbox.json()["env"]["CLAUDE_CODE_PLUGIN_DIRS"],
+            "/opt/a:/opt/b"
+        );
+    }
+
+    #[test]
+    fn plugin_dirs_removal_by_predicate_that_matches_nothing_writes_nothing() {
+        let existing = "{\"env\": {\"CLAUDE_CODE_PLUGIN_DIRS\": \"/opt/a::/opt/b\"}}\n";
+        let sandbox = Sandbox::new(Some(existing));
+        let before = inode(&sandbox.path());
+
+        let removed =
+            remove_plugin_dirs_where(&sandbox.path(), sandbox.runtime.path(), |_| false).unwrap();
+
+        assert!(removed.is_empty());
+        assert_eq!(sandbox.text(), existing);
+        assert_eq!(inode(&sandbox.path()), before);
+    }
+
+    #[test]
+    fn plugin_dirs_removal_that_empties_the_list_takes_the_key_and_an_empty_env() {
+        let sandbox = Sandbox::new(Some(
+            "{\"env\": {\"CLAUDE_CODE_PLUGIN_DIRS\": \"/opt/a::/opt/b\"}}\n",
+        ));
+
+        let removed =
+            remove_plugin_dirs_where(&sandbox.path(), sandbox.runtime.path(), |_| true).unwrap();
+
+        assert_eq!(removed, ["/opt/a", "/opt/b"]);
+        assert_eq!(sandbox.json(), serde_json::json!({}));
     }
 }

@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use crate::Outcome;
 use crate::error::Error;
@@ -8,6 +9,8 @@ use crate::output::{Body, Format, Response, UpdateCheck};
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
+const REFRESH_COMMAND: &str = "lets hooks install claude-code";
+
 fn update_text(format: Format) -> String {
     match format {
         Format::Text => "replaced with the latest release\n".to_owned(),
@@ -15,12 +18,16 @@ fn update_text(format: Format) -> String {
     }
 }
 
-fn mod_text(format: Format, changed: bool) -> &'static str {
-    match (format, changed) {
-        (Format::Text, true) => "rewrote the lets mod files\n",
-        (Format::Text, false) => "the lets mod files were unchanged\n",
-        (Format::Json | Format::Jsonl, true) => "\nmod=rewritten",
-        (Format::Json | Format::Jsonl, false) => "\nmod=unchanged",
+fn mod_text(format: Format, refreshed: Result<(), String>) -> String {
+    match (format, refreshed) {
+        (Format::Text, Ok(())) => "refreshed the lets mod\n".to_owned(),
+        (Format::Text, Err(reason)) => format!(
+            "the lets mod was not refreshed: {reason} \u{b7} run `{REFRESH_COMMAND}` to refresh it\n"
+        ),
+        (Format::Json | Format::Jsonl, Ok(())) => "\nmod=refreshed".to_owned(),
+        (Format::Json | Format::Jsonl, Err(reason)) => {
+            format!("\nmod=not_refreshed\nreason={reason}\nfix={REFRESH_COMMAND}")
+        },
     }
 }
 
@@ -31,7 +38,7 @@ pub fn run(check_only: bool, force: bool, format: Format) -> Outcome {
         update(
             format,
             force,
-            &std::env::var("PATH").unwrap_or_default(),
+            release::install_dir(&std::env::var("PATH").unwrap_or_default()),
             Path::new("curl"),
             &claude_mod::install_dir(),
         )
@@ -68,47 +75,70 @@ fn check(curl: &Path) -> Outcome {
     }
 }
 
+enum Updated {
+    Current(UpdateCheck),
+    Installed(PathBuf),
+}
+
 /// Local refusals come before the network, so a shadowed `lets` on PATH is named without waiting
 /// on GitHub. A running build newer than the latest release is never downgraded.
 fn install_unless_current(
     force: bool,
-    path_var: &str,
+    install_dir: Result<PathBuf, Error>,
     curl: &Path,
-) -> Result<Option<UpdateCheck>, Error> {
+) -> Result<Updated, Error> {
     let url = release::installer_url(REPOSITORY)?;
     release::target_triple()?;
-    let install_dir = release::install_dir(path_var)?;
+    let install_dir = install_dir?;
     if !force {
         let check = compare(curl)?;
         if !check.update_available {
-            return Ok(Some(check));
+            return Ok(Updated::Current(check));
         }
     }
     release::download_and_install(&url, &install_dir, curl)?;
-    Ok(None)
+    Ok(Updated::Installed(install_dir.join("lets")))
 }
 
-/// Writes the mod files only, never `settings.json`: a settings change is left to an explicit
-/// `hooks install`.
-fn update(format: Format, force: bool, path_var: &str, curl: &Path, mod_dir: &Path) -> Outcome {
-    match install_unless_current(force, path_var, curl) {
-        Ok(Some(check)) => reported(check),
-        Ok(None) => {
+/// This process embeds the old mod files, so the new binary rewrites them itself through
+/// `hooks install`; writing them from here would leave the previous release's mod in place.
+fn refresh_mod(binary: &Path) -> Result<(), String> {
+    let output = Command::new(binary)
+        .args(["hooks", "install", "claude-code"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("could not run {}: {error}", binary.display()))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let first_line = stderr.lines().map(str::trim).find(|line| !line.is_empty());
+    Err(match first_line {
+        Some(line) => format!("{}: {line}", output.status),
+        None => output.status.to_string(),
+    })
+}
+
+fn update(
+    format: Format,
+    force: bool,
+    install_dir: Result<PathBuf, Error>,
+    curl: &Path,
+    mod_dir: &Path,
+) -> Outcome {
+    match install_unless_current(force, install_dir, curl) {
+        Ok(Updated::Current(check)) => reported(check),
+        Ok(Updated::Installed(binary)) => {
             let mut text = update_text(format);
-            let rewritten = if mod_dir.exists() {
-                claude_mod::write(mod_dir).map(|changed| text.push_str(mod_text(format, changed)))
-            } else {
-                Ok(())
-            };
+            if claude_mod::is_ours(mod_dir) {
+                text.push_str(&mod_text(format, refresh_mod(&binary)));
+            }
             let mut response = Response::empty("update");
             response.body = Body::Raw {
                 field: "update",
                 text,
             };
-            match rewritten {
-                Ok(()) => Outcome::ok(response),
-                Err(error) => Outcome::partial(response, error),
-            }
+            Outcome::ok(response)
         },
         Err(error) => Outcome::failed("update", error),
     }
@@ -117,14 +147,22 @@ fn update(format: Format, force: bool, path_var: &str, curl: &Path, mod_dir: &Pa
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt as _;
-    use std::path::PathBuf;
 
     use tempfile::TempDir;
 
     use super::*;
     use crate::error::InstallRefusedReason;
 
-    /// Logs every call's arguments to `calls`, one per line.
+    const MOD_FILES: [&str; 5] = [
+        ".claude-plugin/plugin.json",
+        "hooks/hooks.json",
+        "hooks/register.ts",
+        "hooks/steer.ts",
+        "tsconfig.json",
+    ];
+
+    /// Logs every curl call's arguments to `calls`. The downloaded installer drops a stub `lets`
+    /// into the install directory that records its own arguments to `stub-argv`.
     struct FakeCurl {
         bin: TempDir,
         log: TempDir,
@@ -135,7 +173,6 @@ mod tests {
             let bin = TempDir::new().unwrap();
             let log = TempDir::new().unwrap();
             let calls = log.path().join("calls");
-            let ran = log.path().join("installer-ran");
             let curl = bin.path().join("curl");
             std::fs::write(
                 &curl,
@@ -143,14 +180,49 @@ mod tests {
                     "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{calls}'\ncase \"$*\" in\n*-sSI*) \
                      printf 'location: https://github.com/mayberuk/lets/releases/tag/{latest_tag}\\r\\n' \
                      ;;\n*) while [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift;; esac; \
-                     shift; done; printf 'touch %s\\n' '{ran}' > \"$out\" ;;\nesac\n",
+                     shift; done; cp '{installer}' \"$out\" ;;\nesac\n",
                     calls = calls.display(),
-                    ran = ran.display(),
+                    installer = log.path().join("installer.sh").display(),
                 ),
             )
             .unwrap();
             std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
-            FakeCurl { bin, log }
+            std::fs::create_dir(log.path().join("installed")).unwrap();
+            let fake = FakeCurl { bin, log };
+            fake.write_installer(&format!(
+                "touch '{}'\ncp '{}' \"$LETS_UNMANAGED_INSTALL/lets\"\nchmod 755 \
+                 \"$LETS_UNMANAGED_INSTALL/lets\"\n",
+                fake.log.path().join("installer-ran").display(),
+                fake.log.path().join("stub").display(),
+            ));
+            fake.write_stub(0);
+            fake
+        }
+
+        fn write_installer(&self, script: &str) {
+            std::fs::write(self.log.path().join("installer.sh"), script).unwrap();
+        }
+
+        fn write_stub(&self, exit: i32) {
+            std::fs::write(
+                self.log.path().join("stub"),
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'boom: no settings\\n' >&2\n\
+                     exit {exit}\n",
+                    self.log.path().join("stub-argv").display()
+                ),
+            )
+            .unwrap();
+        }
+
+        fn failing_installer(self) -> FakeCurl {
+            self.write_installer("exit 3\n");
+            self
+        }
+
+        fn failing_stub(self) -> FakeCurl {
+            self.write_stub(1);
+            self
         }
 
         fn curl(&self) -> PathBuf {
@@ -159,6 +231,10 @@ mod tests {
 
         fn path_var(&self) -> &str {
             self.bin.path().to_str().unwrap()
+        }
+
+        fn install_dir(&self) -> PathBuf {
+            self.log.path().join("installed")
         }
 
         fn calls(&self) -> Vec<String> {
@@ -173,6 +249,10 @@ mod tests {
             self.log.path().join("installer-ran").exists()
         }
 
+        fn stub_argv(&self) -> Option<String> {
+            std::fs::read_to_string(self.log.path().join("stub-argv")).ok()
+        }
+
         fn mod_dir(&self) -> PathBuf {
             self.log.path().join("data/lets/claude-code")
         }
@@ -183,8 +263,21 @@ mod tests {
             self
         }
 
-        fn steer_ts(&self) -> String {
-            std::fs::read_to_string(self.mod_dir().join("hooks/steer.ts")).unwrap()
+        fn mod_bytes(&self) -> Vec<Option<Vec<u8>>> {
+            MOD_FILES
+                .iter()
+                .map(|relative| std::fs::read(self.mod_dir().join(relative)).ok())
+                .collect()
+        }
+
+        fn run(&self, format: Format, force: bool) -> Outcome {
+            update(
+                format,
+                force,
+                Ok(self.install_dir()),
+                &self.curl(),
+                &self.mod_dir(),
+            )
         }
     }
 
@@ -194,6 +287,10 @@ mod tests {
         format!("v{}.{rest}", major.parse::<u64>().unwrap() + 1)
     }
 
+    fn current_tag() -> String {
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    }
+
     fn body_check(outcome: &Outcome) -> &UpdateCheck {
         match &outcome.response.body {
             Body::Update(check) => check,
@@ -201,9 +298,16 @@ mod tests {
         }
     }
 
+    fn body_text(outcome: &Outcome) -> &str {
+        match &outcome.response.body {
+            Body::Raw { text, .. } => text,
+            other => panic!("expected a raw body, got {other:?}"),
+        }
+    }
+
     #[test]
     fn check_reports_current_when_the_latest_tag_is_this_version() {
-        let fake = FakeCurl::new(&format!("v{}", env!("CARGO_PKG_VERSION")));
+        let fake = FakeCurl::new(&current_tag());
 
         let outcome = check(&fake.curl());
 
@@ -235,15 +339,9 @@ mod tests {
 
     #[test]
     fn update_when_already_current_checks_and_does_not_download() {
-        let fake = FakeCurl::new(&format!("v{}", env!("CARGO_PKG_VERSION")));
+        let fake = FakeCurl::new(&current_tag());
 
-        let outcome = update(
-            Format::Text,
-            false,
-            fake.path_var(),
-            &fake.curl(),
-            &fake.mod_dir(),
-        );
+        let outcome = fake.run(Format::Text, false);
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert!(!body_check(&outcome).update_available);
@@ -257,13 +355,7 @@ mod tests {
     fn update_when_the_running_build_is_newer_than_the_latest_does_not_downgrade() {
         let fake = FakeCurl::new("v0.0.0");
 
-        let outcome = update(
-            Format::Text,
-            false,
-            fake.path_var(),
-            &fake.curl(),
-            &fake.mod_dir(),
-        );
+        let outcome = fake.run(Format::Text, false);
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert_eq!(body_check(&outcome).latest, "0.0.0");
@@ -274,13 +366,7 @@ mod tests {
     fn update_when_a_newer_release_exists_downloads_and_runs_the_installer() {
         let fake = FakeCurl::new(&newer_than_current());
 
-        let outcome = update(
-            Format::Text,
-            false,
-            fake.path_var(),
-            &fake.curl(),
-            &fake.mod_dir(),
-        );
+        let outcome = fake.run(Format::Text, false);
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert!(fake.installer_ran());
@@ -291,15 +377,9 @@ mod tests {
 
     #[test]
     fn force_skips_the_check_and_downloads_even_when_current() {
-        let fake = FakeCurl::new(&format!("v{}", env!("CARGO_PKG_VERSION")));
+        let fake = FakeCurl::new(&current_tag());
 
-        let outcome = update(
-            Format::Text,
-            true,
-            fake.path_var(),
-            &fake.curl(),
-            &fake.mod_dir(),
-        );
+        let outcome = fake.run(Format::Text, true);
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert!(fake.installer_ran());
@@ -318,7 +398,7 @@ mod tests {
         let outcome = update(
             Format::Text,
             false,
-            fake.path_var(),
+            release::install_dir(fake.path_var()),
             &fake.curl(),
             &fake.mod_dir(),
         );
@@ -330,104 +410,193 @@ mod tests {
             })
         ));
         assert!(fake.calls().is_empty());
+        assert!(!fake.installer_ran());
     }
 
     #[test]
     fn a_malformed_latest_tag_fails_the_update_without_downloading() {
         let fake = FakeCurl::new("nightly");
 
-        let outcome = update(
-            Format::Text,
-            false,
-            fake.path_var(),
-            &fake.curl(),
-            &fake.mod_dir(),
-        );
+        let outcome = fake.run(Format::Text, false);
 
         assert!(matches!(outcome.error, Some(Error::UpdateFailed { .. })));
         assert!(!fake.installer_ran());
     }
 
-    fn body_text(outcome: &Outcome) -> &str {
-        match &outcome.response.body {
-            Body::Raw { text, .. } => text,
-            other => panic!("expected a raw body, got {other:?}"),
-        }
-    }
-
-    const EMBEDDED_STEER_TS: &str = include_str!("../../mod/hooks/steer.ts");
-
     #[test]
-    fn a_successful_update_rewrites_an_installed_mod_and_says_so() {
+    fn a_successful_update_runs_the_installed_binary_as_hooks_install_claude_code() {
         let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
 
-        let outcome = update(
-            Format::Text,
-            false,
-            fake.path_var(),
-            &fake.curl(),
-            &fake.mod_dir(),
-        );
+        let outcome = fake.run(Format::Text, false);
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert!(fake.installer_ran());
-        assert_eq!(fake.steer_ts(), EMBEDDED_STEER_TS);
+        assert_eq!(
+            fake.stub_argv().as_deref(),
+            Some("hooks install claude-code\n")
+        );
         assert_eq!(
             body_text(&outcome),
-            "replaced with the latest release\nrewrote the lets mod files\n"
+            "replaced with the latest release\nrefreshed the lets mod\n"
         );
     }
 
     #[test]
-    fn a_successful_update_with_no_mod_installed_creates_none() {
+    fn the_running_process_never_writes_the_mod_files_itself() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        let before = fake.mod_bytes();
+
+        fake.run(Format::Text, false);
+
+        assert_eq!(fake.mod_bytes(), before);
+        assert_eq!(
+            std::fs::read_to_string(fake.mod_dir().join("hooks/steer.ts")).unwrap(),
+            "stale"
+        );
+    }
+
+    #[test]
+    fn a_successful_update_touches_no_settings_file() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+        let settings = fake.log.path().join("home/.claude/settings.json");
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let planted = "{\n  // mine\n  \"model\": \"opus\"\n}\n";
+        std::fs::write(&settings, planted).unwrap();
+
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), planted);
+    }
+
+    #[test]
+    fn json_names_the_refresh_as_a_stable_token() {
+        let fake = FakeCurl::new(&newer_than_current()).with_stale_mod();
+
+        let outcome = fake.run(Format::Json, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(body_text(&outcome), "done\nmod=refreshed");
+    }
+
+    #[test]
+    fn a_successful_update_with_no_mod_installed_runs_nothing_and_creates_none() {
         let fake = FakeCurl::new(&newer_than_current());
 
-        let outcome = update(
-            Format::Json,
-            false,
-            fake.path_var(),
-            &fake.curl(),
-            &fake.mod_dir(),
-        );
+        let outcome = fake.run(Format::Json, false);
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert!(fake.installer_ran());
+        assert!(fake.stub_argv().is_none());
         assert!(!fake.mod_dir().exists());
         assert!(!fake.log.path().join("data").exists());
         assert_eq!(body_text(&outcome), "done");
     }
 
     #[test]
-    fn a_failed_update_leaves_the_mod_files_untouched() {
-        let fake = FakeCurl::new("nightly").with_stale_mod();
+    fn a_mod_directory_that_is_not_ours_is_left_alone_and_the_stub_does_not_run() {
+        let fake = FakeCurl::new(&newer_than_current());
+        let manifest = fake.mod_dir().join(".claude-plugin/plugin.json");
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(&manifest, r#"{"name": "other"}"#).unwrap();
 
-        let outcome = update(
-            Format::Text,
-            false,
-            fake.path_var(),
-            &fake.curl(),
-            &fake.mod_dir(),
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(fake.stub_argv().is_none());
+        assert_eq!(body_text(&outcome), "replaced with the latest release\n");
+    }
+
+    #[test]
+    fn an_empty_mod_directory_does_not_run_the_stub() {
+        let fake = FakeCurl::new(&newer_than_current());
+        std::fs::create_dir_all(fake.mod_dir()).unwrap();
+
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(fake.stub_argv().is_none());
+    }
+
+    #[test]
+    fn a_failing_refresh_keeps_the_update_successful_and_names_the_fix() {
+        let fake = FakeCurl::new(&newer_than_current())
+            .with_stale_mod()
+            .failing_stub();
+
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(
+            fake.stub_argv().as_deref(),
+            Some("hooks install claude-code\n")
         );
+        let text = body_text(&outcome);
+        assert!(
+            text.starts_with("replaced with the latest release\n"),
+            "{text}"
+        );
+        assert!(text.contains("the lets mod was not refreshed"), "{text}");
+        assert!(text.contains("boom: no settings"), "{text}");
+        assert!(text.contains("`lets hooks install claude-code`"), "{text}");
+        assert!(!text.contains("refreshed the lets mod\n"), "{text}");
+    }
+
+    #[test]
+    fn a_failing_refresh_in_json_carries_the_fix_token() {
+        let fake = FakeCurl::new(&newer_than_current())
+            .with_stale_mod()
+            .failing_stub();
+
+        let outcome = fake.run(Format::Json, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        let text = body_text(&outcome);
+        assert!(text.contains("mod=not_refreshed"), "{text}");
+        assert!(
+            text.contains("fix=lets hooks install claude-code"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn an_installer_that_exits_nonzero_never_runs_the_stub_and_leaves_every_mod_file_alone() {
+        let fake = FakeCurl::new(&newer_than_current())
+            .with_stale_mod()
+            .failing_installer();
+        let before = fake.mod_bytes();
+
+        let outcome = fake.run(Format::Text, false);
 
         assert!(matches!(outcome.error, Some(Error::UpdateFailed { .. })));
+        assert!(fake.stub_argv().is_none());
         assert!(!fake.installer_ran());
-        assert_eq!(fake.steer_ts(), "stale");
+        assert_eq!(fake.mod_bytes(), before);
+        assert!(before.iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn a_failed_update_leaves_the_mod_files_untouched() {
+        let fake = FakeCurl::new("nightly").with_stale_mod();
+        let before = fake.mod_bytes();
+
+        let outcome = fake.run(Format::Text, false);
+
+        assert!(matches!(outcome.error, Some(Error::UpdateFailed { .. })));
+        assert!(fake.stub_argv().is_none());
+        assert_eq!(fake.mod_bytes(), before);
     }
 
     #[test]
     fn an_update_skipped_as_current_leaves_the_mod_files_untouched() {
-        let fake = FakeCurl::new(&format!("v{}", env!("CARGO_PKG_VERSION"))).with_stale_mod();
+        let fake = FakeCurl::new(&current_tag()).with_stale_mod();
+        let before = fake.mod_bytes();
 
-        let outcome = update(
-            Format::Text,
-            false,
-            fake.path_var(),
-            &fake.curl(),
-            &fake.mod_dir(),
-        );
+        let outcome = fake.run(Format::Text, false);
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert!(!fake.installer_ran());
-        assert_eq!(fake.steer_ts(), "stale");
+        assert!(fake.stub_argv().is_none());
+        assert_eq!(fake.mod_bytes(), before);
     }
 }
