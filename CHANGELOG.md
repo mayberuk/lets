@@ -6,6 +6,36 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-10-07
+
+### Fixed
+
+- The Claude Code mod now steers the lean prompt Claude Code serves Opus. That prompt's Bash
+  description has no "avoid `cat`" paragraph, so in 0.0.4 the lets table never reached the model.
+  The table now goes after the description's first paragraph whenever that paragraph is missing.
+  The lean "Prefer the dedicated file/search tools" sentence is dropped as well.
+- The mod remembers a change refused at a permission prompt or by a permission rule, not only one
+  refused by auto mode. It keeps refusals per session, so `/clear` starts afresh, and it keeps
+  other hooks' input changes when it drops its own.
+- The installed classify guard exits 0 and prints nothing unless `lets` itself succeeds. Before,
+  a `lets` exiting 2 blocked every Bash call.
+- `lets hooks install codex` merges its entries and retires old ones in one write, so a failed
+  install leaves the file untouched.
+- The hook rewrites a command only into one with the same output and exit status. Otherwise the
+  command runs as typed:
+  - rg's `\|` stays a literal pipe.
+  - `sed -i` on a symlink, a search naming a missing file, and bare `tail` all run as typed.
+  - Bare `head f` becomes `lets show f:1-10`.
+  - `rg -A`/`-B` keep their direction.
+- A search with no path, or of a directory that a Read deny or ask rule could reach inside, runs as
+  typed. settings.json written as JSONC is read rather than ignored.
+
+### Upgrading
+
+- After `lets update`, run `lets hooks install claude-code`, and `lets hooks install codex` if
+  you use Codex. This writes the new guard. Codex asks you to approve the changed hook, and until
+  you do it skips the hook rather than blocking.
+
 ## [0.0.4] - 2026-10-06
 
 ### Added

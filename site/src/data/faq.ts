@@ -21,6 +21,6 @@ export const faq: { q: string; a: string }[] = [
   },
   {
     q: 'What platforms and licence?',
-    a: 'Linux and macOS, as one static binary. MIT or Apache-2.0, your choice. Version 0.0.4.',
+    a: 'Linux and macOS, as one static binary. MIT or Apache-2.0, your choice. Version 0.0.5.',
   },
 ];
