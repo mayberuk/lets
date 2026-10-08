@@ -6,6 +6,21 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-10-08
+
+### Fixed
+
+- In bypass and auto mode, Claude Code attaches a message telling the model to read files with
+  `cat`, `head` or `sed -n` and to edit with `sed` or heredocs. The mod now rewrites that clause to
+  point at `lets` and keeps the rest of the message. With 0.0.5, agents still typed `lets` for
+  almost no reads.
+- `lets show` and `lets find` accept `--max-lines N` as another name for `--head N`. Codex reached
+  for it on its own.
+
+### Upgrading
+
+- `lets update` refreshes the mod. Start a new Claude Code session to pick it up.
+
 ## [0.0.5] - 2026-10-07
 
 ### Fixed
