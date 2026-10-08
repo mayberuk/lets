@@ -1,6 +1,14 @@
 import type { EngineInterface, Register, ToolCallResult } from 'claude-code';
 
-import { decide, dropPreferDedicatedTools, rewriteBashDescription, singleRun, VERSION, type Decision } from './steer';
+import {
+  decide,
+  dropPreferDedicatedTools,
+  rewriteBashDescription,
+  rewriteBashFirstSteer,
+  singleRun,
+  VERSION,
+  type Decision,
+} from './steer';
 
 const CLASSIFY_TIMEOUT_MS = 5000;
 const VERSION_TIMEOUT_MS = 2000;
@@ -62,6 +70,18 @@ export const register: Register = (on) => {
       return { ...section, text };
     });
     return changed ? { ...r, sections } : r;
+  }).catch(($, e, next) => next(e));
+
+  on('session.append', { door: 'attachment' }, async ($, e, next) => {
+    let changed = false;
+    const content = e.message.content.map((block) => {
+      if (block.type !== 'text') return block;
+      const text = rewriteBashFirstSteer(block.text);
+      if (text === block.text) return block;
+      changed = true;
+      return { ...block, text };
+    });
+    return next(changed ? { ...e, message: { ...e.message, content } } : e);
   }).catch(($, e, next) => next(e));
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {

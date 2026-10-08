@@ -34,6 +34,15 @@ export function dropPreferDedicatedTools(text: string): string {
     );
 }
 
+const BASH_FIRST_CLAUSE =
+  /read files with cat, head, or sed -n, search with grep and find, and make (?:small, mechanical )?file changes with sed, heredocs, or short scripts/g;
+const LETS_CLAUSE = 'read, search and edit files with `lets` (the table in its description)';
+
+/** Points the clause of Claude Code's bypass and auto mode attachment that names cat, sed -n and heredocs at lets instead. */
+export function rewriteBashFirstSteer(text: string): string {
+  return text.replace(BASH_FIRST_CLAUSE, LETS_CLAUSE);
+}
+
 export type Decision =
   | { kind: 'pass' }
   | { kind: 'rewrite'; command: string }
