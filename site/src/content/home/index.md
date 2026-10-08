@@ -198,7 +198,7 @@ $ curl -fsSL https://raw.githubusercontent.com/mayberuk/lets/main/install.sh | s
 $ lets hooks install claude-code
 ```
 
-Linux and macOS. MIT or Apache-2.0. Version 0.0.5. Repo:
+Linux and macOS. MIT or Apache-2.0. Version 0.0.6. Repo:
 [github.com/mayberuk/lets](https://github.com/mayberuk/lets).
 
 ---

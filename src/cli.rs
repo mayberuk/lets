@@ -197,7 +197,7 @@ pub enum Verb {
 #[allow(clippy::struct_excessive_bools)]
 pub struct ShowArgs {
     /// Print the first N output lines, target headers included; the footer names the cut
-    #[arg(long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    #[arg(long, alias = "max-lines", value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     pub head: Option<usize>,
     // Unlike edit/transform, `show` has no `--from -` batch form to stand in for targets.
     #[arg(required = true)]
@@ -241,7 +241,7 @@ fn glob_order(sub: &ArgMatches, globs: Vec<String>, excludes: Vec<String>) -> Ve
 #[allow(clippy::struct_excessive_bools)]
 pub struct FindArgs {
     /// Print the first N output lines of the search; the footer names the cut
-    #[arg(long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    #[arg(long, alias = "max-lines", value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     pub head: Option<usize>,
     pub pattern: String,
     pub paths: Vec<String>,
@@ -742,6 +742,34 @@ mod tests {
             };
             assert_eq!(head, Some(1));
         }
+    }
+
+    #[test]
+    fn max_lines_is_the_head_cap_codex_reaches_for_on_both_verbs() {
+        for verb in ["show", "find"] {
+            let cli = Cli::try_parse_from(["lets", verb, "a", "--max-lines", "460"]).unwrap();
+            let head = match cli.verb {
+                Verb::Show(args) => args.head,
+                Verb::Find(args) => args.head,
+                _ => unreachable!(),
+            };
+            assert_eq!(head, Some(460));
+            assert!(Cli::try_parse_from(["lets", verb, "a", "--max-lines", "0"]).is_err());
+        }
+        assert!(
+            Cli::try_parse_from([
+                "lets",
+                "edit",
+                "a",
+                "--old",
+                "x",
+                "--new",
+                "y",
+                "--max-lines",
+                "3"
+            ])
+            .is_err()
+        );
     }
 
     fn find(words: &[&str]) -> FindArgs {

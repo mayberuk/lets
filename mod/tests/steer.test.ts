@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing';
 
-import { decide, dropPreferDedicatedTools, LETS_TABLE, rewriteBashDescription } from '../hooks/steer';
+import { decide, dropPreferDedicatedTools, LETS_TABLE, rewriteBashDescription, rewriteBashFirstSteer } from '../hooks/steer';
 
 const BEFORE =
   'Executes a given bash command and returns its output.\n\nThe working directory persists between commands, but shell state does not. The shell environment is initialized from the user\'s profile (bash or zsh).\n\n';
@@ -95,6 +95,34 @@ describe('dropPreferDedicatedTools', () => {
     const quoted = '# Notes\n - Someone wrote " - Prefer dedicated tools over Bash" here.\n';
 
     expect(dropPreferDedicatedTools(quoted)).toBe(quoted);
+  });
+});
+
+const STRICT_STEER =
+  'Do your work through the Bash tool wherever it can accomplish the job: read files with cat, head, or sed -n, search with grep and find, and make file changes with sed, heredocs, or short scripts, rather than using the dedicated Read, Edit, or Write tools. Fall back to a dedicated tool only when Bash genuinely cannot do the job.';
+const RELAXED_STEER =
+  'You can do much of your work through the Bash tool when it is the simpler route: read files with cat, head, or sed -n, search with grep and find, and make small, mechanical file changes with sed, heredocs, or short scripts instead of the dedicated Read, Edit, or Write tools. The choice is yours: prefer Edit or Write when a shell edit would be fragile, such as exact or multi-line replacements, or sed/awk flags that differ between GNU and BSD/macOS.';
+
+describe('rewriteBashFirstSteer', () => {
+  test('points the strict bypass steer at lets and keeps the rest of it', () => {
+    expect(rewriteBashFirstSteer(`While bypass permissions mode is active:\n\n${STRICT_STEER}`)).toBe(
+      'While bypass permissions mode is active:\n\nDo your work through the Bash tool wherever it can accomplish the job: read, search and edit files with `lets` (the table in its description), rather than using the dedicated Read, Edit, or Write tools. Fall back to a dedicated tool only when Bash genuinely cannot do the job.',
+    );
+  });
+
+  test('points the relaxed steer at lets and keeps its choice sentence', () => {
+    const rewritten = rewriteBashFirstSteer(RELAXED_STEER);
+
+    expect(rewritten).toBe(
+      'You can do much of your work through the Bash tool when it is the simpler route: read, search and edit files with `lets` (the table in its description) instead of the dedicated Read, Edit, or Write tools. The choice is yours: prefer Edit or Write when a shell edit would be fragile, such as exact or multi-line replacements, or sed/awk flags that differ between GNU and BSD/macOS.',
+    );
+    expect(rewritten).not.toContain('sed -n');
+  });
+
+  test('leaves text without the clause byte-identical', () => {
+    const other = 'Bias toward working without stopping for clarifying questions. Read files with care.';
+
+    expect(rewriteBashFirstSteer(other)).toBe(other);
   });
 });
 

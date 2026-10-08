@@ -509,3 +509,31 @@ describe('prompt.compose', () => {
     expect(r.sections).toEqual(sections);
   });
 });
+
+const BYPASS_STEER =
+  'While bypass permissions mode is active:\n\nYou can do much of your work through the Bash tool when it is the simpler route: read files with cat, head, or sed -n, search with grep and find, and make small, mechanical file changes with sed, heredocs, or short scripts instead of the dedicated Read, Edit, or Write tools.';
+const attachment = (text: string) => ({
+  message: { type: 'attachment', name: 'auto_mode', role: 'user', isMeta: true, content: [{ type: 'text', text }] },
+  door: 'attachment',
+  origin: { kind: 'engine' },
+  uuid: 'row-1',
+}) as const;
+
+const textOf = (r: { message?: { content: { type: string; text?: string }[] } }) =>
+  (r.message?.content ?? []).map((b) => (b.type === 'text' ? b.text : '')).join('');
+
+describe('session.append', () => {
+  test('the bypass mode attachment is stored pointing at lets, not cat and sed -n', async ($) => {
+    const r = await $.session.append(attachment(BYPASS_STEER));
+
+    expect(textOf(r)).toBe(
+      'While bypass permissions mode is active:\n\nYou can do much of your work through the Bash tool when it is the simpler route: read, search and edit files with `lets` (the table in its description) instead of the dedicated Read, Edit, or Write tools.',
+    );
+  });
+
+  test('another attachment is stored as it came', async ($) => {
+    const r = await $.session.append(attachment('Plan mode is active. Read files with cat if you must.'));
+
+    expect(textOf(r)).toBe('Plan mode is active. Read files with cat if you must.');
+  });
+});
