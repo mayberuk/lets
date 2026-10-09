@@ -1,4 +1,4 @@
-export const VERSION = "0.0.7";
+export const VERSION = "0.0.8";
 export const LETS_TABLE = "# File work: use `lets` through Bash\n\n| Instead of | Run |\n|---|---|\n| several `cat`/`sed -n`/`grep` calls, Read | `lets show a.ts b.ts:10-40 c.ts#computeFee` |\n| `sed -i 's/a/b/'`, Edit | `lets edit f.ts --old a --new b` |\n| edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |\n| `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |\n\nSeveral edits and the build in one call; each `old` is exact text that occurs once:\n\n```\nlets edit --from - --check @auto <<'LETS'\n@@ a.ts\n<<<<<<< old\ncap = 10\n======= new\ncap = 20\n>>>>>>>\n<<<<<<< old\nfloor = 1\n======= new\nfloor = 2\n>>>>>>>\nLETS\n```\n\nFor the first lines only, pass `--head N` to `lets show` or `lets find` instead of piping to `head`: the footer still names the cut. Do not add `2>/dev/null`: it hides the fix. Keep Read for images and PDFs; use plain Bash for anything else that is not reading, searching or editing files.";
 
 const BASH_STEER_START = 'IMPORTANT: Avoid using this tool to run `cat`';
