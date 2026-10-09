@@ -5334,7 +5334,14 @@ mod tests {
     #[test]
     fn a_cd_where_no_ancestor_holds_git_bounds_reads_by_that_directory() {
         let tree = tree();
-        let outside = TempDir::new().expect("a directory outside the tree");
+        // A running Codex sandbox mounts over `/tmp/.git`; its `/dev` is private to it.
+        let shm = Path::new("/dev/shm");
+        let outside = if shm.is_dir() {
+            TempDir::new_in(shm)
+        } else {
+            TempDir::new()
+        }
+        .expect("a directory outside the tree");
         assert!(
             outside
                 .path()
