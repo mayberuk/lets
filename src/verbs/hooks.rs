@@ -819,9 +819,16 @@ mod tests {
 
     #[test]
     fn the_subagent_start_hook_prints_the_documented_output_shape_with_the_paragraph() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = TempDir::new().unwrap();
+        let lets = dir.path().join("lets");
+        std::fs::write(&lets, b"#!/bin/sh\nexit 9\n").unwrap();
+        std::fs::set_permissions(&lets, std::fs::Permissions::from_mode(0o755)).unwrap();
+
         let out = std::process::Command::new("/bin/sh")
             .arg("-c")
             .arg(subagent_start_command())
+            .env("PATH", dir.path())
             .output()
             .unwrap();
 
