@@ -1,0 +1,8 @@
+COMMAND
+cd checkouts/wt/apps/ui/src && sed -n 2,3p daemon-indicator.test.tsx
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: cd checkouts/wt/apps/ui/src && lets show daemon-indicator.test.tsx:2-3 --no-header --no-numbers
+===END===
+COMPARE read

@@ -1,0 +1,9 @@
+CWD checkouts/main
+COMMAND
+cd ../wt && cat apps/ui/src/daemon-indicator.test.tsx
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: cd ../wt && lets show apps/ui/src/daemon-indicator.test.tsx --all --no-header --no-numbers
+===END===
+COMPARE read

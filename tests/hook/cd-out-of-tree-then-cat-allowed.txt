@@ -1,4 +1,5 @@
+CWD checkouts/main
 COMMAND
-cd /etc && cat passwd
+cd ../wt && cat ../main/m.ts
 ===END===
 VERDICT allow

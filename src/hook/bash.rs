@@ -119,8 +119,9 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
     let top = top_level_statements(root);
     let mut changes = Vec::new();
     directory_changes(root, command, &mut changes);
-    let (base, cd, statements) = match changes.as_slice() {
+    let (bound, base, cd, statements) = match changes.as_slice() {
         [] => (
+            cwd.clone(),
             cwd.clone(),
             None,
             top.into_iter().map(Statement::displayed).collect(),
@@ -132,7 +133,7 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
         _ => return Verdict::Allow,
     };
     let dirs = Dirs {
-        root: &cwd,
+        root: &bound,
         base: &base,
     };
 
@@ -146,7 +147,7 @@ pub fn classify_command(command: &str, cwd: &str, claude_code: Option<&Sources>)
     }
     let (notes, prefix) = notes(cd, &findings);
     if let Some(sources) = claude_code
-        && left_to_claude_code(&findings, dirs, sources)
+        && left_to_claude_code(&findings, dirs, &cwd, sources)
     {
         return Verdict::Allow;
     }
@@ -567,7 +568,8 @@ fn splice(src: &str, replacements: &[Replacement]) -> Option<String> {
     Some(spliced)
 }
 
-/// `base` is where operands resolve, after a leading `cd`; `root`, the event's cwd, bounds them.
+/// `base` is where operands resolve, after a leading `cd`; `root` bounds them: the event's cwd, or
+/// the tree `lets` bounds by after a `cd` that leaves it or enters a nested checkout.
 #[derive(Clone, Copy)]
 struct Dirs<'a> {
     root: &'a Path,
@@ -590,12 +592,10 @@ impl<'t> Statement<'t> {
     }
 }
 
-fn leading_cd<'t>(
-    cd: Node<'t>,
-    top: &[Node<'t>],
-    src: &str,
-    cwd: &Path,
-) -> Option<(PathBuf, Option<String>, Vec<Statement<'t>>)> {
+type Start<'t> = (PathBuf, PathBuf, Option<String>, Vec<Statement<'t>>);
+
+/// The root, the base, the `cd` as the prefix keeps it, and the statements after it.
+fn leading_cd<'t>(cd: Node<'t>, top: &[Node<'t>], src: &str, cwd: &Path) -> Option<Start<'t>> {
     let (first, later) = top.split_first()?;
     let mut statements = Vec::new();
     if *first != cd {
@@ -639,16 +639,22 @@ fn leading_cd<'t>(
         return None;
     }
     let base = normalize(&cwd.join(&operand.text));
-    if !base.starts_with(cwd) {
-        return None;
-    }
+    let prefix = Some(shell_quote(&operand.text));
     // `cd` follows a symlink, so where the reads then happen is decided on the real directory.
-    if let Ok(real) = std::fs::canonicalize(&base)
-        && !std::fs::canonicalize(cwd).is_ok_and(|root| real.starts_with(root))
-    {
-        return None;
+    let Ok(real) = std::fs::canonicalize(&base) else {
+        return base
+            .starts_with(cwd)
+            .then(|| (cwd.to_path_buf(), base, prefix, statements));
+    };
+    let real_cwd = std::fs::canonicalize(cwd).ok()?;
+    // `lets` bounds every path by the checkout holding its cwd, so after the `cd` that is the
+    // tree a rewrite's paths must stay in.
+    let tree = crate::fs::tree_root_of(&real);
+    let nested = tree.starts_with(&real_cwd) && tree != real_cwd;
+    if base.starts_with(cwd) && real.starts_with(&real_cwd) && !nested {
+        return Some((cwd.to_path_buf(), base, prefix, statements));
     }
-    Some((base, Some(shell_quote(&operand.text)), statements))
+    Some((tree, real, prefix, statements))
 }
 
 /// `&&`, `;` or a newline: the next statement runs after this one, as a rewrite's one call would.
@@ -960,9 +966,11 @@ fn rewritable_match(path: &Path, dirs: Dirs) -> bool {
 }
 
 /// True when a path a finding names is one Claude Code's own deny or ask rules cover, or when those
-/// rules cannot be read: the original command then goes to Claude Code as it was typed.
-fn left_to_claude_code(findings: &[Finding], dirs: Dirs, sources: &Sources) -> bool {
-    let Some(rules) = Rules::load(sources, dirs.root) else {
+/// rules cannot be read: the original command then goes to Claude Code as it was typed. After a
+/// `cd` to another tree the rules load at both: whether Claude Code anchors a relative rule at the
+/// event's cwd or at the `cd` target is not documented, and either may bind.
+fn left_to_claude_code(findings: &[Finding], dirs: Dirs, cwd: &Path, sources: &Sources) -> bool {
+    let Some(rules) = Rules::load(sources, &[cwd, dirs.root]) else {
         return true;
     };
     if rules.is_empty() {
@@ -3413,7 +3421,6 @@ mod tests {
     #[test]
     fn a_read_outside_the_tree_is_left_to_claude_codes_own_rules() {
         assert_eq!(claude_code("cat ~/.ssh/id_rsa"), Verdict::Allow);
-        assert_eq!(claude_code("cd /etc && cat passwd"), Verdict::Allow);
         assert_eq!(claude_code("cat ../other/src/a.ts"), Verdict::Allow);
     }
 
@@ -4051,15 +4058,13 @@ mod tests {
         std::os::unix::fs::symlink("a.ts", tree.path().join("src/alias.ts"))
             .expect("an in-tree symlink");
 
+        // `cd` lands on the real directory, whose own tree `lets` then bounds by.
         assert_eq!(
-            rewrite_in(&tree, "cd etclink && cat hostname"),
-            Verdict::Allow
-        );
-        assert_eq!(
-            classify_command("cd etclink && cat hostname", cwd(&tree), None),
-            Verdict::Allow
+            command_of(rewrite_in(&tree, "cd etclink && cat hostname")),
+            "cd etclink && lets show hostname --all --no-header --no-numbers"
         );
         for command in [
+            "cd etclink && cat ../a.ts",
             "cat etclink/hostname",
             "cat src/cfg",
             "grep -n host etclink/hostname",
@@ -5219,10 +5224,201 @@ mod tests {
     }
 
     #[test]
-    fn a_cd_that_leaves_the_tree_allows() {
-        assert_allowed("cd /tmp && cat a.ts");
-        assert_allowed("cd .. && cat notes.md");
+    fn a_read_that_leaves_the_tree_after_a_cd_inside_it_allows() {
         assert_allowed("cd src && cat ../../notes.md");
+    }
+
+    /// `main` is the event's cwd and `wt` a worktree beside it, as `git worktree add ../wt` leaves
+    /// them.
+    fn checkouts() -> TempDir {
+        let parent = TempDir::new().expect("a temp parent of two checkouts");
+        write(&parent, "main/m.ts", "x\n");
+        write(&parent, "main/.git/HEAD", "ref: refs/heads/main\n");
+        write(&parent, "wt/.git", "gitdir: ../main/.git/worktrees/wt\n");
+        write(&parent, "wt/apps/src/f.ts", "a\nb\nc\n");
+        parent
+    }
+
+    fn rewrite_to(command: &str) -> Verdict {
+        Verdict::Rewrite {
+            command: command.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_cd_into_another_checkout_gets_the_verdict_a_cwd_there_gets() {
+        let parent = checkouts();
+        let main = parent.path().join("main");
+        let main = main.to_str().expect("a utf-8 temp path");
+        let src = parent.path().join("wt/apps/src");
+        let src = src.to_str().expect("a utf-8 temp path");
+        let wt = parent.path().join("wt");
+        for (cd, there, read, replacement) in [
+            (
+                "../wt/apps/src",
+                src,
+                "sed -n 1,2p f.ts",
+                "lets show f.ts:1-2 --no-header --no-numbers",
+            ),
+            (
+                "../wt/apps/src",
+                src,
+                "cat f.ts",
+                "lets show f.ts --all --no-header --no-numbers",
+            ),
+            (
+                "../wt/apps/src",
+                src,
+                "head -n 2 f.ts",
+                "lets show f.ts:1-2 --no-header --no-numbers",
+            ),
+            (
+                "../wt",
+                wt.to_str().expect("a utf-8 temp path"),
+                "grep -n b apps/src/f.ts",
+                "lets find 'b' apps/src/f.ts",
+            ),
+            (
+                src,
+                src,
+                "cat f.ts",
+                "lets show f.ts --all --no-header --no-numbers",
+            ),
+        ] {
+            let command = format!("cd {cd} && {read}");
+            assert_eq!(
+                classify_command(read, there, None),
+                rewrite_to(replacement),
+                "{read} in {there}"
+            );
+            assert_eq!(
+                classify_command(&command, main, None),
+                rewrite_to(&format!("cd {cd} && {replacement}")),
+                "{command}"
+            );
+        }
+        assert!(
+            blocked_in(main, "cd ../wt/apps/src && sed -i 's/b/z/g' f.ts")
+                .ends_with("\nrun: cd ../wt/apps/src && lets edit f.ts --old 'b' --new 'z' --all")
+        );
+    }
+
+    fn blocked_in(cwd: &str, command: &str) -> String {
+        match classify_command(command, cwd, None) {
+            Verdict::Block { reason } => reason,
+            other => panic!("{command:?} was not blocked: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_read_leaving_the_checkout_a_cd_moved_to_or_a_cd_that_does_not_resolve_runs_as_typed() {
+        let parent = checkouts();
+        let main = parent.path().join("main");
+        let main = main.to_str().expect("a utf-8 temp path");
+        for command in [
+            "cd ../wt && cat ../main/m.ts",
+            "cd ../wt/apps && cat ../../main/m.ts",
+            "cd ../wt && sed -i 's/x/z/g' ../main/m.ts",
+            "cd ../wt/absent && cat f.ts",
+            "cat ../wt/apps/src/f.ts",
+            "cat m.ts && cd ../wt && cat apps/src/f.ts",
+        ] {
+            assert_eq!(
+                classify_command(command, main, None),
+                Verdict::Allow,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cd_where_no_ancestor_holds_git_bounds_reads_by_that_directory() {
+        let tree = tree();
+        let outside = TempDir::new().expect("a directory outside the tree");
+        assert!(
+            outside
+                .path()
+                .ancestors()
+                .all(|dir| !dir.join(".git").exists()),
+            "the temp root must sit outside every git checkout"
+        );
+        write(&outside, "sub/o.txt", "x\n");
+        write(&outside, "top.txt", "x\n");
+        let sub = outside.path().join("sub");
+        let sub = sub.to_str().expect("a utf-8 temp path");
+
+        assert_eq!(
+            classify_command(&format!("cd {sub} && cat o.txt"), cwd(&tree), None),
+            rewrite_to(&format!(
+                "cd {sub} && lets show o.txt --all --no-header --no-numbers"
+            ))
+        );
+        assert_eq!(
+            classify_command(&format!("cd {sub} && cat ../top.txt"), cwd(&tree), None),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn a_cd_into_a_checkout_nested_in_the_tree_bounds_reads_by_that_checkout() {
+        let tree = tree();
+        write(&tree, "vendor/lib/.git", "gitdir: ../../.git/modules/lib\n");
+        write(&tree, "vendor/lib/x.ts", "x\n");
+
+        assert_eq!(
+            classify_command("cd vendor/lib && cat x.ts", cwd(&tree), None),
+            rewrite_to("cd vendor/lib && lets show x.ts --all --no-header --no-numbers")
+        );
+        assert_eq!(
+            classify_command("cd vendor/lib && cat ../../notes.md", cwd(&tree), None),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn a_deny_rule_at_the_event_cwd_or_in_the_checkout_a_cd_moved_to_still_binds() {
+        let parent = checkouts();
+        write(
+            &parent,
+            "main/.claude/settings.json",
+            r#"{"permissions":{"deny":["Read(/private/**)","Read(drafts/**)"]}}"#,
+        );
+        write(
+            &parent,
+            "wt/.claude/settings.json",
+            r#"{"permissions":{"deny":["Read(/locked/**)"]}}"#,
+        );
+        for file in ["private/p.txt", "drafts/d.txt", "locked/k.txt"] {
+            write(&parent, &format!("wt/{file}"), "x\n");
+        }
+        let main = parent.path().join("main");
+        let sources = Sources {
+            home: Some(parent.path().join(".home")),
+            config: None,
+            project: Some(main.clone()),
+            managed: parent.path().join(".managed"),
+        };
+        let main = main.to_str().expect("a utf-8 temp path");
+
+        for file in ["private/p.txt", "drafts/d.txt", "locked/k.txt"] {
+            let command = format!("cd ../wt && cat {file}");
+            assert_eq!(
+                classify_command(&command, main, Some(&sources)),
+                Verdict::Allow,
+                "{command}"
+            );
+            assert_eq!(
+                classify_command(&command, main, None),
+                rewrite_to(&format!(
+                    "cd ../wt && lets show {file} --all --no-header --no-numbers"
+                )),
+                "{command} on Codex, which reads no Claude Code rules"
+            );
+        }
+        assert_eq!(
+            classify_command("cd ../wt && cat apps/src/f.ts", main, Some(&sources)),
+            rewrite_to("cd ../wt && lets show apps/src/f.ts --all --no-header --no-numbers")
+        );
     }
 
     #[test]

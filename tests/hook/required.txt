@@ -36,6 +36,16 @@ cd-then-grep-rewritten
 cd-then-heredoc-rewritten
 cd-then-sed-i-blocked
 cd-variable-allowed
+cd-other-checkout-sed-range-rewritten
+cd-other-checkout-cat-rewritten
+cd-other-checkout-head-rewritten
+cd-other-checkout-grep-rewritten
+cd-other-checkout-rg-rewritten
+cd-other-checkout-sed-i-blocked
+cd-other-checkout-cwd-rule-left-to-claude-code-allowed
+cd-other-checkout-own-rule-left-to-claude-code-allowed
+cd-nested-checkout-then-parent-allowed
+cd-nested-checkout-then-sed-range-rewritten
 chain-cat-n-then-bare-cat-rewritten
 chain-cat-n-then-grep-rewritten
 chain-cat-redirect-then-ls-allowed

@@ -1,7 +1,5 @@
 CWD checkouts/main
 COMMAND
-cd ../absent && cat > a.txt <<'EOT'
-x
-EOT
+cd ../wt && cat locked/k.txt
 ===END===
 VERDICT allow
