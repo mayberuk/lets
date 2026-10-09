@@ -1,4 +1,5 @@
+CWD checkouts/main
 COMMAND
-cd /tmp && cat a.ts
+cd ../wt && cat ../../notes.md
 ===END===
 VERDICT allow

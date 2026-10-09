@@ -1,0 +1,10 @@
+CWD checkouts/main
+COMMAND
+cd ../wt/apps/ui/src && sed -i 's/stopped/halted/g' daemon-indicator.test.tsx
+===END===
+VERDICT block
+REASON `cd ../wt/apps/ui/src` kept; lets edit replaces the exact text and shows the changed lines.
+REPLACEMENT
+run: cd ../wt/apps/ui/src && lets edit daemon-indicator.test.tsx --old 'stopped' --new 'halted' --all
+===END===
+COMPARE write

@@ -238,7 +238,7 @@ mod tests {
             std::fs::write(
                 self.log.path().join("stub"),
                 format!(
-                    "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'removed the SessionStart \
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'added the SessionStart \
                      hook\\n'\nprintf 'boom: no settings\\n' >&2\nexit {exit}\n",
                     self.log.path().join("stub-argv").display()
                 ),
@@ -494,7 +494,7 @@ mod tests {
         );
         assert_eq!(
             body_text(&outcome),
-            "replaced with the latest release\nrefreshed the lets mod\nremoved the SessionStart \
+            "replaced with the latest release\nrefreshed the lets mod\nadded the SessionStart \
              hook\n"
         );
     }
@@ -533,7 +533,7 @@ mod tests {
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert_eq!(
             body_text(&outcome),
-            "done\nmod=refreshed\nremoved the SessionStart hook"
+            "done\nmod=refreshed\nadded the SessionStart hook"
         );
         assert_eq!(
             fake.stub_argv().as_deref(),

@@ -1,0 +1,4 @@
+COMMAND
+cd checkouts/wt && cat ../main/m.ts
+===END===
+VERDICT allow

@@ -127,6 +127,8 @@ enum Expected {
 }
 
 struct Case {
+    /// The event's `cwd`, relative to the tree; the original and its replacement run there too.
+    cwd: Option<String>,
     command: String,
     expected: Expected,
     xfail: bool,
@@ -150,7 +152,13 @@ fn hook_tree() -> Sandbox {
 fn copy_tree(source: &Path, target: &Path) {
     for entry in std::fs::read_dir(source).expect("the hook fixture overlay is readable") {
         let entry = entry.expect("a fixture entry");
-        let to = target.join(entry.file_name());
+        // git refuses to track a path named `.git`, so a fixture checkout's marker is `dot-git`.
+        let name = entry.file_name();
+        let to = target.join(if name == "dot-git" {
+            ".git".into()
+        } else {
+            name
+        });
         if entry.file_type().expect("a fixture entry type").is_dir() {
             std::fs::create_dir_all(&to).expect("a fixture subdirectory");
             copy_tree(&entry.path(), &to);
@@ -164,8 +172,11 @@ fn copy_tree(source: &Path, target: &Path) {
 /// check.
 fn parse_case(text: &str) -> Result<Case, String> {
     let mut lines = text.lines().peekable();
+    let cwd = lines
+        .next_if(|line| line.starts_with("CWD "))
+        .map(|line| line["CWD ".len()..].to_owned());
     if lines.next() != Some("COMMAND") {
-        return Err("the first line must be `COMMAND`".to_owned());
+        return Err("the first line after an optional `CWD` must be `COMMAND`".to_owned());
     }
     let command = read_block(&mut lines, "COMMAND")?.join("\n");
     let expected = match lines.next() {
@@ -191,6 +202,7 @@ fn parse_case(text: &str) -> Result<Case, String> {
         return Err(format!("unexpected line {line:?}"));
     }
     Ok(Case {
+        cwd,
         command,
         expected,
         xfail,
@@ -270,7 +282,15 @@ fn read_block<'a>(
 
 fn check_case(case: &Case) -> Vec<String> {
     let tree = hook_tree();
-    let run = run_hook(&event(tree.path(), &case.command));
+    let cwd = tree.path().join(case.cwd.as_deref().unwrap_or(""));
+    // Otherwise `cd` fails in the original and the replacement alike, and both print nothing.
+    if !cwd.is_dir() {
+        return vec![format!(
+            "CWD {} is not a directory of the fixture",
+            cwd.display()
+        )];
+    }
+    let run = run_hook(&event(&cwd, &case.command));
     if run.code != Some(0) {
         return vec![format!(
             "classify exited {:?}, stderr:\n{}",
@@ -309,7 +329,7 @@ fn check_case(case: &Case) -> Vec<String> {
                 Ok(command) => command,
                 Err(failure) => return vec![failure],
             };
-            let codex = codex_rewrites_the_same(&tree, &case.command, &command);
+            let codex = codex_rewrites_the_same(&cwd, &case.command, &command);
             if !codex.is_empty() {
                 failures.push("the Codex-shaped event:".to_owned());
                 failures.extend(codex);
@@ -325,7 +345,15 @@ fn check_case(case: &Case) -> Vec<String> {
             runs.join("\n")
         ));
     }
-    let oracle = expected.oracle.as_deref().unwrap_or(&case.command);
+    let in_cwd = |script: &str| match &case.cwd {
+        Some(dir) => format!("cd '{dir}' || exit 99\n{script}"),
+        None => script.to_owned(),
+    };
+    let oracle = in_cwd(expected.oracle.as_deref().unwrap_or(&case.command));
+    let runs: Vec<String> = runs
+        .iter()
+        .map(|run| in_cwd(run.strip_prefix("run: ").unwrap_or(run)))
+        .collect();
     let runs: Vec<&str> = runs.iter().map(String::as_str).collect();
     let status = match case.expected {
         Expected::Rewrite(_) => Status::Same,
@@ -333,7 +361,7 @@ fn check_case(case: &Case) -> Vec<String> {
     };
     failures.extend(execute(
         expected.compare,
-        oracle,
+        &oracle,
         &case.command,
         &tree,
         &runs,
@@ -367,8 +395,8 @@ fn rewrite_of(stdout: &str, original: &str) -> Result<String, String> {
 }
 
 /// Codex honours `updatedInput` only beside "allow", and sends no field but `command`.
-fn codex_rewrites_the_same(tree: &Sandbox, original: &str, command: &str) -> Vec<String> {
-    let run = run_hook(&codex_event(tree.path(), original));
+fn codex_rewrites_the_same(cwd: &Path, original: &str, command: &str) -> Vec<String> {
+    let run = run_hook(&codex_event(cwd, original));
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&run.out) else {
         return vec![format!(
             "expected a rewrite, stdout is not JSON:\n{}",
@@ -984,6 +1012,30 @@ fn a_failing_case_fails_by_name_unless_it_is_marked_xfail() {
     assert_eq!(corpus_failures(marked.path()), Vec::<String>::new());
 }
 
+const SHOW_A_IN_SRC: &str = "CWD src\nCOMMAND\ncat a.ts\n===END===\nVERDICT rewrite\nREPLACEMENT\nrun: \
+                             lets show a.ts --all --no-header --no-numbers\n===END===\nCOMPARE \
+                             read\n";
+
+#[test]
+fn a_case_runs_in_its_cwd_and_one_naming_no_fixture_directory_fails_by_name() {
+    let passing = case_root_holding("in-src", SHOW_A_IN_SRC);
+    assert_eq!(corpus_failures(passing.path()), Vec::<String>::new());
+
+    let root = case_root_holding(
+        "in-absent",
+        &SHOW_A_IN_SRC.replacen("CWD src", "CWD absent", 1),
+    );
+
+    let failures = corpus_failures(root.path());
+
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(
+        failures[0].starts_with("in-absent: CWD ")
+            && failures[0].ends_with("/absent is not a directory of the fixture"),
+        "{failures:?}"
+    );
+}
+
 #[test]
 fn a_block_case_with_no_reason_fails_by_name() {
     let passing = case_root_holding("with-reason", EDIT_C);
@@ -1176,7 +1228,7 @@ fn a_codex_event_gets_the_rewrite_claude_code_gets_with_allow() {
     );
     assert_eq!(
         codex_rewrites_the_same(
-            &tree,
+            tree.path(),
             "cat src/a.ts",
             "lets show src/a.ts --all --no-header --no-numbers"
         ),

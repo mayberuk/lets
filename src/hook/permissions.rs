@@ -57,15 +57,18 @@ pub struct Rules {
 }
 
 impl Rules {
-    /// `None` when a settings file or a rule in one cannot be read as Claude Code reads it.
-    pub fn load(sources: &Sources, cwd: &Path) -> Option<Rules> {
+    /// `None` when a settings file or a rule in one cannot be read as Claude Code reads it. Each of
+    /// `cwds` is taken as a current directory and a project, as the session's project is.
+    pub fn load(sources: &Sources, cwds: &[&Path]) -> Option<Rules> {
         let config = match &sources.config {
             Some(config) => config.clone(),
             None => sources.home.as_ref()?.join(".claude"),
         };
-        let mut projects = vec![cwd.to_path_buf()];
-        if let Some(project) = sources.project.as_ref().filter(|project| *project != cwd) {
-            projects.push(project.clone());
+        let mut projects: Vec<PathBuf> = Vec::new();
+        for dir in cwds.iter().copied().chain(sources.project.as_deref()) {
+            if !projects.iter().any(|project| project == dir) {
+                projects.push(dir.to_path_buf());
+            }
         }
         let current = with_real_paths(&projects);
         let mut parsed = Parsed {

@@ -1,0 +1,5 @@
+CWD checkouts/main
+COMMAND
+cd ../wt && cat locked/k.txt
+===END===
+VERDICT allow

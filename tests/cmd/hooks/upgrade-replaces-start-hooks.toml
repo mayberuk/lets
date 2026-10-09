@@ -1,0 +1,6 @@
+# The fixture is the settings.json `lets hooks install claude-code` wrote in v0.0.3.
+bin.name = "sh"
+args = ["-c", "set -e; export HOME=\"$(pwd)/home\"; unset XDG_DATA_HOME; export PATH=\"$(dirname \"$CARGO_BIN_EXE_lets\"):$PATH\"; \"$CARGO_BIN_EXE_lets\" hooks install claude-code; f=\"$HOME/.claude/settings.json\"; echo start hooks: $(grep -c -E '\"(SessionStart|SubagentStart)\": \\[' \"$f\" || true); echo classify hooks: $(grep -c -F 'lets hook classify' \"$f\")"]
+
+[fs]
+sandbox = true

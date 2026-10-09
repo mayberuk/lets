@@ -1,0 +1,9 @@
+CWD checkouts/main
+COMMAND
+cd ../wt && grep -n 'state' apps/ui/src/daemon-indicator.test.tsx
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: cd ../wt && lets find 'state' apps/ui/src/daemon-indicator.test.tsx
+===END===
+COMPARE search

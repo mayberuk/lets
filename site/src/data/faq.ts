@@ -5,7 +5,7 @@ export const faq: { q: string; a: string }[] = [
   },
   {
     q: 'Which agents does it work with, and how does it reach them?',
-    a: "Claude Code and Codex. lets hooks install claude-code installs a small mod that replaces two passages in Claude Code's own prompt (the Bash tool's use-Read-not-cat paragraph and the prefer-dedicated-tools line) with a short lets table, and runs the lets translation of a cat, sed -n, head, grep or rg in place of the command the model typed. A PreToolUse hook stays as the fallback when mods are off: it rewrites the same commands, allows a dotfile or out-of-tree read as typed, and denies only what has no exact translation, such as sed -i, naming the lets command to run instead. lets hooks install codex adds the PreToolUse hook plus a SessionStart and a SubagentStart note. Nothing is appended to the agent's system prompt, and if lets is missing or crashes, the command goes through.",
+    a: "Claude Code and Codex. lets hooks install claude-code installs a small mod that replaces two passages in Claude Code's own prompt (the Bash tool's use-Read-not-cat paragraph and the prefer-dedicated-tools line) with a short lets table, and runs the lets translation of a cat, sed -n, head, grep or rg in place of the command the model typed. A PreToolUse hook stays as the fallback when mods are off: it rewrites the same commands, allows a dotfile or out-of-tree read as typed, and denies only what has no exact translation, such as sed -i, naming the lets command to run instead. The install also adds a SessionStart and a SubagentStart note that print the lets table, and lets hooks install codex adds the PreToolUse hook plus the same two notes. Nothing is appended to the agent's system prompt, and if lets is missing or crashes, the command goes through.",
   },
   {
     q: 'What does "one call instead of three" mean?',
@@ -21,6 +21,6 @@ export const faq: { q: string; a: string }[] = [
   },
   {
     q: 'What platforms and licence?',
-    a: 'Linux and macOS, as one static binary. MIT or Apache-2.0, your choice. Version 0.0.6.',
+    a: 'Linux and macOS, as one static binary. MIT or Apache-2.0, your choice. Version 0.0.7.',
   },
 ];

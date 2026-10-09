@@ -1,0 +1,9 @@
+CWD checkouts/main
+COMMAND
+cd ../wt && rg -F 'toContain' apps
+===END===
+VERDICT rewrite
+REPLACEMENT
+run: cd ../wt && lets find -F 'toContain' apps --no-numbers
+===END===
+COMPARE search

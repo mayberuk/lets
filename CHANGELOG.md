@@ -6,6 +6,26 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-10-09
+
+### Fixed
+
+- A read that starts with `cd` into another checkout, such as `cd ../other && sed -n 1,40p a.ts`,
+  is now judged by that checkout's tree, so the hook rewrites it to `lets`. Before, the hook
+  bounded it by the session's own checkout and let it run as typed. That shape was 58% of the
+  raw reads in a day of 0.0.6 use. Deny and ask rules from both checkouts still apply.
+
+### Changed
+
+- `lets hooks install claude-code` installs the SessionStart and SubagentStart hooks again. They
+  put the short lets note into the conversation, beside the table the mod puts in the Bash
+  description.
+
+### Upgrading
+
+- Run `lets update`, then `lets hooks install claude-code` to add the start hooks. Start a new
+  Claude Code session to pick them up.
+
 ## [0.0.6] - 2026-10-08
 
 ### Fixed

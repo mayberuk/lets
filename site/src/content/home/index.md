@@ -131,7 +131,8 @@ hold: prose rules get roughly 55% compliance in practice. `lets hooks install cl
 - On Claude Code, a mod replaces the paragraph in the Bash tool's description that tells the model
   to use Read, not `cat`, with a short `lets` table. The table is part of the tool description,
   so it is there from the first call and survives compaction. `lets hooks install claude-code`
-  also removes any `SessionStart` and `SubagentStart` lets hooks.
+  also adds a `SessionStart` and a `SubagentStart` hook that print the same table as session
+  context.
 - On Codex, a `SessionStart` paragraph explains `lets` and its verbs at the start of every
   session, including after compaction, and a `SubagentStart` hook delivers the same paragraph to
   subagents.
@@ -198,7 +199,7 @@ $ curl -fsSL https://raw.githubusercontent.com/mayberuk/lets/main/install.sh | s
 $ lets hooks install claude-code
 ```
 
-Linux and macOS. MIT or Apache-2.0. Version 0.0.6. Repo:
+Linux and macOS. MIT or Apache-2.0. Version 0.0.7. Repo:
 [github.com/mayberuk/lets](https://github.com/mayberuk/lets).
 
 ---

@@ -1,6 +1,7 @@
+CWD checkouts/main
 COMMAND
-cd /tmp/x && cat > a.txt <<'EOF'
+cd ../absent && cat > a.txt <<'EOT'
 x
-EOF
+EOT
 ===END===
 VERDICT allow

@@ -1,4 +1,5 @@
+CWD checkouts/wt/apps
 COMMAND
-cd .. && cat notes.md && git status
+cd .. && cat ../main/m.ts && git status
 ===END===
 VERDICT allow

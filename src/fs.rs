@@ -124,16 +124,16 @@ fn canonical_or_nearest(path: &Path) -> Result<PathBuf, Error> {
 
 pub fn tree_root() -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let cwd = std::fs::canonicalize(&cwd).unwrap_or(cwd);
-    let mut dir = cwd.clone();
-    loop {
-        if dir.join(".git").exists() {
-            return dir;
-        }
-        if !dir.pop() {
-            return cwd;
-        }
-    }
+    tree_root_of(&std::fs::canonicalize(&cwd).unwrap_or(cwd))
+}
+
+/// The nearest ancestor of `dir`, itself included, holding a `.git` (a file in a worktree), or
+/// `dir` when none does.
+pub fn tree_root_of(dir: &Path) -> PathBuf {
+    dir.ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .unwrap_or(dir)
+        .to_path_buf()
 }
 
 fn io_error(path: &Path, source: std::io::Error) -> Error {

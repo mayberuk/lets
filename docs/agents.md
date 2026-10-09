@@ -141,7 +141,10 @@ binary, to `$XDG_DATA_HOME/lets/claude-code/` (`~/.local/share/lets/claude-code/
 `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, keeping any entry already there. The
 files match the binary that wrote them byte for byte, and a reinstall that finds them unchanged
 rewrites nothing. The `PreToolUse` hook below stays installed as the fallback for when mods are
-off.
+off. The install also adds a `SessionStart` hook (matcher `startup|resume|clear|compact|fork`) and
+a `SubagentStart` hook that each print the same table, so the model sees it as session context and
+not only in the Bash tool's description. Both print nothing when `lets` is missing. A reinstall
+replaces an earlier release's start hooks in place, and `hooks uninstall claude-code` removes them.
 
 The mod makes three changes and one check:
 
@@ -166,8 +169,7 @@ for that command and leaves any other hook's answer alone.
 
 `lets update` refreshes the mod files, through the new binary's own `hooks install claude-code`,
 only while the Claude Code settings still load the mod; a mod someone removed is not put back, and
-the output says why the refresh was skipped. An install over an earlier one that used `SessionStart`
-and `SubagentStart` hooks removes both and names them, since the mod carries their text now.
+the output says why the refresh was skipped.
 `hooks uninstall claude-code` removes the settings entry and the mod files, and keeps a file in
 that directory that lets did not write.
 
