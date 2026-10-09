@@ -20,7 +20,7 @@ lets hook classify
 
 ## What `hooks install` does
 
-**`claude-code`** installs the lets mod and one hook:
+**`claude-code`** installs the lets mod and three hooks:
 
 - The mod: a few plain TypeScript files embedded in the binary, written to
   `$XDG_DATA_HOME/lets/claude-code/` (`~/.local/share/lets/claude-code/` when `XDG_DATA_HOME` is
@@ -43,9 +43,12 @@ lets hook classify
   with `-s` and `--cap-exit-0` added so its hits and exit code still match what `grep`/`rg` would
   have produced.
 
-An install over an earlier one also removes its `SessionStart` and `SubagentStart` hooks, since the
-mod carries their text now. `lets update` refreshes the mod files, but only while Claude Code's
-settings still load the mod.
+- A `SessionStart` hook (matcher `startup|resume|clear|compact|fork`, so it runs again after
+  compaction) and a `SubagentStart` hook, which print the same `lets` table as session context and
+  as subagent context. Each prints nothing when `lets` is missing. An install over an earlier
+  release's start hooks replaces them in place.
+
+`lets update` refreshes the mod files, but only while Claude Code's settings still load the mod.
 
 ### When mods are off
 
@@ -179,11 +182,13 @@ flag.
 ## Examples
 
 Installing for Claude Code writes the mod, adds it to `CLAUDE_CODE_PLUGIN_DIRS`, and adds the
-fallback hook, in one call:
+fallback hook and both start hooks, in one call:
 
 ```console
 $ lets hooks install claude-code
 added the PreToolUse hook
+added the SessionStart hook
+added the SubagentStart hook
 added the lets mod
 ```
 
@@ -193,17 +198,19 @@ change:
 ```console
 $ lets hooks install claude-code
 the PreToolUse hook was already installed
+the SessionStart hook was already installed
+the SubagentStart hook was already installed
 the lets mod was already installed
 ```
 
-An install over one that still had the start hooks removes them and says why:
+An install over one that has the classify hook and the mod but no start hooks adds them:
 
 ```console
 $ lets hooks install claude-code
 the PreToolUse hook was already installed
-added the lets mod
-removed the SessionStart hook · the lets mod carries its text now
-removed the SubagentStart hook · the lets mod carries its text now
+added the SessionStart hook
+added the SubagentStart hook
+the lets mod was already installed
 ```
 
 Installing when a different `lets` shadows this one on `PATH` refuses and names it:

@@ -1,4 +1,6 @@
 added the PreToolUse hook
+added the SessionStart hook
+added the SubagentStart hook
 added the lets mod
 ./.claude-plugin/plugin.json
 ./hooks/hooks.json
@@ -6,4 +8,4 @@ added the lets mod
 ./hooks/steer.ts
 ./tsconfig.json
 plugin dirs: [CWD]/home/.local/share/lets/claude-code
-start hooks: 0
+start hooks: 2

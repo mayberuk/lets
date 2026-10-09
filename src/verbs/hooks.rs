@@ -14,9 +14,9 @@ pub(crate) const LEGACY_PARAGRAPH: &str = "For reading, finding and editing file
     or ranges in one call, returns bounded numbered\noutput, and its edits return the changed \
     region — so do not follow a `lets` call with a `cat` or\n`sed -n` to check the result.\n";
 
-/// Delivered by the lets mod (`LETS_TABLE` in `mod/hooks/steer.ts`), never as
-/// `--append-system-prompt-file` text: that cut tool-call batching to 0 of 192 model requests,
-/// against about 26% for plain Claude Code.
+/// Delivered by the lets mod (`LETS_TABLE` in `mod/hooks/steer.ts`) and by the `SessionStart` and
+/// `SubagentStart` hooks, never as `--append-system-prompt-file` text: that cut tool-call batching
+/// to 0 of 192 model requests, against about 26% for plain Claude Code.
 pub(crate) const CLAUDE_CODE_PARAGRAPH: &str = r"# File work: use `lets` through Bash
 
 | Instead of | Run |
@@ -182,10 +182,12 @@ fn codex_dir() -> Result<PathBuf, Error> {
     }
 }
 
+const START_GUARD: &str = "if command -v lets >/dev/null 2>&1; then ";
+
 fn subagent_start_command() -> String {
     let context = serde_json::to_string(CLAUDE_CODE_PARAGRAPH).expect("a string always serialises");
     let tail = format!("{context}}}}}").replace('\'', r"'\''");
-    format!("{SUBAGENT_START_PREFIX}{tail}'")
+    format!("{START_GUARD}{SUBAGENT_START_PREFIX}{tail}'; fi")
 }
 
 pub(crate) fn is_classify(command: &str) -> bool {
@@ -221,7 +223,11 @@ fn runs_lets_with(command: &str, args: &[&str]) -> bool {
 }
 
 fn is_subagent_start(command: &str) -> bool {
-    command.starts_with(SUBAGENT_START_PREFIX)
+    let bare = command
+        .strip_prefix(START_GUARD)
+        .and_then(|guarded| guarded.strip_suffix("; fi"))
+        .unwrap_or(command);
+    bare.starts_with(SUBAGENT_START_PREFIX)
 }
 
 pub(crate) fn hook_line(format: Format, label: &str, status: &InstallStatus) -> String {
@@ -254,15 +260,6 @@ fn mod_line(format: Format, status: &InstallStatus) -> String {
     }
 }
 
-fn carried_by_the_mod_line(format: Format, event: &str) -> String {
-    match format {
-        Format::Text => {
-            format!("removed the {event} hook \u{b7} the lets mod carries its text now")
-        },
-        Format::Json | Format::Jsonl => format!("{event}=removed"),
-    }
-}
-
 /// An earlier install's `system-append.md` is named, not deleted: a shell alias may still point
 /// `--append-system-prompt-file` at it.
 fn stale_system_append_note(format: Format, dir: &Path) -> Option<String> {
@@ -282,9 +279,9 @@ fn stale_system_append_note(format: Format, dir: &Path) -> Option<String> {
 #[derive(Default)]
 struct Landed {
     pre_tool_use: Option<InstallStatus>,
+    session_start: Option<InstallStatus>,
+    subagent_start: Option<InstallStatus>,
     lets_mod: Option<InstallStatus>,
-    session_start_removed: bool,
-    subagent_start_removed: bool,
     post_tool_use_removed: bool,
 }
 
@@ -297,16 +294,20 @@ impl Landed {
                 .map(|status| hook_line(format, "PreToolUse", status)),
         );
         lines.extend(
+            self.session_start
+                .as_ref()
+                .map(|status| hook_line(format, "SessionStart", status)),
+        );
+        lines.extend(
+            self.subagent_start
+                .as_ref()
+                .map(|status| hook_line(format, "SubagentStart", status)),
+        );
+        lines.extend(
             self.lets_mod
                 .as_ref()
                 .map(|status| mod_line(format, status)),
         );
-        if self.session_start_removed {
-            lines.push(carried_by_the_mod_line(format, "SessionStart"));
-        }
-        if self.subagent_start_removed {
-            lines.push(carried_by_the_mod_line(format, "SubagentStart"));
-        }
         lines.extend(retired_post_tool_use_note(
             format,
             self.post_tool_use_removed,
@@ -317,9 +318,9 @@ impl Landed {
 
     fn is_empty(&self) -> bool {
         self.pre_tool_use.is_none()
+            && self.session_start.is_none()
+            && self.subagent_start.is_none()
             && self.lets_mod.is_none()
-            && !self.session_start_removed
-            && !self.subagent_start_removed
             && !self.post_tool_use_removed
     }
 
@@ -349,9 +350,7 @@ pub(crate) const PRE_TOOL_USE: HookEntry<'static> = HookEntry {
     carry_over: keep_absolute_path,
 };
 
-/// The lets mod carries the paragraph now; kept only so `install` and `uninstall` remove every
-/// form an earlier build left behind.
-fn retired_session_start(command: &str) -> HookEntry<'_> {
+fn session_start_entry(command: &str) -> HookEntry<'_> {
     HookEntry {
         event: "SessionStart",
         matcher: Some(SESSION_START_MATCHER),
@@ -361,7 +360,7 @@ fn retired_session_start(command: &str) -> HookEntry<'_> {
     }
 }
 
-fn retired_subagent_start(command: &str) -> HookEntry<'_> {
+fn subagent_start_entry(command: &str) -> HookEntry<'_> {
     HookEntry {
         event: "SubagentStart",
         matcher: None,
@@ -502,22 +501,25 @@ fn install(format: Format, dir: &Path, mod_dir: &Path, path_var: &str, runtime: 
         ..Landed::default()
     };
 
-    match settings::merge_hook_entries(&settings_path, &[PRE_TOOL_USE], runtime) {
-        Ok(statuses) => landed.pre_tool_use = statuses.into_iter().next(),
-        Err(error) => return landed.failed(format, dir, error),
-    }
     let session_command = session_start_command();
     let subagent_command = subagent_start_command();
-    let retired = [
-        retired_session_start(&session_command),
-        retired_subagent_start(&subagent_command),
-        RETIRED_POST_TOOL_USE,
-    ];
-    match settings::remove_hook_entries(&settings_path, &retired, runtime) {
-        Ok(removed) => {
-            landed.session_start_removed = removed[0];
-            landed.subagent_start_removed = removed[1];
-            landed.post_tool_use_removed = removed[2];
+    let merged = settings::merge_and_retire_hook_entries(
+        &settings_path,
+        &[
+            PRE_TOOL_USE,
+            session_start_entry(&session_command),
+            subagent_start_entry(&subagent_command),
+        ],
+        &[RETIRED_POST_TOOL_USE],
+        runtime,
+    );
+    match merged {
+        Ok((statuses, removed)) => {
+            let mut statuses = statuses.into_iter();
+            landed.pre_tool_use = statuses.next();
+            landed.session_start = statuses.next();
+            landed.subagent_start = statuses.next();
+            landed.post_tool_use_removed = removed[0];
         },
         Err(error) => return landed.failed(format, dir, error),
     }
@@ -544,8 +546,8 @@ fn uninstall(format: Format, dir: &Path, mod_dir: &Path, runtime: &Path) -> Outc
     let subagent_command = subagent_start_command();
     let entries = [
         PRE_TOOL_USE,
-        retired_session_start(&session_command),
-        retired_subagent_start(&subagent_command),
+        session_start_entry(&session_command),
+        subagent_start_entry(&subagent_command),
         RETIRED_POST_TOOL_USE,
     ];
     let mut lines = match settings::remove_hook_entries(&settings_path, &entries, runtime) {
@@ -770,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn first_install_wires_pre_tool_use_and_the_mod_and_no_start_hooks() {
+    fn first_install_wires_pre_tool_use_both_start_hooks_and_the_mod() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
 
         let outcome = sandbox.install(Format::Text);
@@ -780,12 +782,26 @@ mod tests {
         let settings = sandbox.settings_json();
         assert_eq!(
             settings["hooks"],
-            serde_json::json!({"PreToolUse": [
-                {"matcher": "Bash", "hooks": [{
-                    "type": "command",
-                    "command": GUARDED
-                }]}
-            ]})
+            serde_json::json!({
+                "PreToolUse": [
+                    {"matcher": "Bash", "hooks": [{
+                        "type": "command",
+                        "command": GUARDED
+                    }]}
+                ],
+                "SessionStart": [
+                    {"matcher": "startup|resume|clear|compact|fork", "hooks": [{
+                        "type": "command",
+                        "command": session_start_command()
+                    }]}
+                ],
+                "SubagentStart": [
+                    {"hooks": [{
+                        "type": "command",
+                        "command": subagent_start_command()
+                    }]}
+                ],
+            })
         );
         assert_eq!(
             settings["env"],
@@ -796,7 +812,8 @@ mod tests {
         }
         assert_eq!(
             body_text(&outcome),
-            "added the PreToolUse hook\nadded the lets mod\n"
+            "added the PreToolUse hook\nadded the SessionStart hook\nadded the SubagentStart \
+             hook\nadded the lets mod\n"
         );
     }
 
@@ -845,7 +862,9 @@ mod tests {
         }
         assert_eq!(
             body_text(&outcome),
-            "the PreToolUse hook was already installed\nthe lets mod was already installed\n"
+            "the PreToolUse hook was already installed\nthe SessionStart hook was already \
+             installed\nthe SubagentStart hook was already installed\nthe lets mod was already \
+             installed\n"
         );
     }
 
@@ -866,7 +885,8 @@ mod tests {
 
             assert_eq!(
                 body_text(&outcome),
-                "the PreToolUse hook was already installed\nupdated the lets mod\n"
+                "the PreToolUse hook was already installed\nthe SessionStart hook was already \
+                 installed\nthe SubagentStart hook was already installed\nupdated the lets mod\n"
             );
         }
     }
@@ -878,7 +898,10 @@ mod tests {
 
         let outcome = sandbox.install(Format::Json);
 
-        assert_eq!(body_text(&outcome), "PreToolUse=installed\nmod=updated\n");
+        assert_eq!(
+            body_text(&outcome),
+            "PreToolUse=installed\nSessionStart=installed\nSubagentStart=installed\nmod=updated\n"
+        );
     }
 
     #[test]
@@ -1027,13 +1050,17 @@ mod tests {
     fn json_format_reports_installed_then_already_installed_as_stable_tokens() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
         let first = sandbox.install(Format::Json);
-        assert_eq!(body_text(&first), "PreToolUse=installed\nmod=installed\n");
+        assert_eq!(
+            body_text(&first),
+            "PreToolUse=installed\nSessionStart=installed\nSubagentStart=installed\nmod=installed\n"
+        );
 
         let outcome = sandbox.install(Format::Json);
 
         assert_eq!(
             body_text(&outcome),
-            "PreToolUse=already_installed\nmod=already_installed\n"
+            "PreToolUse=already_installed\nSessionStart=already_installed\nSubagentStart=\
+             already_installed\nmod=already_installed\n"
         );
     }
 
@@ -1464,7 +1491,14 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert!(is_guide(&v0_0_1_session_start_command()));
     }
 
-    fn assert_install_removes_the_session_start_hook(old_command: &str) {
+    fn unguarded_subagent_start_command() -> String {
+        let context =
+            serde_json::to_string(CLAUDE_CODE_PARAGRAPH).expect("a string always serialises");
+        let tail = format!("{context}}}}}").replace('\'', r"'\''");
+        format!("{SUBAGENT_START_PREFIX}{tail}'")
+    }
+
+    fn assert_install_replaces_the_session_start_hook_in_place(old_command: &str, line: &str) {
         let sandbox = Sandbox::new().with_lets_on_path(true);
         sandbox.write_settings(&serde_json::json!({"hooks": {"SessionStart": [{
             "matcher": SESSION_START_MATCHER,
@@ -1475,86 +1509,155 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
 
         assert_eq!(
             body_text(&outcome),
-            "added the PreToolUse hook\nadded the lets mod\nremoved the SessionStart hook \
-             \u{b7} the lets mod carries its text now\n",
+            format!(
+                "added the PreToolUse hook\n{line}\nadded the SubagentStart hook\nadded the lets \
+                 mod\n"
+            ),
             "{old_command}"
         );
-        assert!(
-            sandbox.settings_json()["hooks"]
-                .get("SessionStart")
-                .is_none(),
+        assert_eq!(
+            sandbox.settings_json()["hooks"]["SessionStart"],
+            serde_json::json!([{
+                "matcher": "startup|resume|clear|compact|fork",
+                "hooks": [{"type": "command", "command": session_start_command()}]
+            }]),
             "{old_command}"
         );
     }
 
     #[test]
-    fn install_removes_the_session_start_hook_the_last_release_wrote() {
-        assert_install_removes_the_session_start_hook(&session_start_command());
+    fn install_leaves_the_current_session_start_hook_alone() {
+        assert_install_replaces_the_session_start_hook_in_place(
+            &session_start_command(),
+            "the SessionStart hook was already installed",
+        );
     }
 
     #[test]
-    fn install_removes_a_v0_0_1_session_start_hook() {
-        assert_install_removes_the_session_start_hook(&v0_0_1_session_start_command());
+    fn install_updates_a_v0_0_1_session_start_hook_in_place() {
+        assert_install_replaces_the_session_start_hook_in_place(
+            &v0_0_1_session_start_command(),
+            "updated the SessionStart hook",
+        );
     }
 
     #[test]
-    fn install_removes_a_bare_lets_guide_session_start_hook() {
-        assert_install_removes_the_session_start_hook("lets guide");
+    fn install_updates_a_bare_lets_guide_session_start_hook_in_place() {
+        assert_install_replaces_the_session_start_hook_in_place(
+            "lets guide",
+            "updated the SessionStart hook",
+        );
     }
 
     #[test]
-    fn install_removes_a_guide_only_guarded_session_start_hook() {
-        assert_install_removes_the_session_start_hook(GUIDE_ONLY_COMMAND);
+    fn install_updates_a_guide_only_guarded_session_start_hook_in_place() {
+        assert_install_replaces_the_session_start_hook_in_place(
+            GUIDE_ONLY_COMMAND,
+            "updated the SessionStart hook",
+        );
     }
 
     #[test]
-    fn install_removes_a_legacy_env_guarded_guide_session_start_hook() {
-        assert_install_removes_the_session_start_hook(&legacy_env_guarded_guide_command());
+    fn install_updates_a_legacy_env_guarded_guide_session_start_hook_in_place() {
+        assert_install_replaces_the_session_start_hook_in_place(
+            &legacy_env_guarded_guide_command(),
+            "updated the SessionStart hook",
+        );
     }
 
     #[test]
-    fn install_removes_a_legacy_unconditional_guide_session_start_hook() {
-        assert_install_removes_the_session_start_hook(&legacy_unconditional_guide_command());
+    fn install_updates_a_legacy_unconditional_guide_session_start_hook_in_place() {
+        assert_install_replaces_the_session_start_hook_in_place(
+            &legacy_unconditional_guide_command(),
+            "updated the SessionStart hook",
+        );
     }
 
     #[test]
-    fn install_removes_every_subagent_start_form_and_reports_it() {
-        for old_command in [subagent_start_command(), v0_0_1_subagent_start_command()] {
-            let sandbox = Sandbox::new().with_lets_on_path(true);
-            sandbox.write_settings(&serde_json::json!({"hooks": {"SubagentStart": [{
+    fn install_updates_every_earlier_subagent_start_form_in_place_and_reports_it() {
+        let forms = [
+            (subagent_start_command(), "already_installed"),
+            (unguarded_subagent_start_command(), "updated"),
+            (v0_0_1_subagent_start_command(), "updated"),
+        ];
+        for (old_command, token) in forms {
+            let seed = serde_json::json!({"hooks": {"SubagentStart": [{
                 "hooks": [{"type": "command", "command": old_command}]
-            }]}}));
+            }]}});
+            let text = Sandbox::new().with_lets_on_path(true);
+            text.write_settings(&seed);
+            let json = Sandbox::new().with_lets_on_path(true);
+            json.write_settings(&seed);
 
-            let text = sandbox.install(Format::Text);
-            let json = {
-                let again = Sandbox::new().with_lets_on_path(true);
-                again.write_settings(&serde_json::json!({"hooks": {"SubagentStart": [{
-                    "hooks": [{"type": "command", "command": old_command}]
-                }]}}));
-                again.install(Format::Json)
+            let text_outcome = text.install(Format::Text);
+            let json_outcome = json.install(Format::Json);
+
+            let line = if token == "updated" {
+                "updated the SubagentStart hook"
+            } else {
+                "the SubagentStart hook was already installed"
             };
-
             assert!(
-                body_text(&text).contains(
-                    "removed the SubagentStart hook \u{b7} the lets mod carries its text now\n"
-                ),
+                body_text(&text_outcome).contains(&format!("{line}\nadded the lets mod\n")),
                 "{}",
-                body_text(&text)
+                body_text(&text_outcome)
             );
             assert_eq!(
-                body_text(&json),
-                "PreToolUse=installed\nmod=installed\nSubagentStart=removed\n"
+                body_text(&json_outcome),
+                format!(
+                    "PreToolUse=installed\nSessionStart=installed\nSubagentStart={token}\nmod=\
+                     installed\n"
+                )
             );
-            assert!(
-                sandbox.settings_json()["hooks"]
-                    .get("SubagentStart")
-                    .is_none()
+            assert_eq!(
+                text.settings_json()["hooks"]["SubagentStart"],
+                serde_json::json!([{
+                    "hooks": [{"type": "command", "command": subagent_start_command()}]
+                }])
             );
         }
     }
 
     #[test]
-    fn a_session_start_hook_with_our_wrapper_but_not_our_heading_or_tail_is_kept() {
+    fn upgrading_from_a_0_0_4_to_0_0_6_settings_file_adds_both_start_hooks() {
+        let sandbox = Sandbox::new().with_lets_on_path(true);
+        sandbox.install(Format::Text);
+        let mut settings = sandbox.settings_json();
+        let hooks = settings["hooks"].as_object_mut().unwrap();
+        hooks.remove("SessionStart").unwrap();
+        hooks.remove("SubagentStart").unwrap();
+        sandbox.write_settings(&settings);
+
+        let outcome = sandbox.install(Format::Text);
+
+        assert_eq!(
+            body_text(&outcome),
+            "the PreToolUse hook was already installed\nadded the SessionStart hook\nadded the \
+             SubagentStart hook\nthe lets mod was already installed\n"
+        );
+        let hooks = &sandbox.settings_json()["hooks"];
+        assert_eq!(hooks["SessionStart"].as_array().unwrap().len(), 1);
+        assert_eq!(hooks["SubagentStart"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_subagent_start_command_prints_nothing_and_exits_zero_when_lets_is_missing() {
+        let empty = TempDir::new().unwrap();
+
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(subagent_start_command())
+            .env("PATH", empty.path())
+            .output()
+            .unwrap();
+
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
+
+    #[test]
+    fn a_session_start_hook_with_our_wrapper_but_not_our_heading_or_tail_is_kept_and_ours_added() {
         let different_heading = "if command -v lets >/dev/null 2>&1; then printf '%s\\n' \
                                   '# Something else entirely\\n\\nbody'; fi";
         let different_tail = format!("{SESSION_START_PARAGRAPH_PREFIX}\\n\\nbody'; fi; echo done");
@@ -1573,17 +1676,23 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
             let outcome = sandbox.install(Format::Text);
 
             assert!(outcome.error.is_none(), "{:?}", outcome.error);
-            assert!(!body_text(&outcome).contains("SessionStart"), "{foreign}");
+            assert!(
+                body_text(&outcome).contains("added the SessionStart hook"),
+                "{foreign}"
+            );
+            let session = sandbox.settings_json()["hooks"]["SessionStart"].clone();
+            assert_eq!(session.as_array().unwrap().len(), 2, "{foreign}");
+            assert_eq!(session[0], theirs, "{foreign}");
             assert_eq!(
-                sandbox.settings_json()["hooks"]["SessionStart"],
-                serde_json::json!([theirs]),
+                session[1]["hooks"][0]["command"],
+                session_start_command(),
                 "{foreign}"
             );
         }
     }
 
     #[test]
-    fn an_existing_session_start_or_subagent_start_hook_of_another_tool_is_kept() {
+    fn a_session_start_or_subagent_start_hook_of_another_tool_is_kept_beside_ours() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
         let session = serde_json::json!([{
             "matcher": "startup",
@@ -1602,15 +1711,18 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert_eq!(
             body_text(&outcome),
-            "added the PreToolUse hook\nadded the lets mod\n"
+            "added the PreToolUse hook\nadded the SessionStart hook\nadded the SubagentStart \
+             hook\nadded the lets mod\n"
         );
         let hooks = &sandbox.settings_json()["hooks"];
-        assert_eq!(hooks["SessionStart"], session);
-        assert_eq!(hooks["SubagentStart"], subagent);
+        assert_eq!(hooks["SessionStart"].as_array().unwrap().len(), 2);
+        assert_eq!(hooks["SessionStart"][0], session[0]);
+        assert_eq!(hooks["SubagentStart"].as_array().unwrap().len(), 2);
+        assert_eq!(hooks["SubagentStart"][0], subagent[0]);
     }
 
     #[test]
-    fn uninstall_names_the_hook_and_the_mod_then_finds_nothing_the_second_time() {
+    fn uninstall_names_every_hook_and_the_mod_then_finds_nothing_the_second_time() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
         sandbox.install(Format::Text);
 
@@ -1620,7 +1732,7 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert!(first.error.is_none(), "{:?}", first.error);
         assert_eq!(
             body_text(&first),
-            "removed the PreToolUse hook\nremoved the lets mod\n"
+            "removed the PreToolUse hook\nremoved the SessionStart hook\nremoved the SubagentStart hook\nremoved the lets mod\n"
         );
         assert_eq!(body_text(&second), "nothing to remove\n");
         assert_eq!(sandbox.settings_json(), serde_json::json!({}));
@@ -1640,7 +1752,7 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
 
         assert_eq!(
             body_text(&outcome),
-            "removed the PreToolUse hook\nremoved the lets mod\n"
+            "removed the PreToolUse hook\nremoved the SessionStart hook\nremoved the SubagentStart hook\nremoved the lets mod\n"
         );
         assert_eq!(
             sandbox.settings_json(),
@@ -1724,7 +1836,10 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         let first = sandbox.uninstall(Format::Json);
         let second = sandbox.uninstall(Format::Json);
 
-        assert_eq!(body_text(&first), "PreToolUse=removed\nmod=removed\n");
+        assert_eq!(
+            body_text(&first),
+            "PreToolUse=removed\nSessionStart=removed\nSubagentStart=removed\nmod=removed\n"
+        );
         assert_eq!(body_text(&second), "nothing_to_remove\n");
     }
 
@@ -1890,7 +2005,8 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
     }
 
     #[test]
-    fn install_removes_every_retired_start_form_and_duplicates_but_keeps_a_foreign_hook() {
+    fn install_replaces_an_earlier_start_hook_in_place_without_a_duplicate_and_keeps_a_foreign_hook()
+     {
         let sandbox = Sandbox::new().with_lets_on_path(true);
         let foreign_session = serde_json::json!({"type": "command", "command": "echo mine"});
         let foreign_subagent = serde_json::json!({"type": "command", "command": "echo theirs"});
@@ -1898,23 +2014,14 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         sandbox.write_settings(&serde_json::json!({"hooks": {
             "SessionStart": [
                 {"matcher": SESSION_START_MATCHER, "hooks": [
-                    command(session_start_command()),
                     foreign_session.clone(),
                     command(v0_0_1_session_start_command()),
-                    command("lets guide".to_owned()),
-                    command(session_start_command()),
-                ]},
-                {"matcher": SESSION_START_MATCHER, "hooks": [
-                    command(GUIDE_ONLY_COMMAND.to_owned()),
-                    command(legacy_env_guarded_guide_command()),
                 ]},
             ],
             "SubagentStart": [
                 {"hooks": [
-                    command(subagent_start_command()),
-                    command(v0_0_1_subagent_start_command()),
+                    command(unguarded_subagent_start_command()),
                     foreign_subagent.clone(),
-                    command(subagent_start_command()),
                 ]},
             ],
         }}));
@@ -1924,18 +2031,23 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert_eq!(
             body_text(&outcome),
-            "added the PreToolUse hook\nadded the lets mod\nremoved the SessionStart hook \
-             \u{b7} the lets mod carries its text now\nremoved the SubagentStart hook \u{b7} \
-             the lets mod carries its text now\n"
+            "added the PreToolUse hook\nupdated the SessionStart hook\nupdated the SubagentStart \
+             hook\nadded the lets mod\n"
         );
         let hooks = &sandbox.settings_json()["hooks"];
         assert_eq!(
             hooks["SessionStart"],
-            serde_json::json!([{"matcher": SESSION_START_MATCHER, "hooks": [foreign_session]}])
+            serde_json::json!([{"matcher": SESSION_START_MATCHER, "hooks": [
+                foreign_session,
+                command(session_start_command()),
+            ]}])
         );
         assert_eq!(
             hooks["SubagentStart"],
-            serde_json::json!([{"hooks": [foreign_subagent]}])
+            serde_json::json!([{"hooks": [
+                command(subagent_start_command()),
+                foreign_subagent,
+            ]}])
         );
         assert_eq!(hooks["PreToolUse"].as_array().unwrap().len(), 1);
     }
@@ -2015,21 +2127,20 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
     }
 
     #[test]
-    fn a_retirement_failure_after_the_hook_landed_is_partial_and_names_what_landed() {
+    fn a_start_hook_shape_error_writes_no_hook_and_names_only_the_mod() {
         let sandbox = Sandbox::new().with_lets_on_path(true);
-        sandbox.write_settings(&serde_json::json!({"hooks": {"SessionStart": "oops"}}));
+        let existing = serde_json::json!({"hooks": {"SessionStart": "oops"}}).to_string();
+        std::fs::create_dir_all(sandbox.claude("")).unwrap();
+        std::fs::write(sandbox.claude("settings.json"), &existing).unwrap();
 
         let outcome = sandbox.install(Format::Text);
 
         assert!(matches!(outcome.error, Some(Error::Io { .. })));
+        assert_eq!(body_text(&outcome), "added the lets mod\n");
         assert_eq!(
-            body_text(&outcome),
-            "added the PreToolUse hook\nadded the lets mod\n"
+            std::fs::read_to_string(sandbox.claude("settings.json")).unwrap(),
+            existing
         );
-        let hooks = &sandbox.settings_json()["hooks"];
-        assert_eq!(hooks["SessionStart"], "oops");
-        assert_eq!(hooks["PreToolUse"].as_array().unwrap().len(), 1);
-        assert!(sandbox.settings_json().get("env").is_none());
     }
 
     #[test]
@@ -2037,8 +2148,8 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         let landed = Landed {
             pre_tool_use: Some(InstallStatus::Updated),
             lets_mod: Some(InstallStatus::Installed),
-            session_start_removed: true,
-            subagent_start_removed: true,
+            session_start: Some(InstallStatus::Installed),
+            subagent_start: Some(InstallStatus::Updated),
             post_tool_use_removed: true,
         };
         let failure = Error::Usage {
@@ -2050,10 +2161,9 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert!(matches!(outcome.error, Some(Error::Usage { .. })));
         assert_eq!(
             body_text(&outcome),
-            "updated the PreToolUse hook\nadded the lets mod\nremoved the SessionStart hook \
-             \u{b7} the lets mod carries its text now\nremoved the SubagentStart hook \u{b7} \
-             the lets mod carries its text now\nremoved the PostToolUse hook \u{b7} the check \
-             trial showed no benefit, so it is no longer installed by default\n"
+            "updated the PreToolUse hook\nadded the SessionStart hook\nupdated the SubagentStart \
+             hook\nadded the lets mod\nremoved the PostToolUse hook \u{b7} the check trial \
+             showed no benefit, so it is no longer installed by default\n"
         );
     }
 
@@ -2082,7 +2192,8 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert_eq!(
             body_text(&outcome),
-            "removed the PreToolUse hook\nremoved the lets mod\n"
+            "removed the PreToolUse hook\nremoved the SessionStart hook\nremoved the \
+             SubagentStart hook\nremoved the lets mod\n"
         );
         assert_eq!(
             sandbox.settings_json(),
@@ -2239,8 +2350,9 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         );
         assert_eq!(
             body_text(&text),
-            "removed the PreToolUse hook\nremoved the lets mod from CLAUDE_CODE_PLUGIN_DIRS\nthe \
-             lets mod files were not removed\n"
+            "removed the PreToolUse hook\nremoved the SessionStart hook\nremoved the \
+             SubagentStart hook\nremoved the lets mod from CLAUDE_CODE_PLUGIN_DIRS\nthe lets mod \
+             files were not removed\n"
         );
         assert_eq!(sandbox.settings_json(), serde_json::json!({}));
         assert!(sandbox.mod_dir().join(".claude-plugin/types").exists());
@@ -2261,7 +2373,8 @@ Keep using Read for images and PDFs, and plain Bash for work that is not reading
         assert!(json.error.is_some());
         assert_eq!(
             body_text(&json),
-            "PreToolUse=removed\nmod_entry=removed\nmod_files=remaining\n"
+            "PreToolUse=removed\nSessionStart=removed\nSubagentStart=removed\nmod_entry=removed\n\
+             mod_files=remaining\n"
         );
     }
 

@@ -405,8 +405,8 @@ fn the_with_hooks_arm_loads_the_settings_hooks_install_writes() {
         )),
         "{text}"
     );
-    assert!(!text.contains("SessionStart"), "{text}");
-    assert!(!text.contains("SubagentStart"), "{text}");
+    assert!(text.contains("\"SessionStart\": ["), "{text}");
+    assert!(text.contains("\"SubagentStart\": ["), "{text}");
 }
 
 fn assert_kept_settings_name_a_surviving_mod(smoke: &Smoke) {

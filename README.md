@@ -56,8 +56,9 @@ Each merges what that agent's harness supports into its own user-level settings.
 repo file into the equivalent `lets` call in place, and denies only what has no exact `lets`
 translation (a `sed -i` in-place edit, or a path a settings deny/ask rule already covers),
 always naming the runnable replacement. For Claude Code the install also writes a mod that puts a
-short `lets` table in the Bash tool's description, and removes any `SessionStart` and
-`SubagentStart` lets hooks. Codex gets a `SessionStart`/`SubagentStart` paragraph instead.
+short `lets` table in the Bash tool's description, and adds a `SessionStart` and a
+`SubagentStart` hook that print the same table. Codex gets a `SessionStart`/`SubagentStart`
+paragraph too.
 `lets hooks uninstall claude-code` and `lets hooks uninstall codex` remove them again. Installing only ever writes into the agent's own settings; nothing here modifies your
 shell profile.
 
