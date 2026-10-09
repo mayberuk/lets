@@ -654,6 +654,11 @@ fn leading_cd<'t>(cd: Node<'t>, top: &[Node<'t>], src: &str, cwd: &Path) -> Opti
     if base.starts_with(cwd) && real.starts_with(&real_cwd) && !nested {
         return Some((cwd.to_path_buf(), base, prefix, statements));
     }
+    // Outside every checkout the `cd` target would be its own root, and a dot directory above the
+    // read, such as `~/.ssh`, would never be judged.
+    if !tree.join(".git").exists() {
+        return None;
+    }
     Some((tree, real, prefix, statements))
 }
 
@@ -4058,12 +4063,8 @@ mod tests {
         std::os::unix::fs::symlink("a.ts", tree.path().join("src/alias.ts"))
             .expect("an in-tree symlink");
 
-        // `cd` lands on the real directory, whose own tree `lets` then bounds by.
-        assert_eq!(
-            command_of(rewrite_in(&tree, "cd etclink && cat hostname")),
-            "cd etclink && lets show hostname --all --no-header --no-numbers"
-        );
         for command in [
+            "cd etclink && cat hostname",
             "cd etclink && cat ../a.ts",
             "cat etclink/hostname",
             "cat src/cfg",
@@ -5332,7 +5333,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cd_where_no_ancestor_holds_git_bounds_reads_by_that_directory() {
+    fn a_cd_out_of_the_tree_where_no_ancestor_holds_git_runs_as_typed() {
         let tree = tree();
         // A running Codex sandbox mounts over `/tmp/.git`; its `/dev` is private to it.
         let shm = Path::new("/dev/shm");
@@ -5351,18 +5352,27 @@ mod tests {
         );
         write(&outside, "sub/o.txt", "x\n");
         write(&outside, "top.txt", "x\n");
+        write(&outside, ".ssh/known_hosts", "x\n");
         let sub = outside.path().join("sub");
         let sub = sub.to_str().expect("a utf-8 temp path");
+        let ssh = outside.path().join(".ssh");
+        let ssh = ssh.to_str().expect("a utf-8 temp path");
 
+        for command in [
+            format!("cd {sub} && cat o.txt"),
+            format!("cd {sub} && cat ../top.txt"),
+            format!("cd {ssh} && cat known_hosts"),
+            format!("cd {ssh} && sed -n 1,5p known_hosts"),
+        ] {
+            assert_eq!(
+                classify_command(&command, cwd(&tree), None),
+                Verdict::Allow,
+                "{command}"
+            );
+        }
         assert_eq!(
-            classify_command(&format!("cd {sub} && cat o.txt"), cwd(&tree), None),
-            rewrite_to(&format!(
-                "cd {sub} && lets show o.txt --all --no-header --no-numbers"
-            ))
-        );
-        assert_eq!(
-            classify_command(&format!("cd {sub} && cat ../top.txt"), cwd(&tree), None),
-            Verdict::Allow
+            classify_command("cd src && cat a.ts", cwd(&tree), None),
+            rewrite_to("cd src && lets show a.ts --all --no-header --no-numbers")
         );
     }
 

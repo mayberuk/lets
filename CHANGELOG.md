@@ -6,6 +6,12 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+### Fixed
+
+- A read after a `cd` out of the session's checkout into a directory no checkout holds, such as
+  `cd ~/.ssh && cat known_hosts`, runs as typed again. In 0.0.7 the hook rewrote it to `lets`
+  without judging the dot directory above the file.
+
 ## [0.0.7] - 2026-10-09
 
 ### Fixed
