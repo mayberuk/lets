@@ -317,19 +317,19 @@ pub struct GrepCompat {
 pub struct EditArgs {
     pub target: Option<String>,
     pub more_targets: Vec<String>,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub old: Option<String>,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub new: Option<String>,
     #[arg(long)]
     pub all: bool,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub expect: Option<String>,
     #[arg(long)]
     pub expect_all: bool,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub insert_after: Option<String>,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub insert_before: Option<String>,
     /// Read a batch from stdin; `-` is the only accepted value. Fenced form: a `@@ file` (or
     /// `@@ file insert-after @'regex'`) header, then one or more `<<<<<<< old` / `======= new` /
@@ -352,11 +352,11 @@ pub struct EditArgs {
 #[derive(Debug, Args)]
 pub struct TransformArgs {
     pub file: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub set: Vec<String>,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub delete: Vec<String>,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub append: Vec<String>,
     #[arg(long)]
     pub from: Option<String>,
@@ -444,6 +444,84 @@ mod tests {
     fn window_with_no_value_is_a_parse_error() {
         let result = Cli::try_parse_from(["lets", "show", "a.ts", "--window"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn edit_values_accept_leading_hyphens() {
+        for (old, new) in [("- b", "- c"), ("--spring", "-webkit-x")] {
+            let cli = Cli::parse_argv(
+                ["lets", "edit", "f", "--old", old, "--new", new].map(OsString::from),
+            )
+            .unwrap();
+            let Verb::Edit(args) = cli.verb else {
+                panic!("expected Verb::Edit");
+            };
+            assert_eq!(args.old.as_deref(), Some(old));
+            assert_eq!(args.new.as_deref(), Some(new));
+        }
+        for flag in ["--expect", "--insert-after", "--insert-before"] {
+            let cli = Cli::parse_argv(
+                ["lets", "edit", "f", flag, "- b", "--new", "- c"].map(OsString::from),
+            )
+            .unwrap();
+            let Verb::Edit(args) = cli.verb else {
+                panic!("expected Verb::Edit");
+            };
+            let value = match flag {
+                "--expect" => args.expect,
+                "--insert-after" => args.insert_after,
+                "--insert-before" => args.insert_before,
+                _ => unreachable!(),
+            };
+            assert_eq!(value.as_deref(), Some("- b"));
+            assert_eq!(args.new.as_deref(), Some("- c"));
+        }
+    }
+
+    #[test]
+    fn edit_missing_old_value_takes_the_next_flag_as_the_value() {
+        let words = ["edit", "f", "--old", "--new", "x"];
+        let cli =
+            Cli::parse_argv(std::iter::once("lets").chain(words).map(OsString::from)).unwrap();
+        let Verb::Edit(args) = cli.verb else {
+            panic!("expected Verb::Edit");
+        };
+        assert_eq!(args.old.as_deref(), Some("--new"));
+        assert!(args.new.is_none());
+        assert_eq!(args.more_targets, ["x"]);
+    }
+
+    #[test]
+    fn transform_values_accept_leading_hyphens() {
+        let cli = Cli::parse_argv(
+            [
+                "lets",
+                "transform",
+                "f.json",
+                "--set",
+                "k=-1",
+                "--set",
+                "-k=1",
+                "--delete",
+                "-x",
+                "--append",
+                "-items[]=x",
+            ]
+            .map(OsString::from),
+        )
+        .unwrap();
+        let Verb::Transform(args) = cli.verb else {
+            panic!("expected Verb::Transform");
+        };
+        assert_eq!(args.set, ["k=-1", "-k=1"]);
+        assert_eq!(args.delete, ["-x"]);
+        assert_eq!(args.append, ["-items[]=x"]);
+        assert_eq!(args.order, [
+            OpKind::Set,
+            OpKind::Set,
+            OpKind::Delete,
+            OpKind::Append
+        ]);
     }
 
     #[test]

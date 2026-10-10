@@ -1,0 +1,2 @@
+f: --new is required · --new '' deletes what the edit matches
+ERROR_CODE=usage

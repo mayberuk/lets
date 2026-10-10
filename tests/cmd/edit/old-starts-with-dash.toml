@@ -1,0 +1,3 @@
+bin.name = "lets"
+args = ["edit", "notes.md", "--old", "- b", "--new", "- c"]
+status.code = 0

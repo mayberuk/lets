@@ -3,6 +3,11 @@
 # case would edit its committed `<id>.in` tree in place instead of a throwaway copy.
 one-replacement.trycmd
 one-replacement.out
+old-starts-with-dash.toml
+old-starts-with-dash.stdout
+old-starts-with-dash.stderr
+old-starts-with-dash.in
+old-starts-with-dash.out
 readonly-runtime-dir.toml
 readonly-runtime-dir.out
 readonly-runtime-dir-ambiguous.toml
@@ -178,3 +183,4 @@ from-headerless-with-one-target-applies.toml
 from-headerless-with-one-target-applies.out
 from-target-and-at-header-conflict.toml
 from-target-and-at-header-conflict.out
+old-missing-value-refused.toml
