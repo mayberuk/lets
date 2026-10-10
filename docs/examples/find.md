@@ -543,10 +543,11 @@ $ lets find needle small.txt --no-expand
 ```
 
 ```console
-$ lets find x ../../../..
-? 6
-../../../.. is outside the working tree
-ERROR_CODE=outside_tree
+$ sh -c 'mkdir -p repo/.git && printf '\''outside content\n'\'' > outside.txt && cd repo && exec "$CARGO_BIN_EXE_lets" find content ../outside.txt'
+? 0
+── ../outside.txt
+1:	outside «content»
+── 1 hit in 1 file · searched 1 file
 
 ```
 

@@ -408,6 +408,16 @@ $ lets edit usage.ts:6 --expect 'const cap = 10' --new '  const cap = 20'
 ```
 
 ```console
+$ lets edit notes.md:2 --old '- b' --expect '- b' --new '- replaced'
+── notes.md · 1 replacement · line 2 · expect matched
+1 	- a
+2~	- replaced
+3 	- c
+── check: structure ok · sha:abab56b829a4→2f9569f97be7
+
+```
+
+```console
 $ lets edit --from - <<'EOF'
 @@ usage.ts
 <<<<<<< old
@@ -827,11 +837,24 @@ ERROR_CODE=not_found
 ```
 
 ```console
+$ lets edit f --old --new x
+f: --new is required · --new '' deletes what the edit matches
+ERROR_CODE=usage
+
+```
+
+```console
 $ lets edit usage.ts --old 'const cap = 15' --new 'const cap = 20'
 ? 1
 --old not found in usage.ts
   nearest: line 6	  const cap = 10
 ERROR_CODE=not_found
+
+```
+
+```console
+$ lets edit notes.md --old '- b' --new '- c'
+── notes.md · 1 replacement · line 1 · check: structure ok · sha:849a3a7e4f25→74a7a875d9ea
 
 ```
 
