@@ -41,7 +41,7 @@ tool. See [target grammar](/docs/targets/) (`path`, `path:40`, `path:40-80`,
 | `--max-bytes <N>` | refuse (exit 4) if content exceeds N bytes and no `--budget` given | 65536 |
 | `--max-file-bytes <N>` | files larger than this are refused | 8388608 |
 | `--no-ignore` | do not honor `.gitignore` (only matters when a target resolves through a directory scan) | off |
-| `--allow-outside` | permit a target outside the working tree | off |
+| `--allow-outside` | applies to writes; `show` reads outside the working tree without it | off |
 | `--no-check` | no effect on `show` (shared flag; `show` never runs a checker) | off |
 | `-q, --quiet` | (shared flag; `show` already prints only the footer plus content) | off |
 
@@ -96,7 +96,6 @@ resolve), one line each, in source order:
 | 1 | `no_grammar` | `--outline` on a file with no bundled grammar |
 | 2 | `ambiguous` | a `#name` target matched more than one symbol; every candidate listed |
 | 4 | `over_budget` | content exceeded `--max-bytes` and no `--budget` was given |
-| 6 | `outside_tree` | the target is outside the working tree; pass `--allow-outside` |
 | 7 | `unsupported_file` | binary, hardlinked, or a directory given as a target |
 | 64 | `usage` | malformed command line |
 

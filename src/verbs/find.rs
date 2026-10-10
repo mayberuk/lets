@@ -20,7 +20,7 @@ use crate::output::{
     Body, ByteLimit, CountRow, ExpandedHits, Footer, IgnoredDirs, Line, Marker, NamedDirs,
     Omission, Response, Stats, TargetBlock,
 };
-use crate::{Outcome, fs, symbols, window};
+use crate::{Outcome, symbols, window};
 
 pub fn run(args: &FindArgs, global: &Global, format: crate::output::Format) -> Outcome {
     if args.head.is_some() && format != crate::output::Format::Text {
@@ -82,10 +82,7 @@ fn search(
     global: &Global,
     traversal: Option<Traversal>,
 ) -> (Outcome, Option<usize>) {
-    let (search_paths, missing) = match search_roots(args, global.allow_outside) {
-        Ok(roots) => roots,
-        Err(err) => return (Outcome::failed("find", err), None),
-    };
+    let (search_paths, missing) = search_roots(args);
     let unresolved: Vec<Omission> = missing
         .iter()
         .map(|(typed, error)| Omission::Unresolved {
@@ -175,28 +172,26 @@ fn search(
 
 /// Drops every root another root contains, or `find x . src` would count `src`'s hits twice. The
 /// typed form survives: a canonical root is absolute, and differs between machines.
-fn search_roots(args: &FindArgs, allow_outside: bool) -> Result<SearchRoots, Error> {
+fn search_roots(args: &FindArgs) -> SearchRoots {
     let typed: Vec<PathBuf> = if args.paths.is_empty() {
         vec![PathBuf::from(".")]
     } else {
         args.paths.iter().map(PathBuf::from).collect()
     };
 
-    let mut guarded = Vec::with_capacity(typed.len());
+    let mut resolved = Vec::with_capacity(typed.len());
     let mut missing = Vec::new();
     for path in typed {
-        let canonical = fs::guard_scope(&path, allow_outside)?;
-        // Before the containment pass, which would fold a missing `nope` into `.`.
-        match std::fs::metadata(&path) {
-            Ok(_) => guarded.push((canonical, path)),
+        match std::fs::canonicalize(&path) {
+            Ok(canonical) => resolved.push((canonical, path)),
             Err(source) => missing.push((path.clone(), Error::Io { path, source })),
         }
     }
     // Sorted, a path follows every path containing it, so only the last kept root needs checking.
-    guarded.sort();
+    resolved.sort();
 
-    let mut roots: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(guarded.len());
-    for (canonical, typed) in guarded {
+    let mut roots: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(resolved.len());
+    for (canonical, typed) in resolved {
         if roots
             .last()
             .is_some_and(|(kept, _)| canonical.starts_with(kept))
@@ -205,7 +200,7 @@ fn search_roots(args: &FindArgs, allow_outside: bool) -> Result<SearchRoots, Err
         }
         roots.push((canonical, typed));
     }
-    Ok((roots.into_iter().map(|(_, typed)| typed).collect(), missing))
+    (roots.into_iter().map(|(_, typed)| typed).collect(), missing)
 }
 
 type SearchRoots = (Vec<PathBuf>, Vec<(PathBuf, Error)>);
@@ -2593,7 +2588,7 @@ mod tests {
     }
 
     #[test]
-    fn a_search_path_outside_the_working_tree_is_refused_before_any_match() {
+    fn a_search_path_outside_the_working_tree_reads_without_allow_outside() {
         let in_repo = workdir(|parent| {
             let repo_dir = parent.join("repo");
             std::fs::create_dir(&repo_dir).expect("repo dir");
@@ -2607,8 +2602,14 @@ mod tests {
 
         let outcome = run_find(&find_args("needle", &["../outside.txt"]), &global_args());
 
-        assert!(!outcome.response.has_output(), "nothing is searched");
-        assert!(matches!(outcome.error, Some(Error::OutsideTree { .. })));
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        let Body::Targets(blocks) = &outcome.response.body else {
+            panic!("expected Body::Targets");
+        };
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].target, "../outside.txt");
+        assert_eq!(blocks[0].lines.len(), 1);
+        assert_eq!(blocks[0].lines[0].text, "«needle»");
     }
 
     #[test]

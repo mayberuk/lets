@@ -6,6 +6,7 @@ symbol-ambiguous.toml
 symbol-ambiguous-control.toml
 symbol-no-grammar.toml
 outside-tree.toml
+symlink-out-of-tree.toml
 allow-outside-still-works.toml
 over-max-bytes.toml
 over-max-bytes-with-budget.toml

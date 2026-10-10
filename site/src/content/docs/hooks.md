@@ -153,7 +153,8 @@ an unrecognized extension gets no answer at all.
 
 What passes unblocked, deliberately: output piped into another program (`cat f | jq`, `cat f |
 wc`), a command substitution or process substitution (`$(cat f)`, `<(cat f)`), a heredoc sent to
-another program's stdin, an unrecognized flag, and any path outside the working tree. A dotfile,
+another program's stdin, an unrecognized flag, and any path outside the working tree. Outside
+reads run as typed by hook policy; `lets show` and `lets find` can read them. A dotfile,
 key or credential is allowed as typed too, never blocked: in `cat src/a.ts && cat .env`, only the
 first segment is rewritten.
 

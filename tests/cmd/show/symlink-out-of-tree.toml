@@ -1,0 +1,8 @@
+bin.name = "sh"
+args = ["-c", "mkdir -p repo/.git && ln -s ../outside.txt repo/link.txt && cd repo && exec \"$CARGO_BIN_EXE_lets\" show link.txt"]
+
+[status]
+code = 0
+
+[fs]
+sandbox = true

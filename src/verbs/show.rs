@@ -213,7 +213,12 @@ fn narrowed(raw: &str) -> Option<Error> {
 
 fn outline_of(raw: &str, global: &Global) -> Result<OutlineBlock, Error> {
     let path = target::parse(raw).path;
-    fs::guard_scope(&path, global.allow_outside)?;
+    std::fs::canonicalize(&path).map_err(|source| {
+        mistyped(raw, Error::Io {
+            path: path.clone(),
+            source,
+        })
+    })?;
     let file = read_text(&path, global.max_file_bytes).map_err(|error| mistyped(raw, error))?;
     let extension = path.extension().unwrap_or_default().to_string_lossy();
     let lang = grammars::from_extension(&extension).ok_or_else(|| Error::NoGrammar {
@@ -291,9 +296,12 @@ fn resolve(
     omitted: &mut Vec<Omission>,
 ) -> Result<TargetBlock, Error> {
     let parsed = target::parse(raw);
-    // Containment is checked on the canonical path but the typed one is read, so messages carry
-    // no machine-specific absolute path.
-    fs::guard_scope(&parsed.path, global.allow_outside)?;
+    std::fs::canonicalize(&parsed.path).map_err(|source| {
+        mistyped(raw, Error::Io {
+            path: parsed.path.clone(),
+            source,
+        })
+    })?;
     let file =
         read_text(&parsed.path, global.max_file_bytes).map_err(|error| mistyped(raw, error))?;
     let newlines = fs::count_byte(file.content.as_bytes(), b'\n');
@@ -1154,7 +1162,7 @@ mod tests {
     }
 
     #[test]
-    fn a_path_outside_the_working_tree_is_refused_and_shows_nothing() {
+    fn a_path_outside_the_working_tree_reads_without_allow_outside() {
         let Some(_repo) = repo() else { return };
         let outside = TempDir::new().expect("a second, unrelated temp dir");
         write(outside.path(), "elsewhere.md", "secret\n");
@@ -1167,12 +1175,44 @@ mod tests {
 
         let outcome = show(&args(&[&target]), &global());
 
-        assert!(blocks(&outcome).is_empty());
-        assert!(
-            matches!(outcome.error, Some(Error::OutsideTree { .. })),
-            "{:?}",
-            outcome.error
-        );
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(only(&outcome).lines.len(), 1);
+        assert_eq!(only(&outcome).lines[0].text, "secret");
+    }
+
+    #[test]
+    fn an_outline_outside_the_working_tree_reads_without_allow_outside() {
+        let Some(_repo) = repo() else { return };
+        let outside = TempDir::new().expect("an unrelated temp dir");
+        let path = write(outside.path(), "elsewhere.rs", "fn outside() {}\n");
+        let target = path.to_str().expect("temp paths are UTF-8");
+        let mut args = args(&[target]);
+        args.outline = true;
+
+        let outcome = show(&args, &global());
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        let Body::Outline(blocks) = &outcome.response.body else {
+            panic!("expected Body::Outline");
+        };
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].entries.len(), 1);
+        assert_eq!(blocks[0].entries[0].sig, "fn outside() {}");
+    }
+
+    #[test]
+    fn a_symlink_outside_the_working_tree_reads_without_allow_outside() {
+        let Some(dir) = repo() else { return };
+        let outside = TempDir::new().expect("an unrelated temp dir");
+        let path = write(outside.path(), "elsewhere.md", "outside content\n");
+        std::os::unix::fs::symlink(path, dir.path().join("link.md"))
+            .expect("a symlink outside the tree");
+
+        let outcome = show(&args(&["link.md"]), &global());
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(only(&outcome).lines.len(), 1);
+        assert_eq!(only(&outcome).lines[0].text, "outside content");
     }
 
     #[test]
@@ -1193,6 +1233,7 @@ mod tests {
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert_eq!(only(&outcome).lines.len(), 1);
+        assert_eq!(only(&outcome).lines[0].text, "secret");
     }
 
     fn rendered(outcome: &Outcome, format: Format) -> String {
@@ -1314,7 +1355,7 @@ mod tests {
     }
 
     #[test]
-    fn every_failing_target_is_the_call_s_error_in_argument_order() {
+    fn an_outside_target_still_reads_beside_a_failing_target() {
         let Some(dir) = repo() else { return };
         write(dir.path(), "a.md", &numbered(3));
         let outside = TempDir::new().expect("a second, unrelated temp dir");
@@ -1328,17 +1369,11 @@ mod tests {
 
         let outcome = show(&args(&["a.md", "a.md:900", &escaped]), &global());
 
-        assert_eq!(blocks(&outcome).len(), 1);
-        match &outcome.error {
-            Some(Error::Several { errors }) => assert!(
-                matches!(errors.as_slice(), [
-                    Error::NotFound { .. },
-                    Error::OutsideTree { .. }
-                ]),
-                "the line target precedes the escaped path: {errors:?}"
-            ),
-            other => panic!("expected both failures, got {other:?}"),
-        }
+        assert_eq!(blocks(&outcome).len(), 2);
+        assert_eq!(blocks(&outcome)[1].lines[0].text, "secret");
+        assert!(
+            matches!(&outcome.error, Some(Error::NotFound { target, .. }) if target == "a.md:900")
+        );
         let error = outcome.error.as_ref().expect("a failure");
         assert_eq!(error.slug(), "not_found", "the first failure sets the slug");
     }
