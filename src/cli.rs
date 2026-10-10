@@ -448,7 +448,11 @@ mod tests {
 
     #[test]
     fn edit_values_accept_leading_hyphens() {
-        for (old, new) in [("- b", "- c"), ("--spring", "-webkit-x")] {
+        for (old, new) in [
+            ("- b", "- c"),
+            ("--spring", "-webkit-x"),
+            ("--spring", "--spring"),
+        ] {
             let cli = Cli::parse_argv(
                 ["lets", "edit", "f", "--old", old, "--new", new].map(OsString::from),
             )
@@ -460,21 +464,23 @@ mod tests {
             assert_eq!(args.new.as_deref(), Some(new));
         }
         for flag in ["--expect", "--insert-after", "--insert-before"] {
-            let cli = Cli::parse_argv(
-                ["lets", "edit", "f", flag, "- b", "--new", "- c"].map(OsString::from),
-            )
-            .unwrap();
-            let Verb::Edit(args) = cli.verb else {
-                panic!("expected Verb::Edit");
-            };
-            let value = match flag {
-                "--expect" => args.expect,
-                "--insert-after" => args.insert_after,
-                "--insert-before" => args.insert_before,
-                _ => unreachable!(),
-            };
-            assert_eq!(value.as_deref(), Some("- b"));
-            assert_eq!(args.new.as_deref(), Some("- c"));
+            for input in ["- b", "--spring"] {
+                let cli = Cli::parse_argv(
+                    ["lets", "edit", "f", flag, input, "--new", "- c"].map(OsString::from),
+                )
+                .unwrap();
+                let Verb::Edit(args) = cli.verb else {
+                    panic!("expected Verb::Edit");
+                };
+                let value = match flag {
+                    "--expect" => args.expect,
+                    "--insert-after" => args.insert_after,
+                    "--insert-before" => args.insert_before,
+                    _ => unreachable!(),
+                };
+                assert_eq!(value.as_deref(), Some(input));
+                assert_eq!(args.new.as_deref(), Some("- c"));
+            }
         }
     }
 
@@ -502,10 +508,16 @@ mod tests {
                 "k=-1",
                 "--set",
                 "-k=1",
+                "--set",
+                "--spring=1",
                 "--delete",
                 "-x",
+                "--delete",
+                "--spring",
                 "--append",
                 "-items[]=x",
+                "--append",
+                "--spring[]=x",
             ]
             .map(OsString::from),
         )
@@ -513,13 +525,16 @@ mod tests {
         let Verb::Transform(args) = cli.verb else {
             panic!("expected Verb::Transform");
         };
-        assert_eq!(args.set, ["k=-1", "-k=1"]);
-        assert_eq!(args.delete, ["-x"]);
-        assert_eq!(args.append, ["-items[]=x"]);
+        assert_eq!(args.set, ["k=-1", "-k=1", "--spring=1"]);
+        assert_eq!(args.delete, ["-x", "--spring"]);
+        assert_eq!(args.append, ["-items[]=x", "--spring[]=x"]);
         assert_eq!(args.order, [
             OpKind::Set,
             OpKind::Set,
+            OpKind::Set,
             OpKind::Delete,
+            OpKind::Delete,
+            OpKind::Append,
             OpKind::Append
         ]);
     }
