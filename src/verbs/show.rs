@@ -327,7 +327,10 @@ fn resolve(
     let (bounds, truncation, resolver) = match &parsed.kind {
         target::Kind::Whole => {
             let size = if args.all { total } else { args.window };
-            let (bounds, omission) = window::window(total, size);
+            let (bounds, mut omission) = window::window(total, size);
+            if let Some(Omission::Window { target, .. }) = &mut omission {
+                raw.clone_into(target);
+            }
             // Recorded even when nothing is left: `--window 0` is a narrowing the footer names.
             let named = omission.is_some();
             omitted.extend(omission);
@@ -712,7 +715,7 @@ mod tests {
     #[test]
     fn a_whole_file_over_the_window_names_the_range_the_window_and_the_rest() {
         let Some(dir) = repo() else { return };
-        write(dir.path(), "big.md", &numbered(243));
+        write(dir.path(), "big.md", &numbered(301));
 
         let outcome = show(&args(&["big.md"]), &global());
 
@@ -722,22 +725,56 @@ mod tests {
             Some(Span {
                 start: 1,
                 end: 200,
-                total: 243
+                total: 301
             })
         );
         assert_eq!(block.window, Some(200));
-        assert_eq!(block.not_shown, Some((201, 243)));
+        assert_eq!(block.not_shown, Some((201, 301)));
         assert_eq!(block.lines.len(), 200);
         assert!(matches!(outcome.response.omitted.as_slice(), [
             Omission::Window {
                 shown: (1, 200),
-                total: 243
+                total: 301,
+                target,
             }
-        ]));
+        ] if target == "big.md"));
         assert!(
-            header(&outcome).contains("(1-200 of 243 · window 200 · :201-243 not shown)"),
+            header(&outcome).contains("(1-200 of 301 · window 200 · :201-301 not shown)"),
             "{}",
             header(&outcome)
+        );
+    }
+
+    #[test]
+    fn default_window_absorbs_150_lines_but_cuts_151_and_names_each_target() {
+        let Some(dir) = repo() else { return };
+        write(dir.path(), "medium.txt", &numbered(150));
+        write(dir.path(), "big.txt", &numbered(151));
+        write(dir.path(), "larger.txt", &numbered(212));
+        let mut args = args(&["medium.txt", "big.txt", "larger.txt"]);
+        args.window = 100;
+
+        let outcome = show(&args, &global());
+
+        assert!(outcome.error.is_none());
+        let shown = blocks(&outcome);
+        assert_eq!(shown[0].lines.len(), 150);
+        assert_eq!(shown[0].lines[149].number, 150);
+        assert_eq!(shown[0].window, None);
+        assert_eq!(shown[0].not_shown, None);
+        assert_eq!(shown[1].lines.len(), 100);
+        assert_eq!(shown[1].not_shown, Some((101, 151)));
+        assert_eq!(shown[2].lines.len(), 100);
+        assert_eq!(shown[2].not_shown, Some((101, 212)));
+        let rendered = crate::output::render(&outcome.response, Format::Text, &RenderOptions {
+            numbers: true,
+            quiet: false,
+        });
+        assert_eq!(
+            rendered.lines().last(),
+            Some(
+                "── showed 3 targets · 350 lines · big.txt:101-151 not shown · larger.txt:101-212 not shown"
+            )
         );
     }
 

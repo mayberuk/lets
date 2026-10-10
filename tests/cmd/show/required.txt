@@ -1,4 +1,5 @@
 whole-file-fits.toml
+small-remainder-absorbed.toml
 window-truncated.toml
 line-range.toml
 symbol-resolves.toml

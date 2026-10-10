@@ -3,4 +3,4 @@
   2 	// Total file length and the usage() span are pinned to spec.md's own worked
   3 	// example (38-61 of 212) so a golden's numbers come from the spec, not a run.
   4 	// filler 4
-── showed 1 target · 100 lines · :101-212 not shown · output lines 6-102 not shown (--head 5)
+── showed 1 target · 100 lines · big.ts:101-212 not shown · output lines 6-102 not shown (--head 5)

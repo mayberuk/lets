@@ -26,7 +26,7 @@ tool. See [target grammar](/docs/targets/) (`path`, `path:40`, `path:40-80`,
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `--window <N>` | cap lines shown per whole-file target | 200 |
+| `--window <N>` | show the first N lines per whole-file target; show all when total ≤ N + floor(N/2) | 100 |
 | `--all` | disable the window; print a cost line before the content | off |
 | `-A <N>` | lines of context after a `:line` or `@'regex'` target | — |
 | `-B <N>` | lines of context before | — |
@@ -51,7 +51,7 @@ tool. See [target grammar](/docs/targets/) (`path`, `path:40`, `path:40-80`,
 ── <target>  (<start>-<end> of <total>[ · window W · :x-y not shown][ · via R])[ · crlf][ · non-UTF-8 lines …]
  <n>	<line text>
 ...
-── showed <N> targets · <lines> lines[ · <cost>]
+── showed <N> targets · <lines> lines[ · <target>:x-y not shown][ · <cost>]
 ```
 
 - A read carries no `sha:`. `edit` prints the file's hash after every edit, for `edit --if sha:…`.
@@ -145,13 +145,15 @@ $ lets show "src/usage.ts@'const cap'" -A 2
 ── showed 1 target · 3 lines
 ```
 
-A file over the default window is truncated and the footer names what was left out:
+A bare file shows the first 100 lines, with files of up to 150 lines shown whole to absorb a small
+remainder. `--window N` scales this threshold to N + floor(N/2). Pass a range, `#symbol` or `--all`
+when you need more. A larger file is truncated and the footer names its target and omitted range:
 
 ```console
 $ lets show big.ts
-── big.ts  (1-200 of 212 · window 200 · :201-212 not shown)
+── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
 ...
-── showed 1 target · 200 lines · :201-212 not shown
+── showed 1 target · 100 lines · big.ts:101-212 not shown
 ```
 
 Two missing targets alongside one that resolved — the call still exits 1, but everything found

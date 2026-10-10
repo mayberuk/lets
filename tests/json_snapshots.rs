@@ -87,6 +87,8 @@ fn show_a_truncated_whole_file_target_as_json() {
     assert!(run.err.is_empty(), "{}", run.err);
     assert!(run.out.contains("\"window\":100"));
     assert!(run.out.contains("\"not_shown\":[101,212]"));
+    let response: serde_json::Value = serde_json::from_str(&run.out).unwrap();
+    assert_eq!(response["omitted"][0]["window"]["target"], "big.ts");
     insta::assert_snapshot!(run.out);
 }
 
