@@ -213,7 +213,12 @@ fn narrowed(raw: &str) -> Option<Error> {
 
 fn outline_of(raw: &str, global: &Global) -> Result<OutlineBlock, Error> {
     let path = target::parse(raw).path;
-    fs::guard_scope(&path, global.allow_outside)?;
+    std::fs::canonicalize(&path).map_err(|source| {
+        mistyped(raw, Error::Io {
+            path: path.clone(),
+            source,
+        })
+    })?;
     let file = read_text(&path, global.max_file_bytes).map_err(|error| mistyped(raw, error))?;
     let extension = path.extension().unwrap_or_default().to_string_lossy();
     let lang = grammars::from_extension(&extension).ok_or_else(|| Error::NoGrammar {
@@ -291,9 +296,12 @@ fn resolve(
     omitted: &mut Vec<Omission>,
 ) -> Result<TargetBlock, Error> {
     let parsed = target::parse(raw);
-    // Containment is checked on the canonical path but the typed one is read, so messages carry
-    // no machine-specific absolute path.
-    fs::guard_scope(&parsed.path, global.allow_outside)?;
+    std::fs::canonicalize(&parsed.path).map_err(|source| {
+        mistyped(raw, Error::Io {
+            path: parsed.path.clone(),
+            source,
+        })
+    })?;
     let file =
         read_text(&parsed.path, global.max_file_bytes).map_err(|error| mistyped(raw, error))?;
     let newlines = fs::count_byte(file.content.as_bytes(), b'\n');
@@ -319,7 +327,10 @@ fn resolve(
     let (bounds, truncation, resolver) = match &parsed.kind {
         target::Kind::Whole => {
             let size = if args.all { total } else { args.window };
-            let (bounds, omission) = window::window(total, size);
+            let (bounds, mut omission) = window::window(total, size);
+            if let Some(Omission::Window { target, .. }) = &mut omission {
+                raw.clone_into(target);
+            }
             // Recorded even when nothing is left: `--window 0` is a narrowing the footer names.
             let named = omission.is_some();
             omitted.extend(omission);
@@ -704,7 +715,7 @@ mod tests {
     #[test]
     fn a_whole_file_over_the_window_names_the_range_the_window_and_the_rest() {
         let Some(dir) = repo() else { return };
-        write(dir.path(), "big.md", &numbered(243));
+        write(dir.path(), "big.md", &numbered(301));
 
         let outcome = show(&args(&["big.md"]), &global());
 
@@ -714,22 +725,56 @@ mod tests {
             Some(Span {
                 start: 1,
                 end: 200,
-                total: 243
+                total: 301
             })
         );
         assert_eq!(block.window, Some(200));
-        assert_eq!(block.not_shown, Some((201, 243)));
+        assert_eq!(block.not_shown, Some((201, 301)));
         assert_eq!(block.lines.len(), 200);
         assert!(matches!(outcome.response.omitted.as_slice(), [
             Omission::Window {
                 shown: (1, 200),
-                total: 243
+                total: 301,
+                target,
             }
-        ]));
+        ] if target == "big.md"));
         assert!(
-            header(&outcome).contains("(1-200 of 243 · window 200 · :201-243 not shown)"),
+            header(&outcome).contains("(1-200 of 301 · window 200 · :201-301 not shown)"),
             "{}",
             header(&outcome)
+        );
+    }
+
+    #[test]
+    fn default_window_absorbs_150_lines_but_cuts_151_and_names_each_target() {
+        let Some(dir) = repo() else { return };
+        write(dir.path(), "medium.txt", &numbered(150));
+        write(dir.path(), "big.txt", &numbered(151));
+        write(dir.path(), "larger.txt", &numbered(212));
+        let mut args = args(&["medium.txt", "big.txt", "larger.txt"]);
+        args.window = 100;
+
+        let outcome = show(&args, &global());
+
+        assert!(outcome.error.is_none());
+        let shown = blocks(&outcome);
+        assert_eq!(shown[0].lines.len(), 150);
+        assert_eq!(shown[0].lines[149].number, 150);
+        assert_eq!(shown[0].window, None);
+        assert_eq!(shown[0].not_shown, None);
+        assert_eq!(shown[1].lines.len(), 100);
+        assert_eq!(shown[1].not_shown, Some((101, 151)));
+        assert_eq!(shown[2].lines.len(), 100);
+        assert_eq!(shown[2].not_shown, Some((101, 212)));
+        let rendered = crate::output::render(&outcome.response, Format::Text, &RenderOptions {
+            numbers: true,
+            quiet: false,
+        });
+        assert_eq!(
+            rendered.lines().last(),
+            Some(
+                "── showed 3 targets · 350 lines · big.txt:101-151 not shown · larger.txt:101-212 not shown"
+            )
         );
     }
 
@@ -1154,7 +1199,7 @@ mod tests {
     }
 
     #[test]
-    fn a_path_outside_the_working_tree_is_refused_and_shows_nothing() {
+    fn a_path_outside_the_working_tree_reads_without_allow_outside() {
         let Some(_repo) = repo() else { return };
         let outside = TempDir::new().expect("a second, unrelated temp dir");
         write(outside.path(), "elsewhere.md", "secret\n");
@@ -1167,12 +1212,44 @@ mod tests {
 
         let outcome = show(&args(&[&target]), &global());
 
-        assert!(blocks(&outcome).is_empty());
-        assert!(
-            matches!(outcome.error, Some(Error::OutsideTree { .. })),
-            "{:?}",
-            outcome.error
-        );
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(only(&outcome).lines.len(), 1);
+        assert_eq!(only(&outcome).lines[0].text, "secret");
+    }
+
+    #[test]
+    fn an_outline_outside_the_working_tree_reads_without_allow_outside() {
+        let Some(_repo) = repo() else { return };
+        let outside = TempDir::new().expect("an unrelated temp dir");
+        let path = write(outside.path(), "elsewhere.rs", "fn outside() {}\n");
+        let target = path.to_str().expect("temp paths are UTF-8");
+        let mut args = args(&[target]);
+        args.outline = true;
+
+        let outcome = show(&args, &global());
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        let Body::Outline(blocks) = &outcome.response.body else {
+            panic!("expected Body::Outline");
+        };
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].entries.len(), 1);
+        assert_eq!(blocks[0].entries[0].sig, "fn outside() {}");
+    }
+
+    #[test]
+    fn a_symlink_outside_the_working_tree_reads_without_allow_outside() {
+        let Some(dir) = repo() else { return };
+        let outside = TempDir::new().expect("an unrelated temp dir");
+        let path = write(outside.path(), "elsewhere.md", "outside content\n");
+        std::os::unix::fs::symlink(path, dir.path().join("link.md"))
+            .expect("a symlink outside the tree");
+
+        let outcome = show(&args(&["link.md"]), &global());
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(only(&outcome).lines.len(), 1);
+        assert_eq!(only(&outcome).lines[0].text, "outside content");
     }
 
     #[test]
@@ -1193,6 +1270,7 @@ mod tests {
 
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
         assert_eq!(only(&outcome).lines.len(), 1);
+        assert_eq!(only(&outcome).lines[0].text, "secret");
     }
 
     fn rendered(outcome: &Outcome, format: Format) -> String {
@@ -1314,7 +1392,7 @@ mod tests {
     }
 
     #[test]
-    fn every_failing_target_is_the_call_s_error_in_argument_order() {
+    fn an_outside_target_still_reads_beside_a_failing_target() {
         let Some(dir) = repo() else { return };
         write(dir.path(), "a.md", &numbered(3));
         let outside = TempDir::new().expect("a second, unrelated temp dir");
@@ -1328,17 +1406,11 @@ mod tests {
 
         let outcome = show(&args(&["a.md", "a.md:900", &escaped]), &global());
 
-        assert_eq!(blocks(&outcome).len(), 1);
-        match &outcome.error {
-            Some(Error::Several { errors }) => assert!(
-                matches!(errors.as_slice(), [
-                    Error::NotFound { .. },
-                    Error::OutsideTree { .. }
-                ]),
-                "the line target precedes the escaped path: {errors:?}"
-            ),
-            other => panic!("expected both failures, got {other:?}"),
-        }
+        assert_eq!(blocks(&outcome).len(), 2);
+        assert_eq!(blocks(&outcome)[1].lines[0].text, "secret");
+        assert!(
+            matches!(&outcome.error, Some(Error::NotFound { target, .. }) if target == "a.md:900")
+        );
         let error = outcome.error.as_ref().expect("a failure");
         assert_eq!(error.slug(), "not_found", "the first failure sets the slug");
     }

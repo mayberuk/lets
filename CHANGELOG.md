@@ -6,6 +6,24 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+### Changed
+
+- `lets show` and `lets find` read files outside the git checkout, such as `~/.claude/CLAUDE.md`
+  or a scratch directory, without `--allow-outside`. `edit`, `write` and `transform` still refuse
+  a target outside the checkout with exit 6 (`outside_tree`).
+- A bare file target up to one and a half windows long (150 lines by default) shows whole instead
+  of stopping at line 100.
+- Each cut in the `show` footer names its file, as in `big.ts:101-212 not shown`, and the JSON
+  `window` omission carries a `target` field.
+- The `over_budget` message names `--max-bytes` and suggests a line range or fewer targets.
+- The Codex session-start paragraph says a bare file shows its first 100 lines, and how to read
+  more.
+
+### Fixed
+
+- An `edit` or `transform` value that starts with `-`, such as a Markdown bullet `- b` or a
+  `-webkit-` CSS property, is taken as the value instead of being refused as an unknown flag.
+
 ## [0.0.8] - 2026-10-09
 
 ### Fixed

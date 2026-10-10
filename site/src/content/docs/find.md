@@ -48,7 +48,7 @@ matched only because case was ignored is named in the footer.
 | `--no-expand` | print hit lines only, never the enclosing symbol or the lines around a hit | off |
 | `--no-numbers` | print hit lines with no line-number gutter | off |
 | `--no-ignore` | do not honor `.gitignore`/`.ignore`/global excludes | off |
-| `--allow-outside` | permit a path outside the working tree | off |
+| `--allow-outside` | applies to writes; `find` searches outside the working tree without it | off |
 | `--head <N>` | print the first N output lines; name any cut in a footer, preserving the original footer if removed; text only | unset |
 | `--json` / `--jsonl` | structured output | off |
 | `--budget <N>` | shape the answer to ~N tokens | unset |
@@ -105,7 +105,6 @@ Over the cap, no hit lines print. Instead:
 | 1 | `over_cap` | hit count exceeded the cap; the top-files map was printed instead |
 | 1 | `invalid_pattern` | the regex does not parse |
 | 4 | `over_budget` | content exceeded `--max-bytes` and no `--budget` was given |
-| 6 | `outside_tree` | a path is outside the working tree; pass `--allow-outside` |
 | 64 | `usage` | malformed flag, e.g. `-v` |
 
 ## Examples

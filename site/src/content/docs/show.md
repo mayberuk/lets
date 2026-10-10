@@ -26,7 +26,7 @@ tool. See [target grammar](/docs/targets/) (`path`, `path:40`, `path:40-80`,
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `--window <N>` | cap lines shown per whole-file target | 200 |
+| `--window <N>` | show the first N lines per whole-file target; show all when total ≤ N + floor(N/2) | 100 |
 | `--all` | disable the window; print a cost line before the content | off |
 | `-A <N>` | lines of context after a `:line` or `@'regex'` target | — |
 | `-B <N>` | lines of context before | — |
@@ -41,7 +41,7 @@ tool. See [target grammar](/docs/targets/) (`path`, `path:40`, `path:40-80`,
 | `--max-bytes <N>` | refuse (exit 4) if content exceeds N bytes and no `--budget` given | 65536 |
 | `--max-file-bytes <N>` | files larger than this are refused | 8388608 |
 | `--no-ignore` | do not honor `.gitignore` (only matters when a target resolves through a directory scan) | off |
-| `--allow-outside` | permit a target outside the working tree | off |
+| `--allow-outside` | applies to writes; `show` reads outside the working tree without it | off |
 | `--no-check` | no effect on `show` (shared flag; `show` never runs a checker) | off |
 | `-q, --quiet` | (shared flag; `show` already prints only the footer plus content) | off |
 
@@ -51,7 +51,7 @@ tool. See [target grammar](/docs/targets/) (`path`, `path:40`, `path:40-80`,
 ── <target>  (<start>-<end> of <total>[ · window W · :x-y not shown][ · via R])[ · crlf][ · non-UTF-8 lines …]
  <n>	<line text>
 ...
-── showed <N> targets · <lines> lines[ · <cost>]
+── showed <N> targets · <lines> lines[ · <target>:x-y not shown][ · <cost>]
 ```
 
 - A read carries no `sha:`. `edit` prints the file's hash after every edit, for `edit --if sha:…`.
@@ -96,7 +96,6 @@ resolve), one line each, in source order:
 | 1 | `no_grammar` | `--outline` on a file with no bundled grammar |
 | 2 | `ambiguous` | a `#name` target matched more than one symbol; every candidate listed |
 | 4 | `over_budget` | content exceeded `--max-bytes` and no `--budget` was given |
-| 6 | `outside_tree` | the target is outside the working tree; pass `--allow-outside` |
 | 7 | `unsupported_file` | binary, hardlinked, or a directory given as a target |
 | 64 | `usage` | malformed command line |
 
@@ -146,13 +145,15 @@ $ lets show "src/usage.ts@'const cap'" -A 2
 ── showed 1 target · 3 lines
 ```
 
-A file over the default window is truncated and the footer names what was left out:
+A bare file shows the first 100 lines, with files of up to 150 lines shown whole to absorb a small
+remainder. `--window N` scales this threshold to N + floor(N/2). Pass a range, `#symbol` or `--all`
+when you need more. A larger file is truncated and the footer names its target and omitted range:
 
 ```console
 $ lets show big.ts
-── big.ts  (1-200 of 212 · window 200 · :201-212 not shown)
+── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
 ...
-── showed 1 target · 200 lines · :201-212 not shown
+── showed 1 target · 100 lines · big.ts:101-212 not shown
 ```
 
 Two missing targets alongside one that resolved — the call still exits 1, but everything found

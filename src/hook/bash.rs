@@ -737,8 +737,8 @@ enum Fit {
     Exact,
     /// Runs as typed: the original prints something one `lets show` cannot.
     Unreproducible,
-    /// Runs as typed even where a deny would otherwise follow: a dotfile, key or credential, or a
-    /// file outside the tree, once symlinks resolve.
+    /// Hook policy leaves dotfiles, keys, credentials and files outside the tree as typed,
+    /// including paths whose symlinks resolve outside it.
     Refused,
 }
 
@@ -796,8 +796,8 @@ fn fit(reads: &[(PathBuf, Extent)], root: &Path) -> Fit {
 
 /// True when a statement runs as typed, unclassified like one this walk does not recognise: one
 /// `lets show` would print less than its reads, or it names a dotfile, key or credential, or a
-/// path outside the tree, as typed or once a `cd`, a glob or a symlink resolves. `lets` refuses
-/// those paths, so a deny would name a replacement that cannot run.
+/// path outside the tree, as typed or once a `cd`, a glob or a symlink resolves. Leaving those
+/// paths as typed is hook policy, even though `lets show` and `lets find` can read outside it.
 fn left_as_typed(found: &[Finding], dirs: Dirs) -> bool {
     let mut reads = Vec::new();
     let mut every_extent = true;

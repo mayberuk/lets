@@ -1,0 +1,5 @@
+── notes.md · 1 replacement · line 2 · expect matched
+1 	- a
+2~	- replaced
+3 	- c
+── check: structure ok · sha:abab56b829a4→2f9569f97be7

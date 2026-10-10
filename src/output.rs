@@ -496,6 +496,7 @@ impl Serialize for Stats {
 #[serde(rename_all = "snake_case")]
 pub enum Omission {
     Window {
+        target: String,
         shown: (usize, usize),
         total: usize,
     },
@@ -700,7 +701,13 @@ impl fmt::Display for Omission {
     )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Omission::Window { shown, total } => write!(f, ":{}-{total} not shown", shown.1 + 1),
+            Omission::Window {
+                target,
+                shown,
+                total,
+            } => {
+                write!(f, "{target}:{}-{total} not shown", shown.1 + 1)
+            },
             Omission::Budget {
                 budget,
                 trimmed_target,
@@ -1860,18 +1867,19 @@ mod tests {
         let mut resp = targets(vec![a, b], 0);
         resp.footer.summary = "showed 2 targets · 3 lines".to_owned();
         resp.omitted.push(Omission::Window {
+            target: "b".to_owned(),
             shown: (1, 3),
             total: 5,
         });
         resp.head = Some(2);
         assert_eq!(
             render_text(&resp, opts()),
-            "── a\n1 \tone\n── showed 2 targets · 3 lines · :4-5 not shown · output lines 3-6 not shown (--head 2)\n"
+            "── a\n1 \tone\n── showed 2 targets · 3 lines · b:4-5 not shown · output lines 3-6 not shown (--head 2)\n"
         );
         resp.head = Some(5);
         assert_eq!(
             render_text(&resp, opts()),
-            "── a\n1 \tone\n── b\n1 \ttwo\n2 \tthree\n── showed 2 targets · 3 lines · :4-5 not shown · output lines 6-6 not shown (--head 5)\n"
+            "── a\n1 \tone\n── b\n1 \ttwo\n2 \tthree\n── showed 2 targets · 3 lines · b:4-5 not shown · output lines 6-6 not shown (--head 5)\n"
         );
     }
 
@@ -1990,6 +1998,7 @@ mod tests {
         let mut resp = targets(vec![b], 0);
         resp.footer.summary = "showed 1 target · 2 lines".to_owned();
         resp.omitted = vec![Omission::Window {
+            target: "big.md".to_owned(),
             shown: (1, 2),
             total: 243,
         }];
@@ -1997,7 +2006,7 @@ mod tests {
 
         let out = render(&resp, Format::Text, &opts());
 
-        assert_eq!(out, "1 \tone\n2 \ttwo\n── :3-243 not shown\n");
+        assert_eq!(out, "1 \tone\n2 \ttwo\n── big.md:3-243 not shown\n");
     }
 
     #[test]
@@ -2382,11 +2391,12 @@ mod tests {
     fn every_omission_renders_the_words_its_worked_example_uses() {
         assert_eq!(
             Omission::Window {
+                target: "big.md".to_owned(),
                 shown: (1, 200),
                 total: 243,
             }
             .to_string(),
-            ":201-243 not shown"
+            "big.md:201-243 not shown"
         );
         assert_eq!(
             Omission::Budget {

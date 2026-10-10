@@ -19,7 +19,7 @@ delta
 $ lets show poem.txt --no-header --window 2
 1 	alpha
 2 		beta
-── :3-5 not shown
+── poem.txt:3-5 not shown
 
 $ lets show poem.txt --no-header
 1 	alpha

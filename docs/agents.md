@@ -187,8 +187,9 @@ rewrite. A read `lets show` would not print exactly (a budget cut, a normalized 
 named twice, which one `lets show` prints once) is allowed through unmodified rather than
 rewritten or denied — a wrong rewrite is worse than none.
 
-A path that is a dotfile, a key or a credential, or lies outside the working tree, is allowed as
-typed, never denied: in `cat src/a.ts && cat .env`, only the first segment is rewritten. A glob is
+By hook policy, a path that is a dotfile, a key or a credential, or lies outside the working tree,
+is allowed as typed, never denied; `lets show` and `lets find` can read outside the tree. In
+`cat src/a.ts && cat .env`, only the first segment is rewritten. A glob is
 expanded as bash would, and the read or search is rewritten with the glob kept as typed
 (`cat src/*.ts` becomes `lets show src/*.ts --all --no-numbers`) only when every match is a file
 the rewrite may read; a glob matching nothing, a directory or a dot entry runs as typed. A
@@ -302,6 +303,8 @@ The paragraph:
 > | `sed -i 's/a/b/'` | `lets edit f.ts --old a --new b` |
 > | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 > | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
+>
+> A bare file shows its first 100 lines, so pass a range, `#symbol` or `--all` when you need more.
 >
 > Several edits and the build in one call; each `old` is exact text that occurs once:
 >

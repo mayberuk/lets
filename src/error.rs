@@ -35,7 +35,9 @@ pub enum Error {
         layer: CheckLayer,
         detail: String,
     },
-    #[error("content is {bytes} bytes, over the {limit}-byte budget")]
+    #[error(
+        "content is {bytes} bytes, over --max-bytes {limit}; pass a line range or fewer targets"
+    )]
     OverBudget { bytes: u64, limit: u64 },
     #[error("{} changed since sha:{expected} (now sha:{actual})", path.display())]
     Changed {

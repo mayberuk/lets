@@ -83,7 +83,7 @@ $ lets show big.ts --head 5
   2 	// Total file length and the usage() span are pinned to spec.md's own worked
   3 	// example (38-61 of 212) so a golden's numbers come from the spec, not a run.
   4 	// filler 4
-── showed 1 target · 100 lines · :101-212 not shown · output lines 6-102 not shown (--head 5)
+── showed 1 target · 100 lines · big.ts:101-212 not shown · output lines 6-102 not shown (--head 5)
 
 ```
 
@@ -218,7 +218,7 @@ $ lets show big.ts --head 102
  98 	// filler 98
  99 	// filler 99
 100 	// filler 100
-── showed 1 target · 100 lines · :101-212 not shown
+── showed 1 target · 100 lines · big.ts:101-212 not shown
 
 ```
 
@@ -406,7 +406,7 @@ delta
 $ lets show poem.txt --no-header --window 2
 1 	alpha
 2 		beta
-── :3-5 not shown
+── poem.txt:3-5 not shown
 
 $ lets show poem.txt --no-header
 1 	alpha
@@ -562,10 +562,11 @@ $ lets show lib.rs store.go --outline
 ```
 
 ```console
-$ lets show ../../../..
-? 6
-../../../.. is outside the working tree
-ERROR_CODE=outside_tree
+$ sh -c 'mkdir -p repo/.git && printf '\''outside content\n'\'' > outside.txt && cd repo && exec "$CARGO_BIN_EXE_lets" show ../outside.txt'
+? 0
+── ../outside.txt  (1-1 of 1)
+1 	outside content
+── showed 1 target · 1 line
 
 ```
 
@@ -573,14 +574,14 @@ ERROR_CODE=outside_tree
 $ lets show big.ts --max-bytes 100 --budget 1000
 ── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
 ...
-── showed 1 target · 100 lines · :101-212 not shown
+── showed 1 target · 100 lines · big.ts:101-212 not shown
 
 ```
 
 ```console
 $ lets show big.ts --max-bytes 100
 ? 4
-content is [..] bytes, over the 100-byte budget
+content is [..] bytes, over --max-bytes 100; pass a line range or fewer targets
 ERROR_CODE=over_budget
 
 ```
@@ -594,6 +595,153 @@ $ lets show nope1.ts small.md:3 nope2.ts
 nope1.ts: No such file or directory (os error 2)
 nope2.ts: No such file or directory (os error 2)
 ERROR_CODE=not_found
+
+```
+
+```console
+$ lets show medium.txt
+── medium.txt  (1-140 of 140)
+  1 	line 1
+  2 	line 2
+  3 	line 3
+  4 	line 4
+  5 	line 5
+  6 	line 6
+  7 	line 7
+  8 	line 8
+  9 	line 9
+ 10 	line 10
+ 11 	line 11
+ 12 	line 12
+ 13 	line 13
+ 14 	line 14
+ 15 	line 15
+ 16 	line 16
+ 17 	line 17
+ 18 	line 18
+ 19 	line 19
+ 20 	line 20
+ 21 	line 21
+ 22 	line 22
+ 23 	line 23
+ 24 	line 24
+ 25 	line 25
+ 26 	line 26
+ 27 	line 27
+ 28 	line 28
+ 29 	line 29
+ 30 	line 30
+ 31 	line 31
+ 32 	line 32
+ 33 	line 33
+ 34 	line 34
+ 35 	line 35
+ 36 	line 36
+ 37 	line 37
+ 38 	line 38
+ 39 	line 39
+ 40 	line 40
+ 41 	line 41
+ 42 	line 42
+ 43 	line 43
+ 44 	line 44
+ 45 	line 45
+ 46 	line 46
+ 47 	line 47
+ 48 	line 48
+ 49 	line 49
+ 50 	line 50
+ 51 	line 51
+ 52 	line 52
+ 53 	line 53
+ 54 	line 54
+ 55 	line 55
+ 56 	line 56
+ 57 	line 57
+ 58 	line 58
+ 59 	line 59
+ 60 	line 60
+ 61 	line 61
+ 62 	line 62
+ 63 	line 63
+ 64 	line 64
+ 65 	line 65
+ 66 	line 66
+ 67 	line 67
+ 68 	line 68
+ 69 	line 69
+ 70 	line 70
+ 71 	line 71
+ 72 	line 72
+ 73 	line 73
+ 74 	line 74
+ 75 	line 75
+ 76 	line 76
+ 77 	line 77
+ 78 	line 78
+ 79 	line 79
+ 80 	line 80
+ 81 	line 81
+ 82 	line 82
+ 83 	line 83
+ 84 	line 84
+ 85 	line 85
+ 86 	line 86
+ 87 	line 87
+ 88 	line 88
+ 89 	line 89
+ 90 	line 90
+ 91 	line 91
+ 92 	line 92
+ 93 	line 93
+ 94 	line 94
+ 95 	line 95
+ 96 	line 96
+ 97 	line 97
+ 98 	line 98
+ 99 	line 99
+100 	line 100
+101 	line 101
+102 	line 102
+103 	line 103
+104 	line 104
+105 	line 105
+106 	line 106
+107 	line 107
+108 	line 108
+109 	line 109
+110 	line 110
+111 	line 111
+112 	line 112
+113 	line 113
+114 	line 114
+115 	line 115
+116 	line 116
+117 	line 117
+118 	line 118
+119 	line 119
+120 	line 120
+121 	line 121
+122 	line 122
+123 	line 123
+124 	line 124
+125 	line 125
+126 	line 126
+127 	line 127
+128 	line 128
+129 	line 129
+130 	line 130
+131 	line 131
+132 	line 132
+133 	line 133
+134 	line 134
+135 	line 135
+136 	line 136
+137 	line 137
+138 	line 138
+139 	line 139
+140 	line 140
+── showed 1 target · 140 lines
 
 ```
 
@@ -651,6 +799,15 @@ $ lets show 't.toml#package'
 ```
 
 ```console
+$ sh -c 'mkdir -p repo/.git && ln -s ../outside.txt repo/link.txt && cd repo && exec "$CARGO_BIN_EXE_lets" show link.txt'
+? 0
+── link.txt  (1-1 of 1)
+1 	outside content
+── showed 1 target · 1 line
+
+```
+
+```console
 $ lets show small.md
 ── small.md  (1-15 of 15)
 ...
@@ -662,6 +819,6 @@ $ lets show small.md
 $ lets show big.ts
 ── big.ts  (1-100 of 212 · window 100 · :101-212 not shown)
 ...
-── showed 1 target · 100 lines · :101-212 not shown
+── showed 1 target · 100 lines · big.ts:101-212 not shown
 
 ```

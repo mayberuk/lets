@@ -23,6 +23,8 @@ const CODEX_SESSION_START_PARAGRAPH: &str = r"# File work: use `lets` through Ba
 | edit JSON/YAML/TOML | `lets transform f.json --set version=1.4.0` |
 | `cat > new.ts <<'EOF'` | `lets write new.ts <<'EOF'` |
 
+A bare file shows its first 100 lines, so pass a range, `#symbol` or `--all` when you need more.
+
 Several edits and the build in one call; each `old` is exact text that occurs once:
 
 ```

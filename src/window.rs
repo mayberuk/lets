@@ -16,13 +16,17 @@ impl Bounds {
     }
 }
 
+// 2026-10-10 audit: 22% of 441 cut Codex files had ≤50 lines past a 100-line window.
+const SMALL_REMAINDER_DIVISOR: usize = 2;
+
 pub fn window(total: usize, size: usize) -> (Option<Bounds>, Option<Omission>) {
-    if total <= size {
+    if total <= size.saturating_add(size / SMALL_REMAINDER_DIVISOR) {
         return (Bounds::checked(1, total, total), None);
     }
     (
         Bounds::checked(1, size, total),
         Some(Omission::Window {
+            target: String::new(),
             shown: (1, size),
             total,
         }),
@@ -173,16 +177,43 @@ mod tests {
     }
 
     #[test]
-    fn window_243_200_shows_the_first_200_and_names_what_is_left() {
-        let (found, omission) = window(243, 200);
+    fn window_301_200_shows_the_first_200_and_names_what_is_left() {
+        let (found, omission) = window(301, 200);
         assert_eq!(found, Some(bounds(1, 200)));
         match omission {
-            Some(Omission::Window { shown, total }) => {
+            Some(Omission::Window { shown, total, .. }) => {
                 assert_eq!(shown, (1, 200));
-                assert_eq!(total, 243);
+                assert_eq!(total, 301);
             },
             other => panic!("expected Omission::Window, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_small_remainder_is_absorbed_at_each_window_scale() {
+        for (size, total) in [(100, 150), (10, 15), (3, 4)] {
+            let (found, omission) = window(total, size);
+            assert_eq!(found, Some(bounds(1, total)));
+            assert!(omission.is_none());
+        }
+    }
+
+    #[test]
+    fn one_line_past_the_absorb_threshold_is_windowed() {
+        for (size, total) in [(100, 151), (10, 16), (3, 5)] {
+            let (found, omission) = window(total, size);
+            assert_eq!(found, Some(bounds(1, size)));
+            assert!(
+                matches!(omission, Some(Omission::Window { shown: (1, end), total: omitted_total, .. }) if end == size && omitted_total == total)
+            );
+        }
+    }
+
+    #[test]
+    fn an_absorb_threshold_above_usize_max_shows_the_whole_file() {
+        let (found, omission) = window(usize::MAX, usize::MAX - 1);
+        assert_eq!(found, Some(bounds(1, usize::MAX)));
+        assert!(omission.is_none());
     }
 
     #[test]
@@ -442,14 +473,23 @@ mod tests {
         }
 
         #[test]
-        fn window_under_total_shows_size_and_omits(
+        fn window_absorbs_small_remainders_and_names_larger_ones(
             total in 1usize..1000,
             size in 1usize..999,
         ) {
-            prop_assume!(size < total);
             let (found, omission) = window(total, size);
-            prop_assert_eq!(found, Some(Bounds { start: 1, end: size }));
-            prop_assert!(omission.is_some());
+            if total <= size + size / 2 {
+                prop_assert_eq!(found, Some(Bounds { start: 1, end: total }));
+                prop_assert!(omission.is_none());
+            } else {
+                prop_assert_eq!(found, Some(Bounds { start: 1, end: size }));
+                let Some(Omission::Window { shown, total: omitted_total, .. }) = omission else {
+                    prop_assert!(false, "a larger remainder must be omitted");
+                    return Ok(());
+                };
+                prop_assert_eq!(shown, (1, size));
+                prop_assert_eq!(omitted_total, total);
+            }
         }
     }
 }

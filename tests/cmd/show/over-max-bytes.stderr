@@ -1,2 +1,2 @@
-content is [..] bytes, over the 100-byte budget
+content is [..] bytes, over --max-bytes 100; pass a line range or fewer targets
 ERROR_CODE=over_budget

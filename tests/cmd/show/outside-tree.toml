@@ -1,8 +1,8 @@
-bin.name = "lets"
-args = ["show", "../../../.."]
+bin.name = "sh"
+args = ["-c", "mkdir -p repo/.git && printf 'outside content\\n' > outside.txt && cd repo && exec \"$CARGO_BIN_EXE_lets\" show ../outside.txt"]
 
 [status]
-code = 6
+code = 0
 
 [fs]
-base = "../../../target/cmd-fixtures/read"
+sandbox = true

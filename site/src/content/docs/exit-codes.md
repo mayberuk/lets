@@ -35,7 +35,7 @@ non-zero, so stdout stays worth reading even on failure.
 | 3 | `check_failed` | the guardrail failed after the edit; the file was reverted and is unchanged | `edit`, `transform` |
 | 4 | `over_budget` | content exceeded `--max-bytes` and no `--budget` was given | `show`, `find` |
 | 5 | `changed` | the file changed since the `--if sha:…` it was given | `edit`, `transform` |
-| 6 | `outside_tree` | a target or write is outside the working tree; pass `--allow-outside` | `show`, `find`, `edit`, `transform`, `write` |
+| 6 | `outside_tree` | a write target is outside the working tree; pass `--allow-outside` | `edit`, `transform`, `write` |
 | 7 | `unsupported_file` | binary, hardlinked, non-UTF-8 in the matched region, over `--max-file-bytes`, a directory given as a target, or (for `transform`) not a structured format, or a key that can't be changed in place | `show`, `edit`, `transform` |
 | 7 | `locked` | another `lets` process holds the file's lock past the 2-second retry | `edit`, `transform`, `write` |
 | 7 | `read_only` | the file lacks the owner-write bit; `chmod u+w` is the fix named in the message | `edit`, `transform`, `write` |
