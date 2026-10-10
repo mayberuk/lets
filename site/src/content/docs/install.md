@@ -64,12 +64,12 @@ it does not refuse this way.
 
 ```console
 $ lets update --check
-lets 0.0.8 is the latest release
+lets 0.0.9 is the latest release
 
 $ lets update --check
 ? 1
-lets 0.0.8 · latest 999.0.0
-lets 0.0.8 · latest 999.0.0 · run `lets update`
+lets 0.0.9 · latest 999.0.0
+lets 0.0.9 · latest 999.0.0 · run `lets update`
 ERROR_CODE=update_available
 
 $ lets update
@@ -80,10 +80,10 @@ replaced with the latest release
 
 ```console
 $ lets version
-lets 0.0.8
+lets 0.0.9
 
 $ lets version --json
-{"version":"0.0.8"}
+{"version":"0.0.9"}
 ```
 
 `--json`/`--jsonl` carry the version string alone, with no `omitted`/`stats` — see [--json and --jsonl](/docs/json/).

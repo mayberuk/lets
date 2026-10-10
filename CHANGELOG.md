@@ -6,6 +6,8 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-10-10
+
 ### Changed
 
 - `lets show` and `lets find` read files outside the git checkout, such as `~/.claude/CLAUDE.md`
@@ -23,6 +25,10 @@ All notable changes to `lets` are documented here. Format:
 
 - An `edit` or `transform` value that starts with `-`, such as a Markdown bullet `- b` or a
   `-webkit-` CSS property, is taken as the value instead of being refused as an unknown flag.
+
+### Upgrading
+
+- Run `lets update`, then `lets hooks install codex` so Codex gets the new session-start paragraph.
 
 ## [0.0.8] - 2026-10-09
 
