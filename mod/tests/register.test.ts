@@ -1,7 +1,8 @@
-import type { On, PreToolUseResult, ProcessRunInit } from 'claude-code';
-import { describe, expect, test } from 'claude-code/testing';
+import type { On, PreToolUseResult, ProcessRunInit, TurnStepInput, TurnStepResult } from 'claude-code';
+import { describe, expect, test, type Engine } from 'claude-code/testing';
 
 import { LETS_TABLE, VERSION } from '../hooks/steer';
+import { PING_PROMPT } from '../hooks/warm';
 
 const CWD = '/work/repo';
 
@@ -13,16 +14,75 @@ type World = {
   timeouts: (number | undefined)[];
   runs: { argv: readonly string[]; init?: ProcessRunInit }[];
   toasts: string[];
+  clock: { settle: () => Promise<void> };
+  now: number;
+  timers: { ms: number; cancelled: boolean; fire: () => Promise<void> }[];
+  forks: string[];
+  env: Record<string, string>;
+  windows: number[];
+  logs: { text: string; to: string }[];
+  failure?: string;
+  forkReply: 'answered' | 'api-error' | 'empty-reply' | 'aborted' | 'nothing-to-fork' | 'reject';
+  forkWait?: Promise<void>;
+  stepWait?: Promise<void>;
+  steps: TurnStepInput[];
 };
 
-// Stands in for everything beneath the plugin: the session's cwd and id, `lets`, the Bash tool and the toast line.
 function world(
   on: On,
   answer: (argv: readonly string[]) => Answer,
   refuse: (command: string) => boolean = () => false,
   fail: (command: string) => string | undefined = () => undefined,
 ): World {
-  const seen: World = { session: 'session-a', ran: [], timeouts: [], runs: [], toasts: [] };
+  const seen: World = {
+    session: 'session-a', ran: [], timeouts: [], runs: [], toasts: [],
+    clock: { settle }, now: 0, timers: [], forks: [], env: {}, windows: [], logs: [],
+    forkReply: 'answered', steps: [],
+  };
+  on('clock.after', async ($, e, next) => {
+    if (seen.failure === 'timer') return { deny: 'timer failed' };
+    const wait = deferred();
+    const timer = { ms: e.ms, cancelled: false, fire: async () => { wait.resolve(); await settle(); } };
+    seen.timers.push(timer);
+    next.signal.addEventListener('abort', () => { timer.cancelled = true; wait.resolve(); });
+    await wait.promise;
+    return { value: undefined };
+  });
+  on('clock.now', () => {
+    if (seen.failure === 'clock') return { deny: 'clock failed' };
+    return { value: seen.now };
+  });
+  on('env.get', ($, e) => {
+    if (seen.failure === 'env') return { deny: 'env failed' };
+    return { value: seen.env[e.name] };
+  });
+  on('session.usage', () => {
+    if (seen.failure === 'usage') return { deny: 'usage failed' };
+    return { value: { startedAt: 0, context: { window: 200_000 }, rateLimits: seen.windows.map((percentUsed) => ({ kind: 'five_hour', percentUsed })) } };
+  });
+  on('ui.log', ($, e) => {
+    if (seen.failure === 'log') return { deny: 'log failed' };
+    seen.logs.push({ text: e.text, to: e.to });
+    return { value: undefined };
+  });
+  on('model.fork', async ($, e) => {
+    seen.forks.push(e.prompt);
+    await seen.forkWait;
+    if (seen.forkReply === 'reject') return { deny: 'fork failed' };
+    const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    if (seen.forkReply === 'api-error') return { value: { isAnswered: false, reason: 'api-error', status: 500, error: 'server_error', usage } };
+    if (seen.forkReply === 'nothing-to-fork') return { value: { isAnswered: false, reason: 'nothing-to-fork' } };
+    if (seen.forkReply !== 'answered') return { value: { isAnswered: false, reason: seen.forkReply, usage } };
+    return { value: { isAnswered: true, text: 'k', usage } };
+  });
+  on('turn.step', async function* ($, e) {
+    seen.steps.push(e);
+    yield { kind: 'text', index: 0, text: 'answer' };
+    yield { kind: 'text', index: 1, text: 'tail' };
+    await seen.stepWait;
+    return stepResult(e);
+  });
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }));
   on('session.cwd', () => ({ value: CWD }));
   on('session.id', () => ({ value: seen.session }));
   on('process.run', ($, e) => {
@@ -535,5 +595,211 @@ describe('session.append', () => {
     const r = await $.session.append(attachment('Plan mode is active. Read files with cat if you must.'));
 
     expect(textOf(r)).toBe('Plan mode is active. Read files with cat if you must.');
+  });
+});
+
+const MAIN_STEP: TurnStepInput = { turnId: 'turn-a', index: 0, model: 'test', messageCount: 0 };
+const stepResult = (e: TurnStepInput): TurnStepResult => ({
+  turnId: e.turnId, index: e.index, answer: 'answertail', toolUses: [], stopReason: 'end_turn', usage: null,
+});
+
+async function step($: Engine, e: TurnStepInput = MAIN_STEP) {
+  const stream = $.turn.step(e);
+  const chunks = [];
+  for (;;) {
+    const item = await stream.next();
+    if (item.done) return { chunks, result: item.value };
+    chunks.push(item.value);
+  }
+}
+
+const end = ($: Engine) => $.session.end({ reason: 'clear', sessionId: 'session-a', resume: { id: 'session-a' } });
+
+async function settle() {
+  for (let tick = 0; tick < 1000; tick += 1) await Promise.resolve();
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe('keep-warm', () => {
+  test('a completed main response passes every chunk and result and arms one 240000 timer at clock zero', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    const response = await step($);
+    expect(response).toEqual({ chunks: [{ kind: 'text', index: 0, text: 'answer' }, { kind: 'text', index: 1, text: 'tail' }], result: stepResult(MAIN_STEP) });
+    expect(seen.steps).toEqual([MAIN_STEP]);
+    expect(seen.timers.map((timer) => timer.ms)).toEqual([240000]);
+    await end($);
+  });
+
+  test('no timer is armed before the response completes', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    const wait = deferred();
+    seen.stepWait = wait.promise;
+    const stream = $.turn.step(MAIN_STEP);
+    await stream.next();
+    expect(seen.timers).toHaveLength(0);
+    wait.resolve();
+    await stream.next();
+    await stream.next();
+    expect(seen.timers).toHaveLength(1);
+    await end($);
+  });
+
+  test('ticks fork once each and stop after the inclusive 20-minute boundary', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    for (let tick = 1; tick <= 5; tick += 1) {
+      seen.now = tick * 240000;
+      await seen.timers[tick - 1]!.fire();
+      expect(seen.forks).toEqual(Array(tick).fill(PING_PROMPT));
+      expect(seen.timers).toHaveLength(tick + 1);
+    }
+    seen.now = 1200001;
+    await seen.timers[5]!.fire();
+    expect(seen.forks).toHaveLength(5);
+    expect(seen.timers).toHaveLength(6);
+    expect(seen.logs.every((log) => log.to === 'debug')).toBe(true);
+    expect(seen.logs.at(-1)!.text).toContain('idle-cap');
+    await end($);
+  });
+
+  test('a new main request cancels the old timer before its response finishes', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    const wait = deferred();
+    seen.stepWait = wait.promise;
+    const stream = $.turn.step({ ...MAIN_STEP, index: 1 });
+    await stream.next();
+    expect(seen.timers[0]!.cancelled).toBe(true);
+    expect(seen.timers).toHaveLength(1);
+    wait.resolve();
+    await stream.next();
+    await stream.next();
+    expect(seen.timers).toHaveLength(2);
+    await end($);
+  });
+
+  test('subagent steps never arm and leave a main timer intact', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($, { ...MAIN_STEP, agentId: 'agent-a' });
+    expect(seen.timers).toHaveLength(0);
+    await step($);
+    await step($, { ...MAIN_STEP, agentId: 'agent-a' });
+    expect(seen.timers).toHaveLength(1);
+    expect(seen.timers[0]!.cancelled).toBe(false);
+    await end($);
+  });
+
+  for (const reason of ['1h', 'disabled', 'false', 'idle-cap']) {
+    test(`${reason} tick forks nothing and does not rearm`, async ($, on) => {
+      const seen = world(on, classifyAnswers(''));
+      await step($);
+      if (reason === '1h') seen.windows = [0, 99.9];
+      if (reason === 'disabled') seen.env.LETS_KEEP_WARM = '0';
+      if (reason === 'false') seen.env.LETS_KEEP_WARM = 'false';
+      seen.now = reason === 'idle-cap' ? 1200001 : 240000;
+      await seen.timers[0]!.fire();
+      expect(seen.forks).toHaveLength(0);
+      expect(seen.timers).toHaveLength(1);
+      expect(seen.logs).toHaveLength(1);
+      expect(seen.logs[0]!.text).toContain(reason === 'false' ? 'disabled' : reason);
+      await end($);
+    });
+  }
+
+  test('a step during a fork neither arms nor resets the idle deadline', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    const wait = deferred();
+    seen.forkWait = wait.promise;
+    seen.now = 240000;
+    const firing = seen.timers[0]!.fire();
+    await seen.clock.settle();
+    expect(seen.forks).toHaveLength(1);
+    seen.now = 1200001;
+    await step($);
+    expect(seen.timers).toHaveLength(1);
+    wait.resolve();
+    await firing;
+    await seen.clock.settle();
+    expect(seen.timers).toHaveLength(2);
+    await seen.timers[1]!.fire();
+    expect(seen.forks).toHaveLength(1);
+    expect(seen.timers).toHaveLength(2);
+    await end($);
+  });
+
+  for (const reply of ['reject', 'api-error', 'empty-reply', 'aborted', 'nothing-to-fork'] as const) {
+    test(`fork ${reply} stops this pause and a real response can recover`, async ($, on) => {
+      const seen = world(on, classifyAnswers(''));
+      await step($);
+      seen.forkReply = reply;
+      await seen.timers[0]!.fire();
+      expect(seen.forks).toEqual([PING_PROMPT]);
+      expect(seen.timers).toHaveLength(1);
+      expect(seen.logs.at(-1)!.text).toContain('fork-failed');
+      seen.forkReply = 'answered';
+      await step($);
+      await seen.timers[1]!.fire();
+      expect(seen.forks).toEqual([PING_PROMPT, PING_PROMPT]);
+      await end($);
+    });
+  }
+
+  for (const failure of ['env', 'usage', 'clock', 'timer']) {
+    test(`ping ${failure} failure stops this pause without throwing`, async ($, on) => {
+      const seen = world(on, classifyAnswers(''));
+      await step($);
+      seen.failure = failure;
+      await seen.timers[0]!.fire();
+      expect(seen.timers).toHaveLength(1);
+      seen.failure = undefined;
+      await step($);
+      await seen.timers[1]!.fire();
+      expect(seen.timers).toHaveLength(3);
+      await end($);
+    });
+  }
+
+  for (const failure of ['clock', 'timer']) {
+    test(`step ${failure} failure preserves the stream and sends no duplicate request`, async ($, on) => {
+      const seen = world(on, classifyAnswers(''));
+      seen.failure = failure;
+      const response = await step($);
+      expect(response.result).toEqual(stepResult(MAIN_STEP));
+      expect(response.chunks).toEqual([{ kind: 'text', index: 0, text: 'answer' }, { kind: 'text', index: 1, text: 'tail' }]);
+      expect(seen.steps).toEqual([MAIN_STEP]);
+      expect(seen.timers).toHaveLength(0);
+      await end($);
+    });
+  }
+
+  test('session end cancels the pending timer', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    await end($);
+    expect(seen.timers[0]!.cancelled).toBe(true);
+    await seen.timers[0]!.fire();
+    expect(seen.forks).toHaveLength(0);
+    expect(seen.timers).toHaveLength(1);
+  });
+
+  test('session end during a fork prevents rearming', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    const wait = deferred();
+    seen.forkWait = wait.promise;
+    const firing = seen.timers[0]!.fire();
+    await seen.clock.settle();
+    expect(seen.forks).toHaveLength(1);
+    await end($);
+    wait.resolve();
+    await firing;
+    await seen.clock.settle();
+    expect(seen.timers).toHaveLength(1);
   });
 });
