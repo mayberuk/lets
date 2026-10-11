@@ -24,6 +24,8 @@ type World = {
   failure?: string;
   forkReply: 'answered' | 'api-error' | 'empty-reply' | 'aborted' | 'nothing-to-fork' | 'reject';
   forkWait?: Promise<void>;
+  envWait?: Promise<void>;
+  usageWait?: Promise<void>;
   stepWait?: Promise<void>;
   steps: TurnStepInput[];
 };
@@ -52,11 +54,13 @@ function world(
     if (seen.failure === 'clock') return { deny: 'clock failed' };
     return { value: seen.now };
   });
-  on('env.get', ($, e) => {
+  on('env.get', async ($, e) => {
+    await seen.envWait;
     if (seen.failure === 'env') return { deny: 'env failed' };
     return { value: seen.env[e.name] };
   });
-  on('session.usage', () => {
+  on('session.usage', async () => {
+    await seen.usageWait;
     if (seen.failure === 'usage') return { deny: 'usage failed' };
     return { value: { startedAt: 0, context: { window: 200_000 }, rateLimits: seen.windows.map((percentUsed) => ({ kind: 'five_hour', percentUsed })) } };
   });
@@ -801,5 +805,176 @@ describe('keep-warm', () => {
     await firing;
     await seen.clock.settle();
     expect(seen.timers).toHaveLength(1);
+  });
+
+  test('a pause starting at a nonzero clock renews its idle deadline from a later real response', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    const first = 1_000_000;
+    seen.now = first;
+    await step($);
+    seen.now = first + 240_000;
+    await seen.timers[0]!.fire();
+    expect(seen.forks).toHaveLength(1);
+    const second = first + 1_000_000;
+    seen.now = second;
+    await step($);
+    expect(seen.timers[1]!.cancelled).toBe(true);
+    expect(seen.timers).toHaveLength(3);
+    for (let tick = 1; tick <= 5; tick += 1) {
+      seen.now = second + tick * 240_000;
+      await seen.timers.at(-1)!.fire();
+      expect(seen.forks).toHaveLength(1 + tick);
+      expect(seen.timers).toHaveLength(3 + tick);
+    }
+    seen.now = second + 1_200_001;
+    await seen.timers.at(-1)!.fire();
+    expect(seen.forks).toHaveLength(6);
+    expect(seen.timers).toHaveLength(8);
+    expect(seen.logs.at(-1)!.text).toContain('idle-cap');
+    await end($);
+  });
+
+  test('a nonzero-clock pause stops 20 minutes after its only response', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    seen.now = 1_000_000;
+    await step($);
+    seen.now = 1_000_000 + 1_200_001;
+    await seen.timers[0]!.fire();
+    expect(seen.forks).toHaveLength(0);
+    expect(seen.logs.at(-1)!.text).toContain('idle-cap');
+    await end($);
+  });
+
+  for (const held of ['envWait', 'usageWait'] as const) {
+    test(`a tick held in its ${held === 'envWait' ? 'env' : 'usage'} await when a new main step starts neither forks nor rearms`, async ($, on) => {
+      const seen = world(on, classifyAnswers(''));
+      await step($);
+      const wait = deferred();
+      seen[held] = wait.promise;
+      seen.now = 240_000;
+      const firing = seen.timers[0]!.fire();
+      await firing;
+      expect(seen.forks).toHaveLength(0);
+      seen[held] = undefined;
+      seen.now = 250_000;
+      await step($, { ...MAIN_STEP, index: 1 });
+      expect(seen.timers).toHaveLength(2);
+      wait.resolve();
+      await seen.clock.settle();
+      expect(seen.forks).toHaveLength(0);
+      expect(seen.timers).toHaveLength(2);
+      expect(seen.timers[1]!.cancelled).toBe(false);
+      expect(seen.logs.map((log) => log.text)).toEqual(['lets keep-warm: superseded']);
+      await end($);
+    });
+  }
+
+  test('a held tick with no new step forks once and rearms', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    const wait = deferred();
+    seen.usageWait = wait.promise;
+    seen.now = 240_000;
+    await seen.timers[0]!.fire();
+    wait.resolve();
+    await seen.clock.settle();
+    expect(seen.forks).toEqual([PING_PROMPT]);
+    expect(seen.timers).toHaveLength(2);
+    await end($);
+  });
+
+  test('a subagent step mid-pause is forwarded unchanged and does not reset the idle deadline', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    const first = 1_000_000;
+    seen.now = first;
+    await step($);
+    seen.now = first + 1_000_000;
+    const sub = { ...MAIN_STEP, turnId: 'turn-sub', agentId: 'agent-a' };
+    const response = await step($, sub);
+    expect(response).toEqual({ chunks: [{ kind: 'text', index: 0, text: 'answer' }, { kind: 'text', index: 1, text: 'tail' }], result: stepResult(sub) });
+    expect(seen.steps).toEqual([MAIN_STEP, sub]);
+    expect(seen.timers).toHaveLength(1);
+    expect(seen.timers[0]!.cancelled).toBe(false);
+    seen.now = first + 1_240_000;
+    await seen.timers[0]!.fire();
+    expect(seen.forks).toHaveLength(0);
+    expect(seen.timers).toHaveLength(1);
+    expect(seen.logs.map((log) => log.text)).toEqual(['lets keep-warm: idle-cap']);
+    await end($);
+  });
+
+  const wiring: { name: string; env: Record<string, string>; windows: number[]; fork: boolean }[] = [
+    { name: 'ENABLE_PROMPT_CACHING_1H=1', env: { ENABLE_PROMPT_CACHING_1H: '1' }, windows: [], fork: false },
+    { name: 'ENABLE_PROMPT_CACHING_1H=0', env: { ENABLE_PROMPT_CACHING_1H: '0' }, windows: [], fork: true },
+    { name: 'CLAUDE_CODE_PROMPT_CACHE_TTL=1h over the limit', env: { CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' }, windows: [100], fork: false },
+    { name: 'CLAUDE_CODE_PROMPT_CACHE_TTL=bad over the limit', env: { CLAUDE_CODE_PROMPT_CACHE_TTL: 'bad' }, windows: [100], fork: true },
+    { name: 'a subscription within limits', env: {}, windows: [0, 99.9], fork: false },
+    { name: 'FORCE_PROMPT_CACHING_5M=1 within limits', env: { FORCE_PROMPT_CACHING_5M: '1' }, windows: [0, 99.9], fork: true },
+    { name: 'CLAUDE_CODE_PROMPT_CACHE_TTL=5m within limits', env: { CLAUDE_CODE_PROMPT_CACHE_TTL: '5m' }, windows: [0, 99.9], fork: true },
+  ];
+  for (const { name, env, windows, fork } of wiring) {
+    test(`${name} ${fork ? 'forks' : 'does not fork'}`, async ($, on) => {
+      const seen = world(on, classifyAnswers(''));
+      await step($);
+      seen.env = env;
+      seen.windows = windows;
+      seen.now = 240_000;
+      await seen.timers[0]!.fire();
+      expect(seen.forks).toEqual(fork ? [PING_PROMPT] : []);
+      expect(seen.timers).toHaveLength(fork ? 2 : 1);
+      expect(seen.logs.map((log) => log.text)).toEqual([fork ? 'lets keep-warm: 5m' : 'lets keep-warm: 1h']);
+      await end($);
+    });
+  }
+
+  test('ui.log failing at a stop reason still stops the pause and escapes nowhere', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    seen.failure = 'log';
+    seen.env.LETS_KEEP_WARM = '0';
+    seen.now = 240_000;
+    await seen.timers[0]!.fire();
+    expect(seen.forks).toHaveLength(0);
+    expect(seen.timers).toHaveLength(1);
+    expect(seen.logs).toEqual([]);
+    seen.failure = undefined;
+    seen.env = {};
+    await step($);
+    await seen.timers[1]!.fire();
+    expect(seen.forks).toHaveLength(1);
+    expect(seen.timers).toHaveLength(3);
+    await end($);
+  });
+
+  test('ui.log failing after a fork escapes nowhere; the engine drops the log and the pause continues', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    seen.failure = 'log';
+    seen.now = 240_000;
+    await seen.timers[0]!.fire();
+    expect(seen.forks).toHaveLength(1);
+    expect(seen.timers).toHaveLength(2);
+    expect(seen.logs).toEqual([]);
+    await end($);
+  });
+
+  test('each successful tick logs exactly one 5m debug line', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    for (let tick = 1; tick <= 3; tick += 1) {
+      seen.now = tick * 240_000;
+      await seen.timers[tick - 1]!.fire();
+      expect(seen.logs).toEqual(Array(tick).fill({ text: 'lets keep-warm: 5m', to: 'debug' }));
+    }
+    await end($);
+  });
+
+  test('a failed fork logs one fork-failed line and no 5m line', async ($, on) => {
+    const seen = world(on, classifyAnswers(''));
+    await step($);
+    seen.forkReply = 'api-error';
+    await seen.timers[0]!.fire();
+    expect(seen.logs).toEqual([{ text: 'lets keep-warm: fork-failed', to: 'debug' }]);
+    await end($);
   });
 });

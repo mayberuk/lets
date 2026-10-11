@@ -146,7 +146,10 @@ a `SubagentStart` hook that each print the same table, so the model sees it as s
 not only in the Bash tool's description. Both print nothing when `lets` is missing. A reinstall
 replaces an earlier release's start hooks in place, and `hooks uninstall claude-code` removes them.
 
-The mod makes three changes and one check:
+The mod's keep-warm keeps the main conversation's 5-minute cache alive during pauses;
+`LETS_KEEP_WARM=0` turns it off.
+
+The mod also makes three changes and one check:
 
 - The Bash tool's description loses the paragraph that tells the model to use Read, not `cat`, and
   carries the table above in its place.

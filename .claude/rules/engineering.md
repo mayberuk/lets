@@ -18,8 +18,9 @@ the size of its real job, and the decided seams below are the only seams.
   exists only for a judgment call.
 - Make the Claude Code mod fail open. Every hook passes the event on unchanged (`next(e)`) on any
   error, and a `.catch` on every gating hook does the same. The Bash description and prompt changes
-  are pure functions of their input, so the prompt cache holds for the session; the only state is
-  the set of commands whose change was refused, which then run as typed.
+  are pure functions of their input, so the prompt cache holds for the session. The only state is
+  the set of commands whose change was refused, which then run as typed, and keep-warm's pending
+  timer and last main-thread response time.
 - Make every code path deterministic for identical input and file state: no `HashMap` iteration
   in output order, no timestamps in stdout, no randomness.
 
@@ -32,8 +33,9 @@ the size of its real job, and the decided seams below are the only seams.
 - Module-level mutable state (`static mut`, or an `OnceLock` holding anything but a lazily
   initialised grammar), or a global that carries request state.
 - `unsafe` without a measurement in the merge request and a comment stating the invariant.
-- A feature flag, config file, cache, index or daemon. The spec's "nothing to maintain" is a
-  principle, not a v1 shortcut.
+- A feature flag, config file, cache, index or daemon. The one flag is `LETS_KEEP_WARM=0`:
+  keep-warm spends the user's money, so they can turn it off. The spec's "nothing to maintain"
+  is a principle, not a v1 shortcut.
 
 ```rust
 // ✅ DO — one enum, one mapping

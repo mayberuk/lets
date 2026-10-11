@@ -88,7 +88,10 @@ async function ping($: EngineInterface, state: WarmState): Promise<void> {
       $.ui.log('lets keep-warm: 1h', { to: 'debug' });
       return;
     }
-    if (state.generation !== generation || state.inFlight) return;
+    if (state.generation !== generation || state.inFlight) {
+      $.ui.log('lets keep-warm: superseded', { to: 'debug' });
+      return;
+    }
     state.inFlight = true;
     try {
       const reply = await $.model.fork({ prompt: PING_PROMPT });
