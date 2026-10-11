@@ -1,4 +1,4 @@
-import type { EngineInterface, Register, ToolCallResult } from 'claude-code';
+import type { EngineInterface, Register, Timer, ToolCallResult } from 'claude-code';
 
 import {
   decide,
@@ -9,6 +9,8 @@ import {
   VERSION,
   type Decision,
 } from './steer';
+
+import { cacheTtl, keepWarmDisabled, IDLE_CAP_MS, PING_INTERVAL_MS, PING_PROMPT } from './warm';
 
 const CLASSIFY_TIMEOUT_MS = 5000;
 const VERSION_TIMEOUT_MS = 2000;
@@ -49,10 +51,102 @@ async function refusalKey($: Pick<EngineInterface, 'session'>, command: string):
   return JSON.stringify([await $.session.id(), command]);
 }
 
+type WarmState = {
+  timer?: Timer;
+  lastResponse?: number;
+  inFlight: boolean;
+  generation: number;
+};
+
+function cancelWarm(state: WarmState): void {
+  const timer = state.timer;
+  state.timer = undefined;
+  try {
+    timer?.cancel();
+  } catch {}
+}
+
+async function ping($: EngineInterface, state: WarmState): Promise<void> {
+  const generation = state.generation;
+  state.timer = undefined;
+  try {
+    const disabled = await $.env.get('LETS_KEEP_WARM');
+    if (keepWarmDisabled(() => disabled)) {
+      $.ui.log('lets keep-warm: disabled', { to: 'debug' });
+      return;
+    }
+    if (state.lastResponse === undefined || (await $.clock.now()) - state.lastResponse > IDLE_CAP_MS) {
+      $.ui.log('lets keep-warm: idle-cap', { to: 'debug' });
+      return;
+    }
+    const env: Record<string, string | undefined> = {
+      FORCE_PROMPT_CACHING_5M: await $.env.get('FORCE_PROMPT_CACHING_5M'),
+      CLAUDE_CODE_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL'),
+      ENABLE_PROMPT_CACHING_1H: await $.env.get('ENABLE_PROMPT_CACHING_1H'),
+    };
+    if (cacheTtl((name) => env[name], (await $.session.usage()).rateLimits) === '1h') {
+      $.ui.log('lets keep-warm: 1h', { to: 'debug' });
+      return;
+    }
+    if (state.generation !== generation || state.inFlight) {
+      $.ui.log('lets keep-warm: superseded', { to: 'debug' });
+      return;
+    }
+    state.inFlight = true;
+    try {
+      const reply = await $.model.fork({ prompt: PING_PROMPT });
+      if (!reply.isAnswered) {
+        $.ui.log('lets keep-warm: fork-failed', { to: 'debug' });
+        return;
+      }
+    } finally {
+      state.inFlight = false;
+    }
+    $.ui.log('lets keep-warm: 5m', { to: 'debug' });
+    if (state.generation === generation) {
+      state.timer = $.clock.after(PING_INTERVAL_MS, () => { void ping($, state); });
+    }
+  } catch {
+    if (state.generation === generation) cancelWarm(state);
+    try {
+      $.ui.log('lets keep-warm: fork-failed', { to: 'debug' });
+    } catch {}
+  }
+}
+
 export const register: Register = (on) => {
   // Without it, a refused change would be retried as recorded and changed again, every time.
   // Maps each refused original command, keyed with its session, to the replacement that was tried.
   const refused = new Map<string, string>();
+  const warm: WarmState = { inFlight: false, generation: 0 };
+
+  on('turn.step', async function* ($, e, next) {
+    if (e.agentId !== undefined || warm.inFlight) return yield* next(e);
+    const generation = ++warm.generation;
+    cancelWarm(warm);
+    const result = yield* next(e);
+    try {
+      const now = await $.clock.now();
+      if (warm.generation === generation) {
+        warm.lastResponse = now;
+        warm.timer = $.clock.after(PING_INTERVAL_MS, () => { void ping($, warm); });
+      }
+    } catch {
+      if (warm.generation === generation) cancelWarm(warm);
+    }
+    return result;
+  }).catch(async function* ($, e, next) {
+    warm.generation += 1;
+    cancelWarm(warm);
+    return yield* next(e);
+  });
+
+  on('session.end', ($, e, next) => {
+    warm.generation += 1;
+    warm.lastResponse = undefined;
+    cancelWarm(warm);
+    return next(e);
+  }).catch(($, e, next) => next(e));
 
   on('tool.describe', { tool: 'Bash' }, async ($, e, next) => {
     const r = await next(e);

@@ -107,6 +107,7 @@ added the lets mod
 ./hooks/hooks.json
 ./hooks/register.ts
 ./hooks/steer.ts
+./hooks/warm.ts
 ./tsconfig.json
 plugin dirs: [CWD]/home/.local/share/lets/claude-code
 start hooks: 2
@@ -206,7 +207,7 @@ matchers: 1
 
 ```console
 $ sh -c 'set -e; export HOME="$(pwd)/home"; export PATH="$(dirname "$CARGO_BIN_EXE_lets"):$PATH"; XDG_DATA_HOME="$(pwd)/data" "$CARGO_BIN_EXE_lets" hooks install claude-code >/dev/null; echo files before: $(find data -type f | wc -l); (unset XDG_DATA_HOME; PATH=/nonexistent "$CARGO_BIN_EXE_lets" hooks uninstall claude-code); echo files after: $(find data -type f | wc -l); echo plugin dirs mentions: $(grep -c CLAUDE_CODE_PLUGIN_DIRS "$HOME/.claude/settings.json" || true)'
-files before: 5
+files before: 6
 removed the PreToolUse hook
 removed the SessionStart hook
 removed the SubagentStart hook

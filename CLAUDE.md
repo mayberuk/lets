@@ -54,7 +54,8 @@ Harness detail and the sandbox contract: `CONTRIBUTING.md`.
   hook as the fallback when mods are off. `lets hooks install codex` merges every tier Codex
   supports into its user-level hooks. Two built-in passages are replaced (the Bash tool's
   avoid-cat paragraph and the prefer-dedicated-tools line), nothing is appended to the system
-  prompt, and no shell alias is needed.
+  prompt, and no shell alias is needed. On the 5-minute prompt cache the mod also keeps the main
+  conversation's cache warm during pauses; `LETS_KEEP_WARM=0` turns that off.
 - Never published to crates.io. The installer refuses when a different `lets` is already on
   `PATH`, naming it.
 - stdout is the answer, stderr is diagnostics plus `ERROR_CODE`, stdin is accepted wherever

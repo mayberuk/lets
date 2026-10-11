@@ -7,7 +7,7 @@ use crate::atomic;
 use crate::error::Error;
 
 /// `mod/tests/` is never installed: Claude Code would load nothing from it.
-const FILES: [(&str, &str); 5] = [
+const FILES: [(&str, &str); 6] = [
     (
         ".claude-plugin/plugin.json",
         include_str!("../../mod/.claude-plugin/plugin.json"),
@@ -21,6 +21,7 @@ const FILES: [(&str, &str); 5] = [
         include_str!("../../mod/hooks/register.ts"),
     ),
     ("hooks/steer.ts", include_str!("../../mod/hooks/steer.ts")),
+    ("hooks/warm.ts", include_str!("../../mod/hooks/warm.ts")),
     ("tsconfig.json", include_str!("../../mod/tsconfig.json")),
 ];
 
@@ -163,6 +164,21 @@ mod tests {
         let dir = root.path().join("lets/claude-code");
         assert!(write(&dir).unwrap());
         (root, dir)
+    }
+
+    #[test]
+    fn warm_file_is_installed_unchanged_left_alone_and_repaired_when_stale() {
+        let (_root, dir) = installed();
+        let path = dir.join("hooks/warm.ts");
+        let source =
+            std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("mod/hooks/warm.ts")).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), source);
+        let before = std::fs::metadata(&path).unwrap();
+        assert!(!write(&dir).unwrap());
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), before.ino());
+        std::fs::write(&path, "stale").unwrap();
+        assert!(write(&dir).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), source);
     }
 
     #[test]

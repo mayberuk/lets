@@ -100,6 +100,9 @@ directory to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, and keeps a
 as the fallback for when mods are off. `lets update` refreshes the mod files along with the binary
 while Claude Code's settings still load the mod.
 
+The mod's keep-warm keeps the main conversation's 5-minute cache alive during pauses;
+`LETS_KEEP_WARM=0` turns it off.
+
 A Codex install needs one more step Claude Code's does not: Codex requires a human to trust a hook
 before it runs, so open Codex and choose "Trust all and continue" when prompted, or press `t` in
 the hooks browser — `lets hooks install codex` reports the current trust status on every run,

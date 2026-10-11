@@ -6,6 +6,7 @@ added the lets mod
 ./hooks/hooks.json
 ./hooks/register.ts
 ./hooks/steer.ts
+./hooks/warm.ts
 ./tsconfig.json
 plugin dirs: [CWD]/home/.local/share/lets/claude-code
 start hooks: 2

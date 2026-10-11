@@ -1,4 +1,4 @@
-files before: 5
+files before: 6
 removed the PreToolUse hook
 removed the SessionStart hook
 removed the SubagentStart hook

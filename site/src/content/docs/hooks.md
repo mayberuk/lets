@@ -50,6 +50,15 @@ lets hook classify
 
 `lets update` refreshes the mod files, but only while Claude Code's settings still load the mod.
 
+### Keep-warm
+
+The mod sends a throwaway fork every 4 minutes during a pause, so the next request reads the
+cache instead of rewriting it. It runs only on the 5-minute cache: an API key, Bedrock, Vertex
+or Foundry, or a subscription over its usage limit; never within a subscription's limit.
+
+It stops after 20 minutes idle, or at session end, and covers the main conversation only, not
+subagents. It costs one cache read per ping. Set `LETS_KEEP_WARM=0` to turn it off.
+
 ### When mods are off
 
 If Claude Code is running with mods off, the mod does not load and nothing changes in the Bash
