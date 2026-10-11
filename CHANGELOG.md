@@ -6,11 +6,17 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-10-11
+
 ### Added
 
 - Keep-warm in the Claude Code mod: a throwaway fork every 4 minutes keeps the main
   conversation's 5-minute cache alive for up to 20 minutes idle; `LETS_KEEP_WARM=0` turns it off.
   On the 5-minute cache, a pause over five minutes rewrites the whole conversation.
+
+### Upgrading
+
+- Run `lets update`, which writes the mod's new `hooks/warm.ts`.
 
 ## [0.0.9] - 2026-10-10
 
