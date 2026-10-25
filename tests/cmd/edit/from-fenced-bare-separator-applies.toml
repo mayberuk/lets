@@ -1,0 +1,4 @@
+# Git's bare `=======` as the separator: 84 lets-edit calls in two weeks of real use (2026-10-11 to
+# 10-25) wrote it and were refused whole.
+bin.name = "lets"
+args = ["edit", "--from", "-"]

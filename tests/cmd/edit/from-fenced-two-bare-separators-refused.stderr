@@ -1,0 +1,16 @@
+line 4: two bare `=======` lines in one block · mark the one that starts the new text as `======= new`
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
+>>>>>>>
+LETS
+ERROR_CODE=usage
