@@ -2,12 +2,6 @@
 
 ```console
 $ lets edit usage.go --old 'base + len(id)' --new 'base*2 + len(id)' --check 'golangci-lint run'
-── usage.go · 1 replacement · line 5 · exact
-3   func Usage(id string) int {
-4   	base := 10
-5~  	limit := base*2 + len(id)
-6   	return limit
-7   }
-── check: golangci-lint run ok · sha:0dde909e3573→880ac56683ec
+── usage.go · 1 replacement · line 5 · check: golangci-lint run ok · sha:0dde909e3573→880ac56683ec
 
 ```

@@ -210,6 +210,14 @@ fn cmd() {
     // gitignore under `XDG_CONFIG_HOME`, so the runner's own excludes would steer `find`.
     let home = TempDir::new().expect("a temp HOME");
     let home = home.path().to_str().expect("a utf-8 temp path").to_owned();
+    // Go and golangci-lint write caches under the XDG dirs and GOPATH; under HOME they made
+    // `cli/home-is-sandboxed` fail whenever a real-checker case ran first.
+    let tool_state = TempDir::new().expect("a temp dir for checker caches");
+    let tool_state = tool_state
+        .path()
+        .to_str()
+        .expect("a utf-8 temp path")
+        .to_owned();
     // Not under HOME: `cli/home-is-sandboxed` asserts HOME stays empty.
     let runtime = TempDir::new().expect("a temp XDG_RUNTIME_DIR");
     let runtime = runtime
@@ -232,7 +240,9 @@ fn cmd() {
         .env("HOME", &home)
         .env("CODEX_HOME", "")
         .env("XDG_RUNTIME_DIR", &runtime)
-        .env("XDG_CONFIG_HOME", &home)
+        .env("XDG_CONFIG_HOME", &tool_state)
+        .env("XDG_CACHE_HOME", &tool_state)
+        .env("GOPATH", format!("{tool_state}/go"))
         .env("PATH", &path);
 
     // trycmd names every skipped case as it runs; the tool that decided it is only known here.
