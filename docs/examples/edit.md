@@ -425,7 +425,7 @@ const cap = 10
 >>>>>>>
 EOF
 ? 64
-line 1: usage.ts: no `======= new` section
+line 2: usage.ts: no `======= new` section
 
 lets edit --from - <<'LETS'
 @@ a.ts
@@ -441,6 +441,24 @@ floor = 2
 >>>>>>>
 LETS
 ERROR_CODE=usage
+
+```
+
+```console
+$ lets edit --from - <<'EOF'
+@@ a.ts
+<<<<<<< old
+const cap = 10
+=======
+const cap = 20
+>>>>>>>
+<<<<<<< old
+const floor = 1
+=======
+const floor = 2
+>>>>>>>
+EOF
+── 1 file · 2 edits · all applied · checks: structure ok ×2
 
 ```
 
@@ -480,7 +498,7 @@ const cap = 10
 >>>>>>>
 EOF
 ? 64
-line 1: usage.ts: no `======= new` section
+line 2: usage.ts: no `======= new` section
 
 lets edit --from - <<'LETS'
 @@ a.ts
@@ -518,6 +536,36 @@ EOF
 --old not found in a.ts
   nearest: line 1	const cap = 20
 ERROR_CODE=not_found
+
+```
+
+```console
+$ lets edit --from - <<'EOF'
+@@ a.ts
+<<<<<<< old
+const cap = 10
+=======
+=======
+const cap = 20
+>>>>>>>
+EOF
+? 64
+line 4: two bare `=======` lines in one block · mark the one that starts the new text as `======= new`
+
+lets edit --from - <<'LETS'
+@@ a.ts
+<<<<<<< old
+cap = 10
+======= new
+cap = 20
+>>>>>>>
+<<<<<<< old
+floor = 1
+======= new
+floor = 2
+>>>>>>>
+LETS
+ERROR_CODE=usage
 
 ```
 
