@@ -2179,6 +2179,7 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
         {
             new = Some(Vec::new());
             section = Section::New;
+            block_line.get_or_insert(number);
         } else if line.trim_end() == ">>>>>>>" {
             match &header {
                 Some((header_line, file, anchor)) => {
@@ -4145,7 +4146,17 @@ mod tests {
         let error = parse_batch("@@ a.ts\n======= new\nconst cap = 20\n>>>>>>>\n").unwrap_err();
 
         assert_eq!(error.slug(), "usage");
-        assert!(error.to_string().contains("line 1"), "{error}");
+        assert!(error.to_string().contains("line 2"), "{error}");
+    }
+
+    #[test]
+    fn a_later_block_with_no_old_section_names_its_own_line() {
+        let error = parse_batch(
+            "@@ a.ts\n<<<<<<< old\nx\n======= new\ny\n>>>>>>>\n======= new\nz\n>>>>>>>\n",
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("line 7"), "{error}");
     }
 
     fn replace_texts(specs: &[EditSpec]) -> Vec<(String, String)> {
