@@ -6,6 +6,8 @@ All notable changes to `lets` are documented here. Format:
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-10-25
+
 ### Fixed
 
 - `lets edit --from -` accepts a bare `=======` as the separator in an `<<<<<<< old` block, as git
@@ -14,6 +16,10 @@ All notable changes to `lets` are documented here. Format:
   are refused rather than guessed between.
 - A fenced block's usage error names the block's own line, not the `@@` header's, so the fifth
   block under one header no longer reports line 1.
+
+### Upgrading
+
+- Run `lets update`.
 
 ## [0.0.10] - 2026-10-11
 
