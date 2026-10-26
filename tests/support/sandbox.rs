@@ -82,7 +82,7 @@ fn git_init(directory: &Path, home: &Path) {
 
 /// A pre-commit hook's inherited `GIT_DIR` and friends would redirect every git command onto
 /// the real repo; removing every `GIT_*` means no fixed list of names can go stale.
-fn scrubbed(program: &str, directory: &Path) -> Command {
+pub fn scrubbed(program: &str, directory: &Path) -> Command {
     let mut command = Command::new(program);
     command.current_dir(directory);
     for (name, _) in std::env::vars_os() {
