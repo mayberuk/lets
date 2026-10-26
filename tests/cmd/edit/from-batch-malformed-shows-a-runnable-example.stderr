@@ -1,4 +1,4 @@
-line 1: usage.ts: no `======= new` section
+line 2: usage.ts: no `======= new` section
 
 lets edit --from - <<'LETS'
 @@ a.ts

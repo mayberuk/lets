@@ -1,0 +1,6 @@
+# Two bare `=======` lines leave the separator a guess, so the batch is refused and nothing written.
+bin.name = "lets"
+args = ["edit", "--from", "-"]
+
+[status]
+code = 64

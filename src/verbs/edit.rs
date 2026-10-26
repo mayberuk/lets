@@ -2142,7 +2142,9 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
     let mut old: Option<Vec<&str>> = None;
     let mut new: Option<Vec<&str>> = None;
     let mut section = Section::Outside;
-    for (index, line) in text.lines().enumerate() {
+    let mut block_line: Option<usize> = None;
+    let lines: Vec<&str> = text.lines().collect();
+    for (index, &line) in lines.iter().enumerate() {
         let number = index + 1;
         if let Some(rest) = line.strip_prefix("@@ ") {
             if let Some((header_line, ..)) = &header
@@ -2159,6 +2161,7 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
             old = None;
             new = None;
             section = Section::Outside;
+            block_line = None;
         } else if line.trim_end() == "<<<<<<< old" {
             if let Some((header_line, _, Some(_))) = &header {
                 errors.push(usage(format!(
@@ -2168,9 +2171,15 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
             }
             old = Some(Vec::new());
             section = Section::Old;
-        } else if line.trim_end() == "======= new" {
+            block_line = Some(number);
+        } else if line.trim_end() == "======= new"
+            || (section == Section::Old
+                && line.trim_end() == "======="
+                && bare_starts_new(&lines[index + 1..], number, &mut errors))
+        {
             new = Some(Vec::new());
             section = Section::New;
+            block_line.get_or_insert(number);
         } else if line.trim_end() == ">>>>>>>" {
             match &header {
                 Some((header_line, file, anchor)) => {
@@ -2186,7 +2195,8 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
                              ambiguous \u{b7} repeat `@@ {file} insert-{side} {at}` before it"
                         )));
                     }
-                    match fenced_spec(*header_line, file, anchor.clone(), old.take(), new.take()) {
+                    let line = block_line.take().unwrap_or(*header_line);
+                    match fenced_spec(line, file, anchor.clone(), old.take(), new.take()) {
                         Ok(spec) => specs.push(spec),
                         Err(error) => errors.push(error),
                     }
@@ -2222,6 +2232,28 @@ fn parse_fenced(text: &str) -> Result<Vec<EditSpec>, Error> {
     Ok(specs)
 }
 
+/// Agents write git's bare `=======` for `======= new`. It is the separator only when the rest of
+/// its block has neither form, so a content line that is exactly `=======` still works beside an
+/// explicit `======= new`, and two bare ones are refused rather than guessed between.
+fn bare_starts_new(rest: &[&str], number: usize, errors: &mut Vec<Error>) -> bool {
+    for line in rest {
+        match line.trim_end() {
+            "======= new" => return false,
+            "=======" => {
+                errors.push(usage(format!(
+                    "line {number}: two bare `=======` lines in one block \u{b7} mark the one \
+                     that starts the new text as `======= new`"
+                )));
+                return false;
+            },
+            ">>>>>>>" | "<<<<<<< old" => break,
+            _ if line.starts_with("@@ ") => break,
+            _ => {},
+        }
+    }
+    true
+}
+
 fn fence_header(rest: &str) -> (String, Option<(AnchorSide, String)>) {
     for (marker, side) in [
         (" insert-after ", AnchorSide::After),
@@ -2238,7 +2270,7 @@ fn fence_header(rest: &str) -> (String, Option<(AnchorSide, String)>) {
 }
 
 fn fenced_spec(
-    header_line: usize,
+    block_line: usize,
     file: &str,
     anchor: Option<(AnchorSide, String)>,
     old: Option<Vec<&str>>,
@@ -2246,7 +2278,7 @@ fn fenced_spec(
 ) -> Result<EditSpec, Error> {
     let Some(new) = new else {
         return Err(usage(format!(
-            "line {header_line}: {file}: no `======= new` section"
+            "line {block_line}: {file}: no `======= new` section"
         )));
     };
     let new = new.join("\n").into_bytes();
@@ -2255,7 +2287,7 @@ fn fenced_spec(
     } else {
         let Some(old) = old else {
             return Err(usage(format!(
-                "line {header_line}: {file}: no `<<<<<<< old` section"
+                "line {block_line}: {file}: no `<<<<<<< old` section"
             )));
         };
         EditOp::Replace {
@@ -4086,11 +4118,11 @@ mod tests {
     }
 
     #[test]
-    fn a_fenced_block_missing_new_is_refused_and_names_the_header_line() {
+    fn a_fenced_block_missing_new_is_refused_and_names_its_old_line() {
         let error = parse_batch("@@ a.ts\n<<<<<<< old\nconst cap = 10\n>>>>>>>\n").unwrap_err();
 
         assert_eq!(error.slug(), "usage");
-        assert!(error.to_string().contains("line 1"), "{error}");
+        assert!(error.to_string().contains("line 2"), "{error}");
     }
 
     #[test]
@@ -4114,7 +4146,73 @@ mod tests {
         let error = parse_batch("@@ a.ts\n======= new\nconst cap = 20\n>>>>>>>\n").unwrap_err();
 
         assert_eq!(error.slug(), "usage");
-        assert!(error.to_string().contains("line 1"), "{error}");
+        assert!(error.to_string().contains("line 2"), "{error}");
+    }
+
+    #[test]
+    fn a_later_block_with_no_old_section_names_its_own_line() {
+        let error = parse_batch(
+            "@@ a.ts\n<<<<<<< old\nx\n======= new\ny\n>>>>>>>\n======= new\nz\n>>>>>>>\n",
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("line 7"), "{error}");
+    }
+
+    fn replace_texts(specs: &[EditSpec]) -> Vec<(String, String)> {
+        specs
+            .iter()
+            .map(|spec| match &spec.op {
+                EditOp::Replace { old, new, .. } => (
+                    String::from_utf8_lossy(old).into_owned(),
+                    String::from_utf8_lossy(new).into_owned(),
+                ),
+                _ => panic!("expected a replace"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_bare_separator_splits_old_from_new() {
+        let specs = parse_batch("@@ a.ts\n<<<<<<< old\nx = 1\n=======\nx = 2\n>>>>>>>\n").unwrap();
+
+        assert_eq!(replace_texts(&specs), [(
+            "x = 1".to_owned(),
+            "x = 2".to_owned()
+        )]);
+    }
+
+    #[test]
+    fn a_bare_equals_line_beside_an_explicit_separator_stays_old_text() {
+        let specs = parse_batch(
+            "@@ a.md\n<<<<<<< old\nTitle\n=======\n======= new\nHeading\n=======\n>>>>>>>\n",
+        )
+        .unwrap();
+
+        assert_eq!(replace_texts(&specs), [(
+            "Title\n=======".to_owned(),
+            "Heading\n=======".to_owned()
+        )]);
+    }
+
+    #[test]
+    fn two_bare_equals_lines_in_one_block_are_refused_naming_the_first() {
+        let error =
+            parse_batch("@@ a.md\n<<<<<<< old\nTitle\n=======\nHeading\n=======\n>>>>>>>\n")
+                .unwrap_err();
+
+        assert_eq!(error.slug(), "usage");
+        assert!(error.to_string().contains("line 4"), "{error}");
+    }
+
+    #[test]
+    fn a_missing_separator_names_its_own_block_not_the_header() {
+        let error = parse_batch(
+            "@@ a.ts\n<<<<<<< old\nx\n======= new\ny\n>>>>>>>\n<<<<<<< old\nz\n>>>>>>>\n",
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("line 7"), "{error}");
     }
 
     #[test]
